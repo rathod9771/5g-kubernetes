@@ -1,0 +1,35 @@
+global:
+  image:
+    repository: ghcr.io/herlesupreeth/docker_open5gs
+    tag: master
+    pullPolicy: IfNotPresent
+  mcc: "001"
+  mnc: "01"
+  tac: "1"
+
+mongodb:
+  image: mongo:6.0
+
+nrf:
+  enabled: true
+
+amf:
+  enabled: true
+
+smf:
+  enabled: true
+
+upf:
+  enabled: true
+
+ausf:
+  enabled: true
+
+udm:
+  enabled: true
+
+udr:
+  enabled: true
+
+pcf:
+  enabled: true
