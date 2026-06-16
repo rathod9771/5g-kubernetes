@@ -1,0 +1,23 @@
+image:
+  repository: oaisoftwarealliance/oai-gnb
+  tag: develop
+  pullPolicy: IfNotPresent
+
+cu:
+  mcc: "208"
+  mnc: "93"
+  tac: 1
+  plmn: "20893"
+  amf:
+    address: "10.100.50.249"
+    port: 38412
+  f1:
+    address: "0.0.0.0"
+    port: 38472
+
+network:
+  masterIf: enp3s0
+
+ran:
+  type: oran
+  component: cu

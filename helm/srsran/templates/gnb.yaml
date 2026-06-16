@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: srsran-gnb-config
+data:
+  gnb.yml: |
+    cu_cp:
+      amf:
+        addr: {{ .Values.gnb.amf.address }}
+        bind_addr: 0.0.0.0
+        supported_tracking_areas:
+          - tac: {{ .Values.gnb.tac }}
+            plmn_list:
+              - plmn: "{{ .Values.gnb.plmn }}"
+                tai_slice_support_list:
+                  - sst: 1
+    ru_sdr:
+      device_driver: zmq
+      device_args: tx_port=tcp://127.0.0.1:2000,rx_port=tcp://127.0.0.1:2001
+      srate: 23.04
+      tx_gain: 75
+      rx_gain: 75
+    cell_cfg:
+      dl_arfcn: {{ .Values.gnb.radio.dlArfcn }}
+      band: {{ .Values.gnb.radio.band }}
+      channel_bandwidth_MHz: {{ .Values.gnb.radio.bandwidth }}
+      common_scs: {{ .Values.gnb.radio.scs }}
+      plmn: "{{ .Values.gnb.plmn }}"
+      tac: {{ .Values.gnb.tac }}
+      pci: 1
+    log:
+      filename: /tmp/gnb.log
+      all_level: warning
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: srsran-gnb
+  labels:
+    app: srsran-gnb
+    ran-type: cran
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: srsran-gnb
+  template:
+    metadata:
+      labels:
+        app: srsran-gnb
+        ran-type: cran
+    spec:
+      containers:
+      - name: gnb
+        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          privileged: true
+        env:
+        - name: COMPONENT_NAME
+          value: gnb
+        volumeMounts:
+        - name: gnb-config
+          mountPath: /mnt/srsran/gnb.yml
+          subPath: gnb.yml
+      volumes:
+      - name: gnb-config
+        configMap:
+          name: srsran-gnb-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: srsran-gnb
+  labels:
+    app: srsran-gnb
+spec:
+  selector:
+    app: srsran-gnb
+  ports:
+  - name: ngap
+    port: 38412
+    targetPort: 38412
+    protocol: SCTP
+  - name: gtp
+    port: 2152
+    targetPort: 2152
+    protocol: UDP

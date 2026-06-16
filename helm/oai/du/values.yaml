@@ -1,0 +1,26 @@
+image:
+  repository: oaisoftwarealliance/oai-gnb
+  tag: develop
+  pullPolicy: IfNotPresent
+
+du:
+  mcc: "208"
+  mnc: "93"
+  tac: 1
+  plmn: "20893"
+  cu:
+    address: "oai-cu"
+    port: 38472
+  radio:
+    device: zmq
+    dlArfcn: 632628
+    band: 78
+    bandwidth: 20
+    scs: 30
+
+network:
+  masterIf: enp3s0
+
+ran:
+  type: oran
+  component: du

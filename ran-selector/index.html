@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>5G RAN Selector</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0a0a1a;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .header h1 {
+            font-size: 2.5rem;
+            color: #00d4ff;
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #888;
+            font-size: 1rem;
+        }
+        .cards {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+        .card {
+            background: #1a1a2e;
+            border: 2px solid #333;
+            border-radius: 16px;
+            padding: 40px 30px;
+            width: 280px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            border-color: #00d4ff;
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,212,255,0.2);
+        }
+        .card.active {
+            border-color: #00ff88;
+            background: #0a2a1a;
+        }
+        .card .icon { font-size: 3rem; margin-bottom: 15px; }
+        .card h2 { font-size: 1.4rem; margin-bottom: 10px; color: #00d4ff; }
+        .card .type {
+            background: #333;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            margin-bottom: 15px;
+            display: inline-block;
+        }
+        .card p { color: #aaa; font-size: 0.9rem; line-height: 1.5; }
+        .card .components {
+            margin-top: 15px;
+            text-align: left;
+        }
+        .card .components span {
+            display: block;
+            color: #00d4ff;
+            font-size: 0.85rem;
+            padding: 3px 0;
+        }
+        .btn {
+            margin-top: 20px;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        .btn-deploy {
+            background: #00d4ff;
+            color: #000;
+        }
+        .btn-deploy:hover { background: #00b8d4; }
+        .btn-active {
+            background: #00ff88;
+            color: #000;
+        }
+        .status-bar {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px 40px;
+            width: 600px;
+            text-align: center;
+        }
+        .status-bar h3 { color: #888; margin-bottom: 10px; }
+        .status { font-size: 1.1rem; }
+        .status.running { color: #00ff88; }
+        .status.stopped { color: #ff4444; }
+        .status.deploying { color: #ffaa00; }
+        .arch-diagram {
+            margin-top: 10px;
+            font-size: 0.85rem;
+            color: #666;
+        }
+        .badge {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #00ff88;
+            color: #000;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: bold;
+        }
+        .card { position: relative; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>⚡ 5G RAN Selector</h1>
+    <p>Like choosing OS at boot — select your Radio Access Network deployment</p>
+    <p style="margin-top:5px; color:#555;">free5gc Core is running • Kubernetes cluster active</p>
+</div>
+
+<div class="cards">
+    <!-- srsRAN Card -->
+    <div class="card" id="card-srsran" onclick="selectRAN('srsran')">
+        <div class="icon">📡</div>
+        <div class="type">C-RAN</div>
+        <h2>srsRAN</h2>
+        <p>Centralized RAN — single gNB handles all baseband processing</p>
+        <div class="components">
+            <span>✦ gNB (monolithic)</span>
+            <span>✦ ZMQ radio (simulation)</span>
+            <span>✦ USRP B210 (real RF)</span>
+        </div>
+        <button class="btn btn-deploy" onclick="deploy('srsran', event)">
+            Deploy srsRAN
+        </button>
+    </div>
+
+    <!-- OAI Card -->
+    <div class="card" id="card-oai" onclick="selectRAN('oai')">
+        <div class="icon">🔀</div>
+        <div class="type">O-RAN</div>
+        <h2>OpenAirInterface</h2>
+        <p>Disaggregated RAN — split into CU and DU for flexible deployment</p>
+        <div class="components">
+            <span>✦ CU (Central Unit)</span>
+            <span>✦ DU (Distributed Unit)</span>
+            <span>✦ F1 interface between</span>
+        </div>
+        <button class="btn btn-deploy" onclick="deploy('oai', event)">
+            Deploy OAI O-RAN
+        </button>
+    </div>
+</div>
+
+<div class="status-bar">
+    <h3>Current Deployment Status</h3>
+    <div class="status stopped" id="status-text">⬤ No RAN deployed</div>
+    <div class="arch-diagram" id="arch-text">
+        Select a RAN above to deploy on Kubernetes
+    </div>
+</div>
+
+<script>
+let currentRAN = null;
+
+function selectRAN(ran) {
+    document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+    document.getElementById('card-' + ran).classList.add('active');
+}
+
+function deploy(ran, event) {
+    event.stopPropagation();
+
+    const statusEl = document.getElementById('status-text');
+    const archEl = document.getElementById('arch-text');
+
+    statusEl.className = 'status deploying';
+    statusEl.textContent = '⬤ Deploying ' + (ran === 'srsran' ? 'srsRAN C-RAN' : 'OAI O-RAN') + '...';
+
+    // Simulate deployment (in real scenario this calls backend API)
+    setTimeout(() => {
+        currentRAN = ran;
+        statusEl.className = 'status running';
+
+        if (ran === 'srsran') {
+            statusEl.textContent = '⬤ srsRAN (C-RAN) is Running';
+            archEl.innerHTML = `
+                UE → gNB (srsRAN) → AMF → SMF → UPF → Internet<br>
+                <span style="color:#00d4ff">Architecture: Centralized | Single gNB Pod</span>
+            `;
+            document.getElementById('card-srsran').querySelector('.btn').textContent = '✅ Running';
+            document.getElementById('card-srsran').querySelector('.btn').className = 'btn btn-active';
+            document.getElementById('card-oai').querySelector('.btn').textContent = 'Deploy OAI O-RAN';
+            document.getElementById('card-oai').querySelector('.btn').className = 'btn btn-deploy';
+        } else {
+            statusEl.textContent = '⬤ OpenAirInterface (O-RAN) is Running';
+            archEl.innerHTML = `
+                UE → DU → CU → AMF → SMF → UPF → Internet<br>
+                <span style="color:#00d4ff">Architecture: Disaggregated | CU Pod + DU Pod | F1 Interface</span>
+            `;
+            document.getElementById('card-oai').querySelector('.btn').textContent = '✅ Running';
+            document.getElementById('card-oai').querySelector('.btn').className = 'btn btn-active';
+            document.getElementById('card-srsran').querySelector('.btn').textContent = 'Deploy srsRAN';
+            document.getElementById('card-srsran').querySelector('.btn').className = 'btn btn-deploy';
+        }
+    }, 2000);
+}
+</script>
+
+</body>
+</html>
