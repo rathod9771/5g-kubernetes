@@ -1,46 +1,44 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: srsran-gnb
+  name: oai-du
   labels:
-    app: srsran-gnb
-    ran-type: cran
+    app: oai-du
+    ran-type: oran
+    component: du
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: srsran-gnb
+      app: oai-du
   template:
     metadata:
       labels:
-        app: srsran-gnb
-        ran-type: cran
+        app: oai-du
+        ran-type: oran
+        component: du
     spec:
       containers:
-      - name: gnb
+      - name: du
         image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         securityContext:
           privileged: true
         env:
         - name: COMPONENT_NAME
-          value: gnb
+          value: du
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: srsran-gnb
+  name: oai-du
   labels:
-    app: srsran-gnb
+    app: oai-du
 spec:
   selector:
-    app: srsran-gnb
+    app: oai-du
   ports:
-  - name: ngap
-    port: 38412
-    targetPort: 38412
+  - name: f1
+    port: 38472
+    targetPort: 38472
     protocol: SCTP
-  - name: gtp
-    port: 2152
-    targetPort: 2152
-    protocol: UDP

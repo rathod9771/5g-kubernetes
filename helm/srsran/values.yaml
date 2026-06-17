@@ -11,12 +11,6 @@ gnb:
   amf:
     address: "10.100.50.249"
     port: 38412
-  radio:
-    device: zmq
-    dlArfcn: 632628
-    band: 78
-    bandwidth: 20
-    scs: 30
 
 network:
   masterIf: enp3s0

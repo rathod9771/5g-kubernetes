@@ -11,12 +11,6 @@ du:
   cu:
     address: "oai-cu"
     port: 38472
-  radio:
-    device: zmq
-    dlArfcn: 632628
-    band: 78
-    bandwidth: 20
-    scs: 30
 
 network:
   masterIf: enp3s0
