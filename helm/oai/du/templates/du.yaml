@@ -1,3 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oai-du-config
+data:
+  gnb.yaml: |
+    Active_gNBs:
+    - oai-du
+    Asn1_verbosity: none
+    gNBs:
+    - gNB_ID: 0xe00
+      gNB_name: oai-du
+      tracking_area_code: 1
+      plmn_list:
+        - mcc: 208
+          mnc: 93
+          mnc_length: 2
+          snssaiList:
+            - sst: 1
+              sd: 0x010203
+      nr_cellid: 12345678L
+      min_rxtxtime: 6
+      NETWORK_INTERFACES:
+        GNB_INTERFACE_NAME_FOR_NG_AMF: eth0
+        GNB_IPV4_ADDRESS_FOR_NG_AMF: 0.0.0.0
+        GNB_INTERFACE_NAME_FOR_NGU: eth0
+        GNB_IPV4_ADDRESS_FOR_NGU: 0.0.0.0
+        GNB_PORT_FOR_S1U: 2152
+      f1_interface:
+        ipv4_f1_cu: oai-cu
+        ipv4_f1_du: 0.0.0.0
+        f1_port: 38472
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,13 +60,19 @@ spec:
         env:
         - name: COMPONENT_NAME
           value: du
+        volumeMounts:
+        - name: du-config
+          mountPath: /opt/oai-gnb/etc/gnb.yaml
+          subPath: gnb.yaml
+      volumes:
+      - name: du-config
+        configMap:
+          name: oai-du-config
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: oai-du
-  labels:
-    app: oai-du
 spec:
   selector:
     app: oai-du

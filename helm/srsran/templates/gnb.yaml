@@ -1,3 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: srsran-gnb-config
+data:
+  gnb.yml: |
+    cu_cp:
+      amf:
+        addr: 10.100.50.249
+        bind_addr: 0.0.0.0
+        supported_tracking_areas:
+          - tac: 1
+            plmn_list:
+              - plmn: "20893"
+                tai_slice_support_list:
+                  - sst: 1
+    ru_sdr:
+      device_driver: zmq
+      device_args: tx_port=tcp://127.0.0.1:2000,rx_port=tcp://127.0.0.1:2001
+      srate: 23.04
+      tx_gain: 75
+      rx_gain: 75
+    cell_cfg:
+      dl_arfcn: 632628
+      band: 78
+      channel_bandwidth_MHz: 20
+      common_scs: 30
+      plmn: "20893"
+      tac: 1
+      pci: 1
+    log:
+      filename: /tmp/gnb.log
+      all_level: warning
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,13 +59,19 @@ spec:
         env:
         - name: COMPONENT_NAME
           value: gnb
+        volumeMounts:
+        - name: gnb-config
+          mountPath: /mnt/srsran/gnb.yml
+          subPath: gnb.yml
+      volumes:
+      - name: gnb-config
+        configMap:
+          name: srsran-gnb-config
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: srsran-gnb
-  labels:
-    app: srsran-gnb
 spec:
   selector:
     app: srsran-gnb

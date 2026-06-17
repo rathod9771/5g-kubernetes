@@ -1,3 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oai-cu-config
+data:
+  gnb.yaml: |
+    Active_gNBs:
+    - oai-cu
+    Asn1_verbosity: none
+    gNBs:
+    - gNB_ID: 0xe00
+      gNB_name: oai-cu
+      tracking_area_code: 1
+      plmn_list:
+        - mcc: 208
+          mnc: 93
+          mnc_length: 2
+          snssaiList:
+            - sst: 1
+              sd: 0x010203
+      nr_cellid: 12345678L
+      min_rxtxtime: 6
+      amf_ip_address:
+        - ipv4: 10.100.50.249
+          ipv6: 192:168:30::17
+          active: yes
+          preference: ipv4
+      NETWORK_INTERFACES:
+        GNB_INTERFACE_NAME_FOR_NG_AMF: eth0
+        GNB_IPV4_ADDRESS_FOR_NG_AMF: 0.0.0.0
+        GNB_INTERFACE_NAME_FOR_NGU: eth0
+        GNB_IPV4_ADDRESS_FOR_NGU: 0.0.0.0
+        GNB_PORT_FOR_S1U: 2152
+      f1_interface:
+        ipv4_f1_cu: 0.0.0.0
+        ipv4_f1_du: 127.0.0.2
+        f1_port: 38472
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,13 +65,19 @@ spec:
         env:
         - name: COMPONENT_NAME
           value: cu
+        volumeMounts:
+        - name: cu-config
+          mountPath: /opt/oai-gnb/etc/gnb.yaml
+          subPath: gnb.yaml
+      volumes:
+      - name: cu-config
+        configMap:
+          name: oai-cu-config
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: oai-cu
-  labels:
-    app: oai-cu
 spec:
   selector:
     app: oai-cu
