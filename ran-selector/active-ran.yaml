@@ -1,10 +1,10 @@
-active: none
-srsran:
-  enabled: false
-  type: cran
+active: srsran
 oai:
-  enabled: false
-  type: oran
   components:
     cu: false
     du: false
+  enabled: false
+  type: oran
+srsran:
+  enabled: true
+  type: cran
