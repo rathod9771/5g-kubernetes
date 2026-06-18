@@ -787,7 +787,7 @@ spec:
       annotations:
         k8s.v1.cni.cncf.io/networks: '[
           { "name": "n2network-srsran",
-            "ips": [ "10.100.50.250/29" ],
+            "ips": [ "10.100.50.251/29" ],
             "gateway": [ "10.100.50.254" ] }
         ]'
     spec:
@@ -807,7 +807,7 @@ spec:
         - name: AMF_IP
           value: "10.100.50.249"
         - name: SRS_GNB_IP
-          value: "10.100.50.250"
+          value: "10.100.50.251"
         - name: TAC
           value: "1"
         volumeMounts:
