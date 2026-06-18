@@ -51,6 +51,7 @@ data:
     log:
       filename: /tmp/gnb.log
       all_level: warning
+  qos.yml: |
     # Quality of Service (QoS) example configurations for 5QI 1, 2, 5, 7 and 9
     # Based on 5QI characteristics in TS 23.501 table 5.7.4-1 
     
@@ -759,6 +760,7 @@ data:
               sn: 12
               t-reassembly: 10
     
+
 ---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
