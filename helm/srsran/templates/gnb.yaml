@@ -793,7 +793,7 @@ spec:
         - name: MNC
           value: "93"
         - name: AMF_IP
-          value: "10.100.50.249"
+          value: "10.244.0.234"
         - name: SRS_GNB_IP
           value: "0.0.0.0"
         - name: TAC
