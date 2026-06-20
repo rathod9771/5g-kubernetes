@@ -18,7 +18,7 @@ data:
           snssaiList:
             - sst: 1
               sd: 0x010203
-      nr_cellid: 12345678L
+      nr_cellid: 12345678
       min_rxtxtime: 6
       amf_ip_address:
         - ipv4: 10.100.50.249

@@ -18,7 +18,7 @@ data:
           snssaiList:
             - sst: 1
               sd: 0x010203
-      nr_cellid: 12345678L
+      nr_cellid: 12345678
       min_rxtxtime: 6
       NETWORK_INTERFACES:
         GNB_INTERFACE_NAME_FOR_NG_AMF: eth0
