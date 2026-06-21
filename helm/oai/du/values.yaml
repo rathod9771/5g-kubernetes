@@ -1,6 +1,6 @@
 image:
   repository: oaisoftwarealliance/oai-gnb
-  tag: develop
+  tag: 2026.w25
   pullPolicy: IfNotPresent
 
 du:
