@@ -5,11 +5,11 @@ metadata:
 data:
   gnb.yaml: |
     Active_gNBs:
-    - oai-cu
+    - oai-gnb
     Asn1_verbosity: none
     gNBs:
     - gNB_ID: 0xe00
-      gNB_name: oai-cu
+      gNB_name: oai-gnb
       tracking_area_code: 1
       plmn_list:
         - mcc: 208
@@ -31,10 +31,6 @@ data:
         GNB_INTERFACE_NAME_FOR_NGU: eth0
         GNB_IPV4_ADDRESS_FOR_NGU: 10.100.50.252
         GNB_PORT_FOR_S1U: 2152
-      f1_interface:
-        ipv4_f1_cu: 10.100.50.252
-        ipv4_f1_du: 127.0.0.2
-        f1_port: 38472
 ---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
@@ -50,7 +46,7 @@ metadata:
   labels:
     app: oai-cu
     ran-type: oran
-    component: cu
+    component: gnb
 spec:
   replicas: 1
   selector:
@@ -61,7 +57,7 @@ spec:
       labels:
         app: oai-cu
         ran-type: oran
-        component: cu
+        component: gnb
       annotations:
         k8s.v1.cni.cncf.io/networks: '[
           { "name": "n2network-oai-cu",
@@ -99,7 +95,7 @@ spec:
     port: 38412
     targetPort: 38412
     protocol: SCTP
-  - name: f1
-    port: 38472
-    targetPort: 38472
-    protocol: SCTP
+  - name: gtp
+    port: 2152
+    targetPort: 2152
+    protocol: UDP
