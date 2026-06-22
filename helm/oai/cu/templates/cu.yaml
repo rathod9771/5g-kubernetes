@@ -31,6 +31,44 @@ data:
         GNB_INTERFACE_NAME_FOR_NGU: eth0
         GNB_IPV4_ADDRESS_FOR_NGU: 10.100.50.252
         GNB_PORT_FOR_S1U: 2152
+    L1s:
+    - num_cc: 1
+      tr_n_preference: local_L1
+      tr_s_preference: local_mac
+    RUs:
+    - local_rf: yes
+      nb_tx: 1
+      nb_rx: 1
+      att_tx: 0
+      att_rx: 0
+      bands:
+      - 78
+      max_pdschReferenceSignalPower: -27
+      max_rxgain: 114
+      eNB_instances:
+      - 0
+      clock_src: internal
+    MACRLCs:
+    - num_cc: 1
+      tr_s_preference: local_L1
+      tr_n_preference: local_RRC
+    log_config:
+      global_log_level: info
+      global_log_verbosity: medium
+      hw_log_level: info
+      hw_log_verbosity: medium
+      phy_log_level: info
+      phy_log_verbosity: medium
+      mac_log_level: info
+      mac_log_verbosity: medium
+      rlc_log_level: info
+      rlc_log_verbosity: medium
+      pdcp_log_level: info
+      pdcp_log_verbosity: medium
+      rrc_log_level: info
+      rrc_log_verbosity: medium
+      ngap_log_level: info
+      ngap_log_verbosity: medium
 ---
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
@@ -46,7 +84,6 @@ metadata:
   labels:
     app: oai-cu
     ran-type: oran
-    component: gnb
 spec:
   replicas: 1
   selector:
@@ -57,7 +94,6 @@ spec:
       labels:
         app: oai-cu
         ran-type: oran
-        component: gnb
       annotations:
         k8s.v1.cni.cncf.io/networks: '[
           { "name": "n2network-oai-cu",
@@ -72,8 +108,8 @@ spec:
         securityContext:
           privileged: true
         env:
-        - name: COMPONENT_NAME
-          value: cu
+        - name: USE_ADDITIONAL_OPTIONS
+          value: "--sa --rfsim"
         volumeMounts:
         - name: cu-config
           mountPath: /opt/oai-gnb/etc/gnb.yaml

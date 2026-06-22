@@ -1,6 +1,6 @@
 image:
   repository: oaisoftwarealliance/oai-gnb
-  tag: 2026.w25
+  tag: 2026.w13
   pullPolicy: IfNotPresent
 
 cu:
