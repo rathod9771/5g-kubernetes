@@ -308,7 +308,7 @@ spec:
           privileged: true
         env:
         - name: USE_ADDITIONAL_OPTIONS
-          value: "--sa --rfsim"
+          value: "--rfsim"
         volumeMounts:
         - name: cu-config
           mountPath: /opt/oai-gnb/etc/gnb.conf
