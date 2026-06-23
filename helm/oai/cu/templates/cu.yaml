@@ -27,8 +27,8 @@ data:
     
         local_s_address = "10.100.50.252";
         remote_s_address = "0.0.0.0"; # multiple DUs
-        local_s_portd       = 2152;
-        remote_s_portd      = 2152;
+        local_s_portd = 38472;
+        remote_s_portd = 38472;
     
     
         # ------- SCTP definitions
@@ -47,7 +47,7 @@ data:
         {
             GNB_IPV4_ADDRESS_FOR_NG_AMF = "10.100.50.252/29";
             GNB_IPV4_ADDRESS_FOR_NGU = "10.100.50.252/29";
-            GNB_PORT_FOR_S1U                         = 2152; # Spec 2152
+            GNB_PORT_FOR_S1U = 2152
         };
       }
     );
@@ -144,6 +144,10 @@ spec:
     targetPort: 38412
     protocol: SCTP
   - name: f1
+    port: 38472
+    targetPort: 38472
+    protocol: SCTP
+  - name: gtp
     port: 2152
     targetPort: 2152
     protocol: UDP

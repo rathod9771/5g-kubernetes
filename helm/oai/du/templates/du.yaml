@@ -166,8 +166,8 @@ data:
         tr_n_preference     = "f1";
         local_n_address = "10.100.50.253";
         remote_n_address = "10.100.50.252";
-        local_n_portd       = 2152;
-        remote_n_portd      = 2152;
+        local_n_portd = 38472;
+        remote_n_portd = 38472;
         pusch_FailureThres  = 1000;
     });
     
@@ -277,6 +277,6 @@ spec:
     app: oai-du
   ports:
   - name: f1
-    port: 2152
-    targetPort: 2152
-    protocol: UDP
+    port: 38472
+    targetPort: 38472
+    protocol: SCTP
