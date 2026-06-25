@@ -2,70 +2,128 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>5G RAN Selector</title>
     <style>
-        body { font-family: sans-serif; background: #0a0a1a; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-        h1 { color: #00d4ff; font-size: 2.5rem; margin-bottom: 10px; text-align: center; }
-        p { color: #888; text-align: center; margin-bottom: 30px; }
-        .cards { display: flex; gap: 30px; flex-wrap: wrap; justify-content: center; margin-bottom: 30px; }
-        .card { background: #1a1a2e; border: 2px solid #333; border-radius: 16px; padding: 40px 30px; width: 260px; text-align: center; }
-        .card.active { border-color: #00ff88; background: #0a2a1a; }
-        .card h2 { color: #00d4ff; margin: 10px 0; }
-        .card .type { background: #333; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; display: inline-block; margin-bottom: 10px; }
-        .card p { color: #aaa; font-size: 0.9rem; }
-        .card ul { text-align: left; margin: 15px 0; color: #00d4ff; font-size: 0.85rem; list-style: none; }
-        .card ul li::before { content: "✦ "; }
-        .btn { margin-top: 15px; padding: 12px 20px; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; font-weight: bold; width: 100%; }
-        .btn-deploy { background: #00d4ff; color: #000; }
-        .btn-active { background: #00ff88; color: #000; }
-        .btn-loading { background: #ffaa00; color: #000; }
-        .status-box { background: #1a1a2e; border: 1px solid #333; border-radius: 12px; padding: 20px 40px; text-align: center; max-width: 600px; width: 100%; }
-        .status-box h3 { color: #888; margin-bottom: 10px; }
-        .status { font-size: 1.1rem; margin-bottom: 8px; }
-        .running { color: #00ff88; }
-        .stopped { color: #ff4444; }
-        .deploying { color: #ffaa00; }
-        .flow { font-size: 0.8rem; color: #555; margin-top: 10px; border-top: 1px solid #333; padding-top: 10px; }
-        .flow span { color: #00d4ff; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: "Segoe UI", sans-serif;
+            background: #0a0a1a;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        h1 {
+            font-size: 2.2rem;
+            color: #00d4ff;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        p.subtitle {
+            color: #666;
+            margin-bottom: 50px;
+            text-align: center;
+        }
+        .cards {
+            display: flex;
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+        .card {
+            background: #1a1a2e;
+            border: 2px solid #333;
+            border-radius: 20px;
+            padding: 50px 40px;
+            width: 220px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            border-color: #00d4ff;
+            transform: translateY(-5px);
+        }
+        .card.active {
+            border-color: #00ff88;
+            background: #0a2a1a;
+        }
+        .card h2 {
+            font-size: 1.8rem;
+            margin-bottom: 8px;
+            color: #fff;
+        }
+        .card.active h2 {
+            color: #00ff88;
+        }
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #333;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+        .card.active .status-dot {
+            background: #00ff88;
+            box-shadow: 0 0 8px #00ff88;
+        }
+        .btn {
+            margin-top: 20px;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+            transition: all 0.3s;
+            background: #00d4ff;
+            color: #000;
+        }
+        .btn:hover { background: #00b8d4; }
+        .btn.active { background: #00ff88; color: #000; }
+        .btn.loading { background: #ffaa00; color: #000; cursor: wait; }
+        .status-bar {
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 15px 40px;
+            text-align: center;
+            min-width: 480px;
+        }
+        .status-bar p {
+            color: #666;
+            font-size: 0.95rem;
+        }
+        .status-bar p span {
+            color: #00d4ff;
+        }
     </style>
 </head>
 <body>
-<h1>⚡ 5G RAN Selector</h1>
-<p>Like choosing OS at boot — select your Radio Access Network</p>
+
+<h1>5G RAN Selector</h1>
+<p class="subtitle">Select your Radio Access Network deployment</p>
 
 <div class="cards">
-    <div class="card" id="card-srsran">
-        <div class="icon" style="font-size:3rem">📡</div>
-        <div class="type">C-RAN</div>
-        <h2>srsRAN</h2>
-        <p>Centralized RAN — single gNB handles all baseband processing</p>
-        <ul>
-            <li>gNB (monolithic)</li>
-            <li>ZMQ radio (simulation)</li>
-            <li>USRP B210 (real RF)</li>
-        </ul>
-        <button class="btn btn-deploy" id="btn-srsran" onclick="deploy('srsran')">Deploy srsRAN</button>
+    <div class="card" id="card-cran">
+        <div class="status-dot" id="dot-cran"></div>
+        <h2>C-RAN</h2>
+        <button class="btn" id="btn-cran" onclick="deploy('srsran')">Select</button>
     </div>
 
-    <div class="card" id="card-oai">
-        <div class="icon" style="font-size:3rem">🔀</div>
-        <div class="type">O-RAN</div>
-        <h2>OpenAirInterface</h2>
-        <p>Disaggregated RAN — CU and DU split for flexible deployment</p>
-        <ul>
-            <li>CU (Central Unit)</li>
-            <li>DU (Distributed Unit)</li>
-            <li>F1 interface between</li>
-        </ul>
-        <button class="btn btn-deploy" id="btn-oai" onclick="deploy('oai')">Deploy OAI O-RAN</button>
+    <div class="card" id="card-oran">
+        <div class="status-dot" id="dot-oran"></div>
+        <h2>O-RAN</h2>
+        <button class="btn" id="btn-oran" onclick="deploy('oai')">Select</button>
     </div>
 </div>
 
-<div class="status-box">
-    <h3>Current Status</h3>
-    <div class="status stopped" id="status-text">⬤ Loading...</div>
-    <div id="arch-text" style="font-size:0.85rem;color:#666;margin-top:8px"></div>
-    <div class="flow">GitOps: <span>Button</span> → <span>GitHub</span> → <span>ArgoCD</span> → <span>Kubernetes</span></div>
+<div class="status-bar">
+    <p id="status-text">Status: <span>Loading...</span></p>
 </div>
 
 <script>
@@ -75,61 +133,58 @@ async function getStatus() {
         const data = await res.json();
         updateUI(data.active);
     } catch(e) {
-        document.getElementById("status-text").textContent = "⬤ Connecting to backend...";
+        document.getElementById("status-text").innerHTML = "Status: <span>Connecting...</span>";
     }
 }
 
 function updateUI(active) {
-    const s = document.getElementById("status-text");
-    const a = document.getElementById("arch-text");
-    document.getElementById("card-srsran").classList.remove("active");
-    document.getElementById("card-oai").classList.remove("active");
-    document.getElementById("btn-srsran").className = "btn btn-deploy";
-    document.getElementById("btn-srsran").textContent = "Deploy srsRAN";
-    document.getElementById("btn-oai").className = "btn btn-deploy";
-    document.getElementById("btn-oai").textContent = "Deploy OAI O-RAN";
+    // Reset all
+    document.getElementById("card-cran").classList.remove("active");
+    document.getElementById("card-oran").classList.remove("active");
+    document.getElementById("dot-cran").classList.remove("active");
+    document.getElementById("dot-oran").classList.remove("active");
+    document.getElementById("btn-cran").className = "btn";
+    document.getElementById("btn-cran").textContent = "Select";
+    document.getElementById("btn-oran").className = "btn";
+    document.getElementById("btn-oran").textContent = "Select";
+
     if (active === "srsran") {
-        s.className = "status running"; s.textContent = "⬤ srsRAN (C-RAN) Active";
-        a.textContent = "UE → gNB → AMF → SMF → UPF → Internet";
-        document.getElementById("card-srsran").classList.add("active");
-        document.getElementById("btn-srsran").className = "btn btn-active";
-        document.getElementById("btn-srsran").textContent = "✅ Running";
+        document.getElementById("card-cran").classList.add("active");
+        document.getElementById("dot-cran").classList.add("active");
+        document.getElementById("btn-cran").className = "btn active";
+        document.getElementById("btn-cran").textContent = "Running";
+        document.getElementById("status-text").innerHTML = "Status: <span>C-RAN is Active</span>";
     } else if (active === "oai") {
-        s.className = "status running"; s.textContent = "⬤ OpenAirInterface (O-RAN) Active";
-        a.textContent = "UE → DU → CU (F1) → AMF → SMF → UPF → Internet";
-        document.getElementById("card-oai").classList.add("active");
-        document.getElementById("btn-oai").className = "btn btn-active";
-        document.getElementById("btn-oai").textContent = "✅ Running";
+        document.getElementById("card-oran").classList.add("active");
+        document.getElementById("dot-oran").classList.add("active");
+        document.getElementById("btn-oran").className = "btn active";
+        document.getElementById("btn-oran").textContent = "Running";
+        document.getElementById("status-text").innerHTML = "Status: <span>O-RAN is Active</span>";
     } else {
-        s.className = "status stopped"; s.textContent = "⬤ No RAN deployed";
-        a.textContent = "Select a RAN above to deploy via GitOps";
+        document.getElementById("status-text").innerHTML = "Status: <span>No RAN Selected</span>";
     }
 }
 
 async function deploy(ran) {
-    const btn = document.getElementById("btn-" + ran);
-    btn.className = "btn btn-loading";
-    btn.textContent = "⏳ Pushing to GitHub...";
-    document.getElementById("status-text").className = "status deploying";
-    document.getElementById("status-text").textContent = "⬤ Triggering GitOps...";
+    const btnId = ran === "srsran" ? "btn-cran" : "btn-oran";
+    const btn = document.getElementById(btnId);
+    btn.className = "btn loading";
+    btn.textContent = "Deploying...";
+    document.getElementById("status-text").innerHTML = "Status: <span>Deploying...</span>";
+
     try {
         const res = await fetch("/api/deploy", {
             method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ran: ran})
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ran: ran })
         });
         const data = await res.json();
         if (data.status === "success") {
-            document.getElementById("status-text").textContent = "⬤ Pushed! ArgoCD deploying " + ran + "...";
             setTimeout(getStatus, 3000);
-        } else {
-            document.getElementById("status-text").className = "status stopped";
-            document.getElementById("status-text").textContent = "⬤ Error: " + (data.error || "unknown");
-            btn.className = "btn btn-deploy";
         }
     } catch(e) {
-        document.getElementById("status-text").textContent = "⬤ Connection error";
-        btn.className = "btn btn-deploy";
+        btn.className = "btn";
+        btn.textContent = "Select";
     }
 }
 
