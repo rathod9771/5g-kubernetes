@@ -15,67 +15,87 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
+            padding: 40px 20px;
         }
         h1 {
             font-size: 2.2rem;
             color: #00d4ff;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             text-align: center;
         }
-        p.subtitle {
-            color: #666;
+        .subtitle {
+            color: #555;
             margin-bottom: 50px;
             text-align: center;
+            font-size: 0.95rem;
         }
-        .cards {
-            display: flex;
-            gap: 40px;
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
             margin-bottom: 40px;
+            max-width: 760px;
+            width: 100%;
         }
         .card {
             background: #1a1a2e;
-            border: 2px solid #333;
-            border-radius: 20px;
-            padding: 50px 40px;
-            width: 220px;
+            border: 2px solid #2a2a3e;
+            border-radius: 16px;
+            padding: 30px 20px;
             text-align: center;
-            cursor: pointer;
             transition: all 0.3s ease;
+            position: relative;
         }
-        .card:hover {
+        .card.available {
+            cursor: pointer;
+        }
+        .card.available:hover {
             border-color: #00d4ff;
-            transform: translateY(-5px);
+            transform: translateY(-4px);
+            box-shadow: 0 8px 25px rgba(0,212,255,0.15);
         }
         .card.active {
             border-color: #00ff88;
             background: #0a2a1a;
         }
+        .card.coming-soon {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .card h2 {
-            font-size: 1.8rem;
-            margin-bottom: 8px;
+            font-size: 1.5rem;
             color: #fff;
+            margin-bottom: 6px;
         }
         .card.active h2 {
             color: #00ff88;
         }
+        .card .fullname {
+            font-size: 0.72rem;
+            color: #555;
+            margin-bottom: 16px;
+            line-height: 1.3;
+        }
+        .card.active .fullname {
+            color: #00aa55;
+        }
         .status-dot {
-            width: 12px;
-            height: 12px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
-            background: #333;
+            background: #2a2a3e;
             display: inline-block;
-            margin-bottom: 20px;
+            margin-bottom: 14px;
         }
         .card.active .status-dot {
             background: #00ff88;
             box-shadow: 0 0 8px #00ff88;
         }
         .btn {
-            margin-top: 20px;
-            padding: 12px 30px;
+            padding: 10px 24px;
             border: none;
             border-radius: 8px;
-            font-size: 1rem;
+            font-size: 0.9rem;
             cursor: pointer;
             font-weight: bold;
             width: 100%;
@@ -84,42 +104,106 @@
             color: #000;
         }
         .btn:hover { background: #00b8d4; }
-        .btn.active { background: #00ff88; color: #000; }
+        .btn.active-btn { background: #00ff88; color: #000; }
         .btn.loading { background: #ffaa00; color: #000; cursor: wait; }
+        .btn.soon {
+            background: #2a2a3e;
+            color: #555;
+            cursor: not-allowed;
+            font-size: 0.8rem;
+        }
+        .badge {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            background: #00d4ff22;
+            color: #00d4ff;
+            border: 1px solid #00d4ff44;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            font-weight: bold;
+        }
+        .badge.live {
+            background: #00ff8822;
+            color: #00ff88;
+            border-color: #00ff8844;
+        }
         .status-bar {
             background: #1a1a2e;
-            border: 1px solid #333;
+            border: 1px solid #2a2a3e;
             border-radius: 12px;
-            padding: 15px 40px;
+            padding: 14px 40px;
             text-align: center;
-            min-width: 480px;
+            max-width: 760px;
+            width: 100%;
         }
-        .status-bar p {
-            color: #666;
-            font-size: 0.95rem;
-        }
-        .status-bar p span {
-            color: #00d4ff;
-        }
+        .status-bar p { color: #555; font-size: 0.9rem; }
+        .status-bar span { color: #00d4ff; }
+        .status-bar span.active-text { color: #00ff88; }
     </style>
 </head>
 <body>
 
 <h1>5G RAN Selector</h1>
-<p class="subtitle">Select your Radio Access Network deployment</p>
+<p class="subtitle">Select your Radio Access Network deployment on Kubernetes</p>
 
-<div class="cards">
-    <div class="card" id="card-cran">
-        <div class="status-dot" id="dot-cran"></div>
+<div class="grid">
+
+    <!-- C-RAN -->
+    <div class="card available" id="card-srsran">
+        <div class="badge live" id="badge-srsran">LIVE</div>
+        <div class="status-dot" id="dot-srsran"></div>
         <h2>C-RAN</h2>
-        <button class="btn" id="btn-cran" onclick="deploy('srsran')">Select</button>
+        <p class="fullname">Centralized RAN</p>
+        <button class="btn" id="btn-srsran" onclick="deploy('srsran')">Select</button>
     </div>
 
-    <div class="card" id="card-oran">
-        <div class="status-dot" id="dot-oran"></div>
+    <!-- O-RAN -->
+    <div class="card available" id="card-oai">
+        <div class="badge live" id="badge-oai">LIVE</div>
+        <div class="status-dot" id="dot-oai"></div>
         <h2>O-RAN</h2>
-        <button class="btn" id="btn-oran" onclick="deploy('oai')">Select</button>
+        <p class="fullname">Disaggregated RAN<br>CU + DU</p>
+        <button class="btn" id="btn-oai" onclick="deploy('oai')">Select</button>
     </div>
+
+    <!-- Cloud-RAN -->
+    <div class="card coming-soon">
+        <div class="badge">SOON</div>
+        <div class="status-dot"></div>
+        <h2>Cloud-RAN</h2>
+        <p class="fullname">Cloud RAN</p>
+        <button class="btn soon">Coming Soon</button>
+    </div>
+
+    <!-- V-CRAN -->
+    <div class="card coming-soon">
+        <div class="badge">SOON</div>
+        <div class="status-dot"></div>
+        <h2>V-CRAN</h2>
+        <p class="fullname">Virtualized Cloud RAN</p>
+        <button class="btn soon">Coming Soon</button>
+    </div>
+
+    <!-- H-CRAN -->
+    <div class="card coming-soon">
+        <div class="badge">SOON</div>
+        <div class="status-dot"></div>
+        <h2>H-CRAN</h2>
+        <p class="fullname">Heterogeneous Cloud RAN</p>
+        <button class="btn soon">Coming Soon</button>
+    </div>
+
+    <!-- F-RAN -->
+    <div class="card coming-soon">
+        <div class="badge">SOON</div>
+        <div class="status-dot"></div>
+        <h2>F-RAN</h2>
+        <p class="fullname">Fog RAN</p>
+        <button class="btn soon">Coming Soon</button>
+    </div>
+
 </div>
 
 <div class="status-bar">
@@ -138,35 +222,37 @@ async function getStatus() {
 }
 
 function updateUI(active) {
-    // Reset all
-    document.getElementById("card-cran").classList.remove("active");
-    document.getElementById("card-oran").classList.remove("active");
-    document.getElementById("dot-cran").classList.remove("active");
-    document.getElementById("dot-oran").classList.remove("active");
-    document.getElementById("btn-cran").className = "btn";
-    document.getElementById("btn-cran").textContent = "Select";
-    document.getElementById("btn-oran").className = "btn";
-    document.getElementById("btn-oran").textContent = "Select";
+    const rans = ["srsran", "oai"];
+    rans.forEach(r => {
+        document.getElementById("card-" + r).classList.remove("active");
+        document.getElementById("dot-" + r).style.background = "#2a2a3e";
+        document.getElementById("dot-" + r).style.boxShadow = "none";
+        document.getElementById("btn-" + r).className = "btn";
+        document.getElementById("btn-" + r).textContent = "Select";
+        document.getElementById("badge-" + r).className = "badge live";
+    });
 
     if (active === "srsran") {
-        document.getElementById("card-cran").classList.add("active");
-        document.getElementById("dot-cran").classList.add("active");
-        document.getElementById("btn-cran").className = "btn active";
-        document.getElementById("btn-cran").textContent = "Running";
-        document.getElementById("status-text").innerHTML = "Status: <span>C-RAN is Active</span>";
+        document.getElementById("card-srsran").classList.add("active");
+        document.getElementById("dot-srsran").style.background = "#00ff88";
+        document.getElementById("dot-srsran").style.boxShadow = "0 0 8px #00ff88";
+        document.getElementById("btn-srsran").className = "btn active-btn";
+        document.getElementById("btn-srsran").textContent = "Running";
+        document.getElementById("status-text").innerHTML = "Status: <span class=\'active-text\'>C-RAN is Active</span>";
     } else if (active === "oai") {
-        document.getElementById("card-oran").classList.add("active");
-        document.getElementById("dot-oran").classList.add("active");
-        document.getElementById("btn-oran").className = "btn active";
-        document.getElementById("btn-oran").textContent = "Running";
-        document.getElementById("status-text").innerHTML = "Status: <span>O-RAN is Active</span>";
+        document.getElementById("card-oai").classList.add("active");
+        document.getElementById("dot-oai").style.background = "#00ff88";
+        document.getElementById("dot-oai").style.boxShadow = "0 0 8px #00ff88";
+        document.getElementById("btn-oai").className = "btn active-btn";
+        document.getElementById("btn-oai").textContent = "Running";
+        document.getElementById("status-text").innerHTML = "Status: <span class=\'active-text\'>O-RAN is Active</span>";
     } else {
         document.getElementById("status-text").innerHTML = "Status: <span>No RAN Selected</span>";
     }
 }
 
 async function deploy(ran) {
-    const btnId = ran === "srsran" ? "btn-cran" : "btn-oran";
+    const btnId = "btn-" + ran;
     const btn = document.getElementById(btnId);
     btn.className = "btn loading";
     btn.textContent = "Deploying...";
@@ -181,6 +267,9 @@ async function deploy(ran) {
         const data = await res.json();
         if (data.status === "success") {
             setTimeout(getStatus, 3000);
+        } else {
+            btn.className = "btn";
+            btn.textContent = "Select";
         }
     } catch(e) {
         btn.className = "btn";
