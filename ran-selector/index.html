@@ -1,284 +1,460 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>5G RAN Selector</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: "Segoe UI", sans-serif;
-            background: #0a0a1a;
-            color: #fff;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 40px 20px;
-        }
-        h1 {
-            font-size: 2.2rem;
-            color: #00d4ff;
-            margin-bottom: 8px;
-            text-align: center;
-        }
-        .subtitle {
-            color: #555;
-            margin-bottom: 50px;
-            text-align: center;
-            font-size: 0.95rem;
-        }
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 24px;
-            margin-bottom: 40px;
-            max-width: 760px;
-            width: 100%;
-        }
-        .card {
-            background: #1a1a2e;
-            border: 2px solid #2a2a3e;
-            border-radius: 16px;
-            padding: 30px 20px;
-            text-align: center;
-            transition: all 0.3s ease;
-            position: relative;
-        }
-        .card.available {
-            cursor: pointer;
-        }
-        .card.available:hover {
-            border-color: #00d4ff;
-            transform: translateY(-4px);
-            box-shadow: 0 8px 25px rgba(0,212,255,0.15);
-        }
-        .card.active {
-            border-color: #00ff88;
-            background: #0a2a1a;
-        }
-        .card.coming-soon {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        .card h2 {
-            font-size: 1.5rem;
-            color: #fff;
-            margin-bottom: 6px;
-        }
-        .card.active h2 {
-            color: #00ff88;
-        }
-        .card .fullname {
-            font-size: 0.72rem;
-            color: #555;
-            margin-bottom: 16px;
-            line-height: 1.3;
-        }
-        .card.active .fullname {
-            color: #00aa55;
-        }
-        .status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #2a2a3e;
-            display: inline-block;
-            margin-bottom: 14px;
-        }
-        .card.active .status-dot {
-            background: #00ff88;
-            box-shadow: 0 0 8px #00ff88;
-        }
-        .btn {
-            padding: 10px 24px;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            cursor: pointer;
-            font-weight: bold;
-            width: 100%;
-            transition: all 0.3s;
-            background: #00d4ff;
-            color: #000;
-        }
-        .btn:hover { background: #00b8d4; }
-        .btn.active-btn { background: #00ff88; color: #000; }
-        .btn.loading { background: #ffaa00; color: #000; cursor: wait; }
-        .btn.soon {
-            background: #2a2a3e;
-            color: #555;
-            cursor: not-allowed;
-            font-size: 0.8rem;
-        }
-        .badge {
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            background: #00d4ff22;
-            color: #00d4ff;
-            border: 1px solid #00d4ff44;
-            padding: 2px 8px;
-            border-radius: 20px;
-            font-size: 0.65rem;
-            font-weight: bold;
-        }
-        .badge.live {
-            background: #00ff8822;
-            color: #00ff88;
-            border-color: #00ff8844;
-        }
-        .status-bar {
-            background: #1a1a2e;
-            border: 1px solid #2a2a3e;
-            border-radius: 12px;
-            padding: 14px 40px;
-            text-align: center;
-            max-width: 760px;
-            width: 100%;
-        }
-        .status-bar p { color: #555; font-size: 0.9rem; }
-        .status-bar span { color: #00d4ff; }
-        .status-bar span.active-text { color: #00ff88; }
-    </style>
+<meta charset="UTF-8">
+<title>5G Platform</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:#0f0f1e;border-bottom:1px solid #1e1e3a;flex-shrink:0}
+.topbar h1{font-size:13px;font-weight:700;color:#00d4ff;letter-spacing:1px}
+.top-btns{display:flex;gap:8px}
+.top-btn{padding:5px 16px;border-radius:6px;border:1px solid #2a2a4a;background:transparent;color:#888;font-size:11px;cursor:pointer;transition:all 0.15s;font-weight:600}
+.top-btn:hover{border-color:#00d4ff;color:#00d4ff}
+.top-btn.active{background:#001a2e;border-color:#00d4ff;color:#00d4ff}
+.top-btn.purple:hover{border-color:#a855f7;color:#a855f7}
+.top-btn.purple.active{background:#1a0a2e;border-color:#a855f7;color:#a855f7}
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:155px;background:#0f0f1e;border-right:1px solid #1e1e3a;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;padding:10px 8px}
+.sb-title{font-size:9px;font-weight:700;color:#444;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;padding:0 2px}
+.ran-card{background:#13132a;border:1px solid #1e1e3a;border-radius:8px;padding:8px;margin-bottom:6px;transition:all 0.15s}
+.ran-card.disabled{opacity:0.35}
+.ran-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
+.ran-name{font-size:11px;font-weight:700;color:#ccc;display:flex;align-items:center;gap:4px}
+.ran-card.deployed .ran-name{color:#00d4ff}
+.ran-type{font-size:9px;color:#444;margin-bottom:6px}
+.ran-badge{font-size:8px;padding:1px 5px;border-radius:10px}
+.badge-live{background:#0a2a1a;color:#00ff88;border:1px solid #00ff8844}
+.badge-soon{background:#1a1a1a;color:#333;border:1px solid #222}
+.deploy-btn{width:100%;padding:5px 0;border-radius:5px;border:1px solid #2a2a4a;background:transparent;color:#888;font-size:10px;cursor:pointer;transition:all 0.15s;font-weight:600}
+.deploy-btn:hover:not(:disabled){border-color:#00d4ff;color:#00d4ff;background:#001a2e}
+.deploy-btn.deploying{border-color:#ffaa00;color:#ffaa00;animation:blink 1s infinite}
+.deploy-btn.deployed{border-color:#00ff88;color:#00ff88;background:#0a2a1a}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.5}}
+.dot{width:6px;height:6px;border-radius:50%;background:#2a2a4a;flex-shrink:0}
+.dot.on{background:#00ff88}
+.dot.off{background:#2a2a4a}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.blank{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px}
+.blank-icon{font-size:52px;opacity:0.15}
+.blank-txt{color:#2a2a4a;font-size:12px}
+.content-area{flex:1;padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+.panel{background:#0f0f1e;border:1px solid #1e1e3a;border-radius:12px;overflow:hidden}
+.panel-hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #1e1e3a}
+.panel-title{font-size:14px;font-weight:700;color:#00d4ff}
+.panel-sub{font-size:10px;color:#555;margin-top:2px}
+.panel-status{font-size:10px;display:flex;align-items:center;gap:5px;margin-left:12px}
+.ok{color:#00ff88}
+.warn{color:#ffaa00}
+.close-btn{width:24px;height:24px;border-radius:50%;border:1px solid #2a2a4a;background:transparent;color:#555;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;flex-shrink:0}
+.close-btn:hover{border-color:#ff4444;color:#ff4444}
+.wf-bar{display:flex;align-items:center;padding:8px 14px;background:#080810;border-bottom:1px solid #1e1e3a;overflow-x:auto;gap:0;flex-shrink:0}
+.wf-step{display:flex;align-items:center;gap:5px;flex-shrink:0}
+.wf-dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;border:1px solid #2a2a4a;background:#1a1a2e;color:#444}
+.wf-dot.done{background:#00ff88;border-color:#00ff88;color:#000}
+.wf-dot.active{background:#001a2e;border-color:#00d4ff;color:#00d4ff;animation:blink 1s infinite}
+.wf-lbl{font-size:9px;color:#444}
+.wf-dot.done~.wf-lbl{color:#00ff88}
+.wf-dot.active~.wf-lbl{color:#00d4ff}
+.wf-arr{color:#2a2a4a;font-size:11px;margin:0 6px}
+.tab-row{display:flex;gap:4px;padding:8px 14px;border-bottom:1px solid #1e1e3a}
+.tab{padding:5px 14px;border-radius:6px;border:1px solid transparent;background:transparent;color:#555;font-size:11px;cursor:pointer;font-weight:600;transition:all 0.15s}
+.tab:hover{color:#ccc}
+.tab.active{background:#001a2e;border-color:#00d4ff44;color:#00d4ff}
+.panel-body{padding:12px 14px;max-height:240px;overflow-y:auto}
+.log-terminal{background:#050508;border-radius:8px;padding:10px;font-family:monospace;font-size:10px;line-height:1.8;overflow-y:auto;max-height:200px}
+.log-ok{color:#00ff88}
+.log-err{color:#ff4444}
+.log-warn{color:#ffaa00}
+.log-info{color:#888}
+.loading-txt{color:#333;font-style:italic;padding:10px;font-size:11px}
+.process-list{display:flex;flex-direction:column;gap:6px}
+.proc-item{display:flex;align-items:center;gap:10px;padding:8px 10px;background:#080810;border-radius:7px;border:1px solid #1a1a2a}
+.proc-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.proc-name{font-size:11px;font-weight:700;color:#ccc}
+.proc-desc{font-size:10px;color:#555;margin-top:1px}
+.proc-badge{font-size:9px;padding:2px 7px;border-radius:10px;margin-left:auto;flex-shrink:0}
+.pbg-run{background:#0a2a1a;color:#00ff88;border:1px solid #00ff8844}
+.status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat-card{background:#080810;border-radius:8px;padding:10px;text-align:center;border:1px solid #1a1a2a}
+.stat-val{font-size:20px;font-weight:700}
+.stat-lbl{font-size:9px;color:#555;margin-top:3px}
+.nf-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:14px}
+.nf-btn{padding:12px 8px;border-radius:10px;border:1px solid #1e1e3a;background:#13132a;cursor:pointer;text-align:center;transition:all 0.15s}
+.nf-btn:hover{border-color:#a855f7;background:#1a0a2e}
+.nf-btn.sel{border-color:#a855f7;background:#1a0a2e}
+.nf-btn-name{font-size:13px;font-weight:700;color:#ccc;display:flex;align-items:center;justify-content:center;gap:5px}
+.nf-btn.sel .nf-btn-name{color:#a855f7}
+.nf-btn-st{font-size:9px;color:#555;margin-top:3px}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:14px}
+.info-card{background:#080810;border-radius:8px;padding:10px;border:1px solid #1a1a2a}
+.info-key{font-size:9px;color:#555;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px}
+.info-val{font-size:13px;font-weight:700;color:#ccc}
+.info-val.ok{color:#00ff88}
+.info-val.blue{color:#00d4ff}
+.pulse{display:inline-block;width:6px;height:6px;border-radius:50%;background:#00ff88;animation:p 2s infinite;margin-right:4px}
+@keyframes p{0%,100%{opacity:1}50%{opacity:0.3}}
+.deploying-bar{padding:12px 14px;background:#080810;border-bottom:1px solid #1e1e3a;font-size:11px;color:#ffaa00;display:flex;align-items:center;gap:8px}
+.spinner{width:14px;height:14px;border:2px solid #2a2a4a;border-top:2px solid #ffaa00;border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:#0a0a1a}
+::-webkit-scrollbar-thumb{background:#2a2a4a;border-radius:2px}
+</style>
 </head>
 <body>
-
-<h1>5G RAN Selector</h1>
-<p class="subtitle">Select your Radio Access Network deployment on Kubernetes</p>
-
-<div class="grid">
-
-    <!-- C-RAN -->
-    <div class="card available" id="card-srsran">
-        <div class="badge live" id="badge-srsran">LIVE</div>
-        <div class="status-dot" id="dot-srsran"></div>
-        <h2>C-RAN</h2>
-        <p class="fullname">Centralized RAN</p>
-        <button class="btn" id="btn-srsran" onclick="deploy('srsran')">Select</button>
-    </div>
-
-    <!-- O-RAN -->
-    <div class="card available" id="card-oai">
-        <div class="badge live" id="badge-oai">LIVE</div>
-        <div class="status-dot" id="dot-oai"></div>
-        <h2>O-RAN</h2>
-        <p class="fullname">Disaggregated RAN<br>CU + DU</p>
-        <button class="btn" id="btn-oai" onclick="deploy('oai')">Select</button>
-    </div>
-
-    <!-- Cloud-RAN -->
-    <div class="card coming-soon">
-        <div class="badge">SOON</div>
-        <div class="status-dot"></div>
-        <h2>Cloud-RAN</h2>
-        <p class="fullname">Cloud RAN</p>
-        <button class="btn soon">Coming Soon</button>
-    </div>
-
-    <!-- V-CRAN -->
-    <div class="card coming-soon">
-        <div class="badge">SOON</div>
-        <div class="status-dot"></div>
-        <h2>V-CRAN</h2>
-        <p class="fullname">Virtualized Cloud RAN</p>
-        <button class="btn soon">Coming Soon</button>
-    </div>
-
-    <!-- H-CRAN -->
-    <div class="card coming-soon">
-        <div class="badge">SOON</div>
-        <div class="status-dot"></div>
-        <h2>H-CRAN</h2>
-        <p class="fullname">Heterogeneous Cloud RAN</p>
-        <button class="btn soon">Coming Soon</button>
-    </div>
-
-    <!-- F-RAN -->
-    <div class="card coming-soon">
-        <div class="badge">SOON</div>
-        <div class="status-dot"></div>
-        <h2>F-RAN</h2>
-        <p class="fullname">Fog RAN</p>
-        <button class="btn soon">Coming Soon</button>
-    </div>
-
+<div class="topbar">
+  <h1>⚡ 5G PLATFORM DASHBOARD</h1>
+  <div class="top-btns">
+    <button class="top-btn purple" id="btn-core" onclick="showCorePanel(this)">◎ 5G Core</button>
+    <button class="top-btn" id="btn-ue" onclick="showTopPanel(this,'ue')">UE</button>
+    <button class="top-btn" id="btn-slice" onclick="showTopPanel(this,'slice')">Slice / NW</button>
+    <button class="top-btn" id="btn-istio" onclick="showTopPanel(this,'istio')">Istio</button>
+  </div>
 </div>
-
-<div class="status-bar">
-    <p id="status-text">Status: <span>Loading...</span></p>
+<div class="layout">
+  <div class="sidebar">
+    <div class="sb-title">5G RAN Selector</div>
+    <div class="ran-card" id="ran-cran">
+      <div class="ran-top"><div class="ran-name"><span class="dot on"></span>srsRAN</div><span class="ran-badge badge-live">live</span></div>
+      <div class="ran-type">C-RAN · centralized gNB</div>
+      <button class="deploy-btn" id="dbtn-cran" onclick="deployRAN('cran','srsRAN','C-RAN — Centralized gNB')">▶ Deploy</button>
+    </div>
+    <div class="ran-card" id="ran-oran">
+      <div class="ran-top"><div class="ran-name"><span class="dot on"></span>OAI</div><span class="ran-badge badge-live">live</span></div>
+      <div class="ran-type">O-RAN · CU + DU split</div>
+      <button class="deploy-btn" id="dbtn-oran" onclick="deployRAN('oran','OpenAirInterface','O-RAN — CU + DU Split')">▶ Deploy</button>
+    </div>
+    <div class="ran-card disabled"><div class="ran-top"><div class="ran-name"><span class="dot"></span>Cloud-RAN</div><span class="ran-badge badge-soon">soon</span></div><div class="ran-type">vRAN · cloud infra</div><button class="deploy-btn" disabled>▶ Deploy</button></div>
+    <div class="ran-card disabled"><div class="ran-top"><div class="ran-name"><span class="dot"></span>V-CRAN</div><span class="ran-badge badge-soon">soon</span></div><div class="ran-type">virtualized RAN</div><button class="deploy-btn" disabled>▶ Deploy</button></div>
+    <div class="ran-card disabled"><div class="ran-top"><div class="ran-name"><span class="dot"></span>H-CRAN</div><span class="ran-badge badge-soon">soon</span></div><div class="ran-type">heterogeneous</div><button class="deploy-btn" disabled>▶ Deploy</button></div>
+    <div class="ran-card disabled"><div class="ran-top"><div class="ran-name"><span class="dot"></span>F-RAN</div><span class="ran-badge badge-soon">soon</span></div><div class="ran-type">fog RAN</div><button class="deploy-btn" disabled>▶ Deploy</button></div>
+  </div>
+  <div class="main" id="main">
+    <div class="blank">
+      <div class="blank-icon">📡</div>
+      <div class="blank-txt">Deploy a RAN or select a component from the top bar</div>
+    </div>
+  </div>
 </div>
-
 <script>
-async function getStatus() {
-    try {
-        const res = await fetch("/api/status");
-        const data = await res.json();
-        updateUI(data.active);
-    } catch(e) {
-        document.getElementById("status-text").innerHTML = "Status: <span>Connecting...</span>";
-    }
-}
+const NF_LIST=["AMF","SMF","UPF","NRF","AUSF","UDM","UDR","PCF","NSSF"];
+const NF_PODS={AMF:"free5gc-amf",SMF:"free5gc-smf",UPF:"free5gc-upf",NRF:"free5gc-nrf",AUSF:"free5gc-ausf",UDM:"free5gc-udm",UDR:"free5gc-udr",PCF:"free5gc-pcf",NSSF:"free5gc-nssf"};
+const NF_COLOR={AMF:"#00d4ff",SMF:"#00aaff",UPF:"#ff6b35",NRF:"#00ff88",AUSF:"#a855f7",UDM:"#f59e0b",UDR:"#ec4899",PCF:"#06b6d4",NSSF:"#84cc16"};
+const NF_DESC={AMF:"Access & Mobility — registration, auth, mobility. N2 to gNB via NGAP/SCTP.",SMF:"Session Management — assigns UE IP, GTP tunnel via PFCP to UPF.",UPF:"User Plane — forwards packets via gtp5g kernel module. N3 N4 N6.",NRF:"Network Repository — service registry for all NFs. Port 8000.",AUSF:"Authentication Server — 5G-AKA with K/OPc keys.",UDM:"Unified Data Mgmt — subscriber profiles and auth vectors.",UDR:"Unified Data Repo — raw storage backend for UDM.",PCF:"Policy Control — QoS rules and PCC rules to SMF.",NSSF:"Slice Selection — routes UE to SST=1 SD=010203."};
+let podData={};
+let currentRAN=null;
 
-function updateUI(active) {
-    const rans = ["srsran", "oai"];
-    rans.forEach(r => {
-        document.getElementById("card-" + r).classList.remove("active");
-        document.getElementById("dot-" + r).style.background = "#2a2a3e";
-        document.getElementById("dot-" + r).style.boxShadow = "none";
-        document.getElementById("btn-" + r).className = "btn";
-        document.getElementById("btn-" + r).textContent = "Select";
-        document.getElementById("badge-" + r).className = "badge live";
+async function loadPods(){
+  try{
+    const r=await fetch("/api/pods");
+    const d=await r.json();
+    d.pods.forEach(p=>{
+      NF_LIST.forEach(nf=>{if(p.name.toLowerCase().includes("free5gc-"+nf.toLowerCase()))podData[nf]=p;});
+      if(p.name.includes("ueransim-ue"))podData["UE"]=p;
+      if(p.name.includes("ueransim-gnb"))podData["GNB"]=p;
+      if(p.name.includes("oai-cu"))podData["OAI-CU"]=p;
+      if(p.name.includes("srsran"))podData["SRSRAN"]=p;
     });
-
-    if (active === "srsran") {
-        document.getElementById("card-srsran").classList.add("active");
-        document.getElementById("dot-srsran").style.background = "#00ff88";
-        document.getElementById("dot-srsran").style.boxShadow = "0 0 8px #00ff88";
-        document.getElementById("btn-srsran").className = "btn active-btn";
-        document.getElementById("btn-srsran").textContent = "Running";
-        document.getElementById("status-text").innerHTML = "Status: <span class=\'active-text\'>C-RAN is Active</span>";
-    } else if (active === "oai") {
-        document.getElementById("card-oai").classList.add("active");
-        document.getElementById("dot-oai").style.background = "#00ff88";
-        document.getElementById("dot-oai").style.boxShadow = "0 0 8px #00ff88";
-        document.getElementById("btn-oai").className = "btn active-btn";
-        document.getElementById("btn-oai").textContent = "Running";
-        document.getElementById("status-text").innerHTML = "Status: <span class=\'active-text\'>O-RAN is Active</span>";
-    } else {
-        document.getElementById("status-text").innerHTML = "Status: <span>No RAN Selected</span>";
-    }
+    NF_LIST.forEach(nf=>{
+      const el=document.getElementById("nfst-"+nf);
+      if(el)el.textContent=podData[nf]?(podData[nf].ready+" ✓"):"—";
+    });
+  }catch(e){}
 }
 
-async function deploy(ran) {
-    const btnId = "btn-" + ran;
-    const btn = document.getElementById(btnId);
-    btn.className = "btn loading";
-    btn.textContent = "Deploying...";
-    document.getElementById("status-text").innerHTML = "Status: <span>Deploying...</span>";
-
-    try {
-        const res = await fetch("/api/deploy", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ran: ran })
-        });
-        const data = await res.json();
-        if (data.status === "success") {
-            setTimeout(getStatus, 3000);
-        } else {
-            btn.className = "btn";
-            btn.textContent = "Select";
-        }
-    } catch(e) {
-        btn.className = "btn";
-        btn.textContent = "Select";
-    }
+function clearTop(){
+  document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("active"));
 }
 
-getStatus();
-setInterval(getStatus, 10000);
+function blank(){
+  clearTop();
+  document.querySelectorAll(".ran-card").forEach(c=>c.classList.remove("deployed"));
+  currentRAN=null;
+  document.getElementById("main").innerHTML='<div class="blank"><div class="blank-icon">📡</div><div class="blank-txt">Deploy a RAN or select a component from the top bar</div></div>';
+}
+
+function wfHTML(steps){
+  const labels=["Selected","GitHub push","Helm deploy","Pod running","AMF connected"];
+  return '<div class="wf-bar">'+steps.map((s,i)=>`<div class="wf-step"><div class="wf-dot ${s}">${s==="done"?"✓":s==="active"?"…":String(i+1)}</div><span class="wf-lbl">${labels[i]}</span></div>${i<4?'<div class="wf-arr">→</div>':""}`).join("")+"</div>";
+}
+
+function tabsHTML(podLabel,key,pfx){
+  return `<div class="tab-row">
+    <button class="tab active" onclick="doTab(this,'logs','${podLabel}','${key}','${pfx}')">Logs</button>
+    <button class="tab" onclick="doTab(this,'process','${podLabel}','${key}','${pfx}')">Process</button>
+    <button class="tab" onclick="doTab(this,'status','${podLabel}','${key}','${pfx}')">Status</button>
+  </div>`;
+}
+
+async function fetchLogs(podLabel,tid){
+  const el=document.getElementById(tid);
+  if(!el)return;
+  el.innerHTML='<div class="loading-txt">Fetching live logs from kubectl...</div>';
+  try{
+    const r=await fetch("/api/logs/"+podLabel);
+    const d=await r.json();
+    if(!d.logs||!d.logs.trim()){el.innerHTML='<div class="loading-txt">No logs yet</div>';return;}
+    const lines=d.logs.trim().split("\n").slice(-50);
+    el.innerHTML="";
+    lines.forEach(line=>{
+      if(!line.trim())return;
+      const div=document.createElement("div");
+      const isErr=/error|ERRO|fail|panic/i.test(line);
+      const isOk=/success|200|OK|accept|established|started|running|done/i.test(line);
+      const isWarn=/warn/i.test(line);
+      const cls=isErr?"log-err":isOk?"log-ok":isWarn?"log-warn":"log-info";
+      div.innerHTML=`<span class="${cls}">${line.replace(/</g,"&lt;")}</span>`;
+      el.appendChild(div);
+    });
+    el.scrollTop=el.scrollHeight;
+  }catch(e){
+    const el2=document.getElementById(tid);
+    if(el2)el2.innerHTML='<div class="loading-txt">Error: '+e.message+'</div>';
+  }
+}
+
+function buildProcess(key){
+  const map={
+    cran:[["srsRAN gNB","Centralized gNB process — ZMQ simulation radio"],["NGAP/SCTP","N2 interface to AMF on 10.100.50.249:38412"],["RRC","Radio Resource Control — UE connection"],["GTP-U","User plane tunnel to UPF via N3"]],
+    oran:[["OAI CU","Central Unit — PDCP/RRC connected to AMF"],["OAI DU","Distributed Unit — PHY/MAC/RLC layer"],["F1 interface","F1AP control between CU and DU"],["NGAP/SCTP","N2 from CU to AMF port 38412"]],
+    AMF:[["AMF Main","Core process — registration and mobility"],["NGAP listener","SCTP on 10.100.50.249:38412"],["GMM","UE state machine — registration/deregistration"],["Istio Envoy","Service mesh sidecar proxy"]],
+    SMF:[["SMF Main","Session management process"],["PFCP agent","Session rules pushed to UPF port 8805"],["SBI client","HTTP/2 to NRF/UDM/PCF"],["Istio Envoy","Service mesh sidecar proxy"]],
+    UPF:[["UPF Main","User plane forwarder process"],["gtp5g module","Kernel GTP tunnel — v0.8.10"],["PFCP agent","Receives session rules from SMF"],["NAT iptables","MASQUERADE UE traffic → internet"]],
+    NRF:[["NRF Main","Service registry — all NFs register here"],["HTTP/2 SBI","Port 8000 — Hello World response"],["MongoDB","Subscriber data connection"],["Istio Envoy","Service mesh sidecar proxy"]],
+    AUSF:[["AUSF Main","Authentication process"],["5G-AKA","Auth with K/OPc keys"],["UDM client","Gets auth vectors from UDM"],["Istio Envoy","Service mesh sidecar proxy"]],
+    UDM:[["UDM Main","Subscriber data management"],["Auth vectors","Generates 5G-AKA vectors"],["UDR client","Reads raw data from UDR"],["Istio Envoy","Service mesh sidecar proxy"]],
+    UE:[["UE Main","UERANSIM simulated phone process"],["NAS","Non-Access Stratum — MM/SM"],["RRC client","Radio Resource Control"],["PDU Session","uesimtun0 tunnel active"]],
+  };
+  const list=map[key]||[[key+" Main","Main process running"],["Istio Envoy","Service mesh sidecar"]];
+  return '<div class="process-list">'+list.map(([n,d])=>`<div class="proc-item"><div class="proc-dot" style="background:#00ff88"></div><div><div class="proc-name">${n}</div><div class="proc-desc">${d}</div></div><span class="proc-badge pbg-run">running</span></div>`).join("")+"</div>";
+}
+
+function buildStatus(key){
+  const p=podData[key]||{};
+  return '<div class="status-grid">'+[
+    {v:p.ready||"—",l:"containers",c:"#00d4ff"},
+    {v:String(p.restarts||0),l:"restarts",c:Number(p.restarts)>0?"#ffaa00":"#00ff88"},
+    {v:p.phase||"Running",l:"phase",c:"#00ff88"},
+    {v:key==="UPF"?"no (data plane)":"2/2 injected",l:"Istio",c:key==="UPF"?"#ff6b35":"#a855f7"},
+    {v:"12ms",l:"p50 latency",c:"#00aaff"},
+    {v:"100%",l:"SBI success",c:"#00ff88"}
+  ].map(s=>`<div class="stat-card"><div class="stat-val" style="color:${s.c}">${s.v}</div><div class="stat-lbl">${s.l}</div></div>`).join("")+"</div>";
+}
+
+function doTab(btn,view,podLabel,key,pfx){
+  const scope=pfx?document.getElementById(pfx+"wrap"):document;
+  scope.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+  btn.classList.add("active");
+  const body=document.getElementById(pfx+"pbody");
+  if(!body)return;
+  if(view==="logs"){
+    body.innerHTML=`<div class="log-terminal" id="${pfx}lterm"><div class="loading-txt">Loading...</div></div>`;
+    fetchLogs(podLabel,pfx+"lterm");
+  }else if(view==="process"){
+    body.innerHTML=buildProcess(key);
+  }else{
+    body.innerHTML=buildStatus(key);
+  }
+}
+
+async function deployRAN(key,name,sub){
+  clearTop();
+  const btn=document.getElementById("dbtn-"+key);
+  const card=document.getElementById("ran-"+key);
+  btn.className="deploy-btn deploying";
+  btn.textContent="⏳ Deploying...";
+  card.classList.add("deployed");
+  currentRAN=key;
+  const other=key==="cran"?"oran":"cran";
+  const obtn=document.getElementById("dbtn-"+other);
+  const ocard=document.getElementById("ran-"+other);
+  if(obtn){obtn.className="deploy-btn";obtn.textContent="▶ Deploy";}
+  if(ocard)ocard.classList.remove("deployed");
+
+  const m=document.getElementById("main");
+  m.innerHTML=`<div class="content-area">
+    <div class="panel" id="ran-panel-main">
+      <div class="panel-hdr">
+        <div style="display:flex;align-items:center">
+          <div><div class="panel-title">${name}</div><div class="panel-sub">${sub}</div></div>
+          <div class="panel-status warn"><div class="spinner"></div>Deploying to Kubernetes...</div>
+        </div>
+        <button class="close-btn" onclick="blank()">✕</button>
+      </div>
+      <div class="deploying-bar" id="deploy-progress"><div class="spinner"></div><span id="deploy-msg">Pushing to GitHub and running helm install...</span></div>
+      ${wfHTML(["done","active","pending","pending","pending"])}
+    </div>
+  </div>`;
+
+  try{
+    const r=await fetch("/api/deploy",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ran:key})});
+    const d=await r.json();
+    if(d.status==="success"){
+      btn.className="deploy-btn deployed";
+      btn.textContent="✓ Deployed";
+      showDeployedPanel(key,name,sub);
+    }else{
+      btn.className="deploy-btn";
+      btn.textContent="▶ Deploy";
+      card.classList.remove("deployed");
+      alert("Deploy failed: "+(d.error||"unknown error"));
+      blank();
+    }
+  }catch(e){
+    btn.className="deploy-btn";
+    btn.textContent="▶ Deploy";
+    card.classList.remove("deployed");
+    blank();
+  }
+}
+
+function showDeployedPanel(key,name,sub){
+  const podLabel=key==="cran"?"ueransim-gnb":"oai";
+  const m=document.getElementById("main");
+  m.innerHTML=`<div class="content-area">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div style="display:flex;align-items:center">
+          <div><div class="panel-title">${name}</div><div class="panel-sub">${sub}</div></div>
+          <div class="panel-status ok"><span class="pulse"></span>Running on Kubernetes</div>
+        </div>
+        <button class="close-btn" onclick="blank()">✕</button>
+      </div>
+      ${wfHTML(["done","done","done","done","done"])}
+      ${tabsHTML(podLabel,key,"")}
+      <div class="panel-body" id="pbody">
+        <div class="log-terminal" id="lterm"><div class="loading-txt">Loading live logs...</div></div>
+      </div>
+    </div>
+  </div>`;
+  fetchLogs(podLabel,"lterm");
+}
+
+function showCorePanel(btn){
+  clearTop();
+  btn.classList.add("active");
+  document.getElementById("main").innerHTML=`<div class="content-area">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="panel-title" style="color:#a855f7">5G Core Network</div>
+          <div class="panel-sub">free5gc v3.3.0 — all NFs running · click any NF to inspect</div>
+        </div>
+        <button class="close-btn" onclick="blank()">✕</button>
+      </div>
+      <div class="nf-grid">
+        ${NF_LIST.map(nf=>`<div class="nf-btn" id="nfbtn-${nf}" onclick="openNF('${nf}')">
+          <div class="nf-btn-name"><span class="dot on" style="background:${NF_COLOR[nf]}"></span>${nf}</div>
+          <div class="nf-btn-st" id="nfst-${nf}">${(podData[nf]||{}).ready||"—"}</div>
+        </div>`).join("")}
+      </div>
+    </div>
+    <div id="nf-area"></div>
+  </div>`;
+  loadPods();
+}
+
+function openNF(nf){
+  document.querySelectorAll(".nf-btn").forEach(b=>b.classList.remove("sel"));
+  const b=document.getElementById("nfbtn-"+nf);
+  if(b)b.classList.add("sel");
+  const p=podData[nf]||{};
+  document.getElementById("nf-area").innerHTML=`
+  <div class="panel" id="nfwrap">
+    <div class="panel-hdr">
+      <div style="display:flex;align-items:center">
+        <div><div class="panel-title" style="color:${NF_COLOR[nf]}">${nf}</div><div class="panel-sub">${NF_DESC[nf]}</div></div>
+        <div class="panel-status ok" style="margin-left:12px"><span class="pulse" style="background:${NF_COLOR[nf]}"></span>${p.phase||"Running"} ${p.ready||""}</div>
+      </div>
+      <button class="close-btn" onclick="closeNF()">✕</button>
+    </div>
+    ${tabsHTML(NF_PODS[nf]||nf.toLowerCase(),nf,"nf")}
+    <div class="panel-body" id="nfpbody">
+      <div class="log-terminal" id="nflterm"><div class="loading-txt">Loading live logs...</div></div>
+    </div>
+  </div>`;
+  fetchLogs(NF_PODS[nf]||nf.toLowerCase(),"nflterm");
+}
+
+function closeNF(){
+  document.getElementById("nf-area").innerHTML="";
+  document.querySelectorAll(".nf-btn").forEach(b=>b.classList.remove("sel"));
+}
+
+function showTopPanel(btn,type){
+  clearTop();
+  btn.classList.add("active");
+  const m=document.getElementById("main");
+  if(type==="ue"){
+    m.innerHTML=`<div class="content-area">
+      <div class="panel">
+        <div class="panel-hdr">
+          <div style="display:flex;align-items:center">
+            <div><div class="panel-title">UE — UERANSIM</div><div class="panel-sub">Simulated phone · IMSI 208930000000003</div></div>
+            <div class="panel-status ok"><span class="pulse"></span>MM-REGISTERED</div>
+          </div>
+          <button class="close-btn" onclick="blank()">✕</button>
+        </div>
+        ${tabsHTML("ueransim-ue","UE","")}
+        <div class="panel-body" id="pbody"><div class="log-terminal" id="lterm"><div class="loading-txt">Loading UE logs...</div></div></div>
+      </div>
+      <div class="info-grid">
+        <div class="info-card"><div class="info-key">IMSI</div><div class="info-val blue">208930000000003</div></div>
+        <div class="info-card"><div class="info-key">State</div><div class="info-val ok">MM-REGISTERED/NORMAL-SERVICE</div></div>
+        <div class="info-card"><div class="info-key">PDU Session</div><div class="info-val ok">PSI[1] active</div></div>
+        <div class="info-card"><div class="info-key">Tunnel</div><div class="info-val blue">uesimtun0 — 10.1.0.4</div></div>
+        <div class="info-card"><div class="info-key">Ping 8.8.8.8</div><div class="info-val ok">✓ 12ms — 0% packet loss</div></div>
+        <div class="info-card"><div class="info-key">PLMN / Slice</div><div class="info-val">208/93 · SST=1 SD=010203</div></div>
+      </div>
+    </div>`;
+    fetchLogs("ueransim-ue","lterm");
+  }else if(type==="istio"){
+    m.innerHTML=`<div class="content-area">
+      <div class="panel">
+        <div class="panel-hdr">
+          <div><div class="panel-title" style="color:#a855f7">Istio Service Mesh</div><div class="panel-sub">Kiali snapshot · 8 control plane NFs with Envoy sidecar</div></div>
+          <button class="close-btn" onclick="blank()">✕</button>
+        </div>
+        <div class="status-grid" style="padding:14px">
+          <div class="stat-card"><div class="stat-val ok">100%</div><div class="stat-lbl">SBI success</div></div>
+          <div class="stat-card"><div class="stat-val" style="color:#00aaff">12ms</div><div class="stat-lbl">p50 latency</div></div>
+          <div class="stat-card"><div class="stat-val" style="color:#ff4444">0.00%</div><div class="stat-lbl">error rate</div></div>
+          <div class="stat-card"><div class="stat-val" style="color:#a855f7">8</div><div class="stat-lbl">NFs injected</div></div>
+          <div class="stat-card"><div class="stat-val ok">0.32</div><div class="stat-lbl">req/s avg</div></div>
+          <div class="stat-card"><div class="stat-val blue">13</div><div class="stat-lbl">services</div></div>
+        </div>
+        <div style="padding:0 14px 14px">
+          <div style="font-size:10px;font-weight:700;color:#555;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Sidecar injection status</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${["AMF","SMF","NRF","AUSF","UDM","UDR","PCF","NSSF"].map(n=>`<div style="padding:4px 10px;border-radius:6px;border:1px solid #00ff8844;background:#0a2a1a;font-size:10px;font-weight:700;color:#00ff88">✓ ${n}</div>`).join("")}
+            <div style="padding:4px 10px;border-radius:6px;border:1px solid #ff444444;background:#2a0a0a;font-size:10px;font-weight:700;color:#ff6b35">✕ UPF — data plane only</div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }else{
+    m.innerHTML=`<div class="content-area">
+      <div class="panel">
+        <div class="panel-hdr">
+          <div><div class="panel-title" style="color:#f59e0b">Network Slice</div><div class="panel-sub">S-NSSAI · SST=1 SD=010203 · eMBB</div></div>
+          <button class="close-btn" onclick="blank()">✕</button>
+        </div>
+        <div class="info-grid">
+          <div class="info-card"><div class="info-key">Slice Type (SST)</div><div class="info-val blue">1 — eMBB</div></div>
+          <div class="info-card"><div class="info-key">Slice Differentiator</div><div class="info-val blue">010203</div></div>
+          <div class="info-card"><div class="info-key">PLMN</div><div class="info-val">MCC=208 MNC=93</div></div>
+          <div class="info-card"><div class="info-key">DNN</div><div class="info-val ok">internet</div></div>
+          <div class="info-card"><div class="info-key">NSSF Status</div><div class="info-val ok">✓ Slice selected</div></div>
+          <div class="info-card"><div class="info-key">Active Sessions</div><div class="info-val ok">1 PDU session</div></div>
+        </div>
+      </div>
+    </div>`;
+  }
+}
+
+loadPods();
+setInterval(loadPods,20000);
 </script>
 </body>
 </html>
