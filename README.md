@@ -257,3 +257,59 @@ UI shows green "Running" status
 ## Author
 Kumar - Telco Cloud Engineer
 Amrita Vishwa Vidyapeetham - ECE Department
+
+
+---
+
+## 🎛️ Management Layer
+
+| Tool | Port | Purpose |
+|---|---|---|
+| **Rancher** | 8443 | Kubernetes cluster management — visual pod inspection, logs, shell access |
+| **Custom Dashboard** | 8090 | RAN selector + live NF logs + deploy via GitOps |
+| **Kiali** | 20001 | Istio service mesh observability — traffic graph, success rates |
+| **free5gc WebUI** | 30500 | Subscriber management |
+
+### Rancher Setup
+
+```bash
+# Install cert-manager (required by Rancher)
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.15.3/cert-manager.yaml
+
+# Install Rancher
+helm repo add rancher-latest https://releases.rancher.com/server-charts/latest
+helm install rancher rancher-latest/rancher \
+  --namespace cattle-system \
+  --set hostname=rancher.<HOST_IP>.sslip.io \
+  --set bootstrapPassword=<PASSWORD> \
+  --set replicas=1
+
+# Access via port-forward
+kubectl port-forward -n cattle-system svc/rancher 8443:443 --address 0.0.0.0
+# Open: https://<HOST_IP>:8443
+```
+
+### Istio Service Mesh
+
+All 8 control plane NFs (AMF, SMF, NRF, AUSF, UDM, UDR, PCF, NSSF) run with Envoy sidecars (2/2).
+UPF is intentionally excluded — it handles GTP-U data plane traffic which the mesh does not proxy.
+
+Key integration steps:
+1. Installed Istio with **CNI plugin** (`components.cni.enabled=true`) — avoids init container breakage with Multus
+2. Labeled namespace: `kubectl label namespace free5gc istio-injection=enabled`
+3. Excluded NRF and MongoDB ClusterIPs from interception via `traffic.sidecar.istio.io/excludeOutboundIPRanges` so init containers (wait-nrf, wait-mongo) can reach dependencies before Envoy starts
+4. Result: 100% SBI success rate, ~12ms p50 latency in Kiali
+
+### Architecture (matches Amrita reference poster)
+## 🗺️ Roadmap
+
+- [x] free5gc core on Kubernetes — all 12 pods
+- [x] UERANSIM end-to-end — UE pings 8.8.8.8 through 5G core
+- [x] srsRAN (C-RAN) connected to AMF via NGAP
+- [x] OAI O-RAN CU+DU deployed with F1 interface
+- [x] RAN Selector dashboard with GitOps deploy + live kubectl logs
+- [x] Istio service mesh — 8 NFs with Envoy sidecars
+- [x] Rancher cluster management
+- [ ] OSM (Open Source MANO) — ETSI NFV orchestration for UPF/RAN lifecycle
+- [ ] O-RAN Near-RT RIC — activate OAI E2 interface
+- [ ] USRP B210 — real RF with physical SIM
