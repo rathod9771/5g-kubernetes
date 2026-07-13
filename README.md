@@ -310,6 +310,40 @@ Key integration steps:
 - [x] RAN Selector dashboard with GitOps deploy + live kubectl logs
 - [x] Istio service mesh — 8 NFs with Envoy sidecars
 - [x] Rancher cluster management
-- [ ] OSM (Open Source MANO) — ETSI NFV orchestration for UPF/RAN lifecycle
+- [x] OSM (Open Source MANO) - ETSI NFV orchestration - 14/14 pods running
 - [ ] O-RAN Near-RT RIC — activate OAI E2 interface
 - [ ] USRP B210 — real RF with physical SIM
+
+
+---
+
+## 🏗️ OSM (Open Source MANO) — ETSI NFV Orchestration
+
+Deployed OSM 14 onto the existing kubeadm cluster (not a separate installer-managed cluster) by using its Helm chart directly instead of the full installer script.
+
+### Why not the standard installer?
+`install_osm.sh` assumes a blank machine and tries to run its own `kubeadm init` — which collides with an already-running cluster (port 6443, existing etcd, manifest files). Solution: extract the Helm chart the installer ships (`/usr/share/osm-devops/installers/helm/osm`) and deploy it directly into an `osm` namespace on the existing cluster.
+
+### Challenges & fixes
+
+| Problem | Root Cause | Fix |
+|---|---|---|
+| 5 Services failed on `helm install` | Chart hardcodes ports outside the NodePort range (80, 3000, 9091, 9998, 9999) | Overrode via `--set` for most; patched `grafana-service.yaml` directly (its port was hardcoded, not templated) |
+| `ngui` CrashLoopBackOff | nginx couldn't resolve `nbi` upstream | Resolved once NBI came up (see below) |
+| `nbi`, `ro`, `mon`, `lcm` stuck in `Init` | MongoDB was never deployed — OSM's chart expects it as a **separate** release | `helm install mongodb-k8s bitnami/mongodb -f mongodb-values.yaml` |
+| `lcm` `FailedMount: secret "lcm-client-cert" not found` | cert-manager `Certificate` → `ClusterIssuer(ca-issuer)` → needs `osm-ca` secret, but cert-manager reads CA secrets from **its own namespace**, while the chart created it in `osm` | Copied `osm-ca` secret from `osm` → `cert-manager` namespace, then restarted the cert-manager controller pod to force re-evaluation |
+| `lcm` init container `alpine:latest` never pulled | No internet image pull path for that tag in containerd cache | `docker pull` → `docker save` → `ctr images import` (same pattern used earlier for free5gc/UPF images) |
+
+### Result
+All 14 OSM pods Running: NBI, LCM, RO, MON, Keystone, NG-UI, Kafka, Zookeeper, MongoDB (+arbiter), MySQL, Prometheus, Grafana, Webhook-translator.
+
+Access:
+```bash
+# OSM UI
+http://<HOST_IP>:30080   # admin / admin
+
+# OSM NBI (API)
+http://<HOST_IP>:30999
+```
+
+### Architecture — matches Amrita reference poster in full
