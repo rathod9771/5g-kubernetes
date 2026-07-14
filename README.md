@@ -347,3 +347,50 @@ http://<HOST_IP>:30999
 ```
 
 ### Architecture — matches Amrita reference poster in full
+
+
+---
+
+## 🔗 OSM — Kubernetes Cluster Registration (VIM Integration)
+
+Registered the existing kubeadm cluster as a target for OSM-orchestrated deployments.
+
+### Steps
+
+**1. Install OSM client (snap):**
+```bash
+sudo snap install osmclient
+export OSM_HOSTNAME=172.30.18.32:30999
+```
+
+**2. Create a placeholder VIM account** (OSM requires every K8s cluster to be linked to a VIM, even for pure-Kubernetes deployments with no OpenStack/AWS backing):
+```bash
+osm --hostname 172.30.18.32:30999 vim-create \
+  --name dummy-vim --user admin --password admin \
+  --auth_url http://localhost/dummy --tenant admin \
+  --account_type dummy
+```
+
+**3. Register the cluster:**
+```bash
+# Snap sandboxing blocks direct access to ~/.kube/config - copy it to a readable path first
+cp ~/.kube/config ~/osm-kubeconfig/config
+chmod 644 ~/osm-kubeconfig/config
+
+osm --hostname 172.30.18.32:30999 k8scluster-add \
+  --creds ~/osm-kubeconfig/config \
+  --version '1.29' \
+  --vim dummy-vim \
+  --description "Local kubeadm 5G cluster" \
+  --k8s-nets '{"net1": "cluster-network"}' \
+  local-5g-cluster
+```
+
+### Result
+**Helm: ENABLED** is what matters — all existing KNFs (free5gc, srsRAN, OAI) are Helm-based, so OSM can deploy/manage them through this connector. Juju:ERROR is expected and harmless since no Juju-charm VNFs are used in this project (Juju requires a separately bootstrapped controller).
+
+### Key challenge solved
+The OSM web UI's "Add K8s Cluster" form requires selecting a VIM Account before it will let you submit — but the VIM Accounts page had no generic/no-op option in the UI. Solved by using the `osmclient` CLI directly, which exposes the `--account_type dummy` VIM type not surfaced in the web form.
+
+### Next step
+Package srsRAN Helm chart as a KNF (Kubernetes Network Function) descriptor, then build an NSD (Network Service Descriptor) so OSM can instantiate/terminate the RAN deployment as a proper Network Service — the ETSI-standard path alongside the existing GitOps dashboard.
