@@ -100,6 +100,15 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 ::-webkit-scrollbar{width:3px;height:3px}
 ::-webkit-scrollbar-track{background:#0a0a1a}
 ::-webkit-scrollbar-thumb{background:#2a2a4a;border-radius:2px}
+
+.arch-btn,.stack-btn{padding:7px 10px;border-radius:7px;border:1px solid #1e1e3a;background:#13132a;color:#aaa;font-size:11px;cursor:pointer;text-align:left;font-weight:600;transition:all 0.15s;display:flex;align-items:center;justify-content:space-between}
+.arch-btn:hover,.stack-btn:hover{border-color:#444}
+.arch-btn.sel{border-color:#00d4ff;background:#001a2e;color:#00d4ff}
+.stack-btn.sel{border-color:#a855f7;background:#1a0a2e;color:#a855f7}
+.arch-btn.disabled{opacity:0.3;cursor:default}
+.bdg-mini{font-size:8px;padding:1px 5px;border-radius:10px}
+.bdg-mini.live{background:#0a2a1a;color:#00ff88;border:1px solid #00ff8844}
+.bdg-mini.soon{background:#1a1a1a;color:#333;border:1px solid #222}
 </style>
 </head>
 <body>
@@ -115,20 +124,27 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 <div class="layout">
   <div class="sidebar">
     <div class="sb-title">5G RAN Selector</div>
-    <div class="ran-card" id="ran-cran">
-      <div class="ran-top"><div class="ran-name"><span class="dot on"></span>srsRAN</div><span class="ran-badge badge-live">live</span></div>
-      <div class="ran-type">C-RAN · centralized gNB</div>
-      <button class="deploy-btn" id="dbtn-cran" onclick="deployRAN('cran','srsRAN','C-RAN — Centralized gNB')">▶ Deploy</button>
+    <div style="padding:0 2px 8px">
+      <div style="font-size:9px;color:#666;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Step 1 - Architecture</div>
+      <div id="arch-list" style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
+        <button class="arch-btn" data-arch="cran" onclick="selectArch(this,'cran','C-RAN',true)">C-RAN <span class="bdg-mini live">live</span></button>
+        <button class="arch-btn" data-arch="oran" onclick="selectArch(this,'oran','O-RAN',true)">O-RAN <span class="bdg-mini live">live</span></button>
+        <button class="arch-btn" data-arch="cloudran" onclick="selectArch(this,'cloudran','Cloud-RAN',false)">Cloud-RAN <span class="bdg-mini soon">soon</span></button>
+        <button class="arch-btn" data-arch="vcran" onclick="selectArch(this,'vcran','V-CRAN',false)">V-CRAN <span class="bdg-mini soon">soon</span></button>
+        <button class="arch-btn" data-arch="hcran" onclick="selectArch(this,'hcran','H-CRAN',false)">H-CRAN <span class="bdg-mini soon">soon</span></button>
+        <button class="arch-btn" data-arch="fran" onclick="selectArch(this,'fran','F-RAN',false)">F-RAN <span class="bdg-mini soon">soon</span></button>
+      </div>
+
+      <div id="stack-section" style="display:none">
+        <div style="font-size:9px;color:#666;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Step 2 - RAN Software</div>
+        <div id="stack-list" style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px">
+          <button class="stack-btn" data-stack="srsran" onclick="selectStack(this,'srsran','srsRAN')">srsRAN</button>
+          <button class="stack-btn" data-stack="oai" onclick="selectStack(this,'oai','OpenAirInterface')">OAI</button>
+        </div>
+        <button class="deploy-btn" id="combo-deploy-btn" onclick="deployCombo()" disabled>▶ Deploy</button>
+      </div>
     </div>
-    <div class="ran-card" id="ran-oran">
-      <div class="ran-top"><div class="ran-name"><span class="dot on"></span>OAI</div><span class="ran-badge badge-live">live</span></div>
-      <div class="ran-type">O-RAN · CU + DU split</div>
-      <button class="deploy-btn" id="dbtn-oran" onclick="deployRAN('oran','OpenAirInterface','O-RAN — CU + DU Split')">▶ Deploy</button>
-    </div>
-    <div class="ran-card disabled"><div class="ran-top"><div class="ran-name"><span class="dot"></span>Cloud-RAN</div><span class="ran-badge badge-soon">soon</span></div><div class="ran-type">vRAN · cloud infra</div><button class="deploy-btn" disabled>▶ Deploy</button></div>
-    <div class="ran-card disabled"><div class="ran-top"><div class="ran-name"><span class="dot"></span>V-CRAN</div><span class="ran-badge badge-soon">soon</span></div><div class="ran-type">virtualized RAN</div><button class="deploy-btn" disabled>▶ Deploy</button></div>
-    <div class="ran-card disabled"><div class="ran-top"><div class="ran-name"><span class="dot"></span>H-CRAN</div><span class="ran-badge badge-soon">soon</span></div><div class="ran-type">heterogeneous</div><button class="deploy-btn" disabled>▶ Deploy</button></div>
-    <div class="ran-card disabled"><div class="ran-top"><div class="ran-name"><span class="dot"></span>F-RAN</div><span class="ran-badge badge-soon">soon</span></div><div class="ran-type">fog RAN</div><button class="deploy-btn" disabled>▶ Deploy</button></div>
+</div>
   </div>
   <div class="main" id="main">
     <div class="blank">
@@ -455,6 +471,95 @@ function showTopPanel(btn,type){
 
 loadPods();
 setInterval(loadPods,20000);
+
+let selectedArch=null, selectedStack=null;
+
+function selectArch(btn,arch,label,enabled){
+  if(!enabled)return;
+  document.querySelectorAll(".arch-btn").forEach(b=>b.classList.remove("sel"));
+  btn.classList.add("sel");
+  selectedArch={key:arch,label:label};
+  selectedStack=null;
+  document.querySelectorAll(".stack-btn").forEach(b=>b.classList.remove("sel"));
+  document.getElementById("stack-section").style.display="block";
+  document.getElementById("combo-deploy-btn").disabled=true;
+  document.getElementById("combo-deploy-btn").textContent="\u25b6 Deploy";
+}
+
+function selectStack(btn,stack,label){
+  document.querySelectorAll(".stack-btn").forEach(b=>b.classList.remove("sel"));
+  btn.classList.add("sel");
+  selectedStack={key:stack,label:label};
+  document.getElementById("combo-deploy-btn").disabled=false;
+}
+
+async function deployCombo(){
+  if(!selectedArch||!selectedStack)return;
+  const comboKey=selectedArch.key+"-"+selectedStack.key;
+  const name=selectedStack.label+" on "+selectedArch.label;
+  const sub=selectedArch.label+" architecture using "+selectedStack.label+" software";
+  clearTop();
+
+  const btn=document.getElementById("combo-deploy-btn");
+  btn.className="deploy-btn deploying";
+  btn.textContent="\u23f3 Deploying...";
+
+  const m=document.getElementById("main");
+  m.innerHTML=`<div class="content-area">
+    <div class="panel" id="ran-panel-main">
+      <div class="panel-hdr">
+        <div style="display:flex;align-items:center">
+          <div><div class="panel-title">${name}</div><div class="panel-sub">${sub}</div></div>
+          <div class="panel-status warn"><div class="spinner"></div>Deploying to Kubernetes...</div>
+        </div>
+        <button class="close-btn" onclick="blank()">\u2715</button>
+      </div>
+      <div class="deploying-bar"><div class="spinner"></div><span>Pushing to GitHub and running helm install...</span></div>
+      ${wfHTML(["done","active","pending","pending","pending"])}
+    </div>
+  </div>`;
+
+  try{
+    const r=await fetch("/api/deploy",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ran:comboKey,arch:selectedArch.key,stack:selectedStack.key})});
+    const d=await r.json();
+    if(d.status==="success"){
+      btn.className="deploy-btn deployed";
+      btn.textContent="\u2713 Deployed";
+      showComboDeployedPanel(comboKey,name,sub,selectedStack.key);
+    }else{
+      btn.className="deploy-btn";
+      btn.textContent="\u25b6 Deploy";
+      alert("Deploy failed: "+(d.error||"Not yet implemented for this combination"));
+      blank();
+    }
+  }catch(e){
+    btn.className="deploy-btn";
+    btn.textContent="\u25b6 Deploy";
+    blank();
+  }
+}
+
+function showComboDeployedPanel(comboKey,name,sub,stackKey){
+  const podLabel=stackKey==="srsran"?"ueransim-gnb":"oai";
+  const m=document.getElementById("main");
+  m.innerHTML=`<div class="content-area">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div style="display:flex;align-items:center">
+          <div><div class="panel-title">${name}</div><div class="panel-sub">${sub}</div></div>
+          <div class="panel-status ok"><span class="pulse"></span>Running on Kubernetes</div>
+        </div>
+        <button class="close-btn" onclick="blank()">\u2715</button>
+      </div>
+      ${wfHTML(["done","done","done","done","done"])}
+      ${tabsHTML(podLabel,stackKey,"")}
+      <div class="panel-body" id="pbody">
+        <div class="log-terminal" id="lterm"><div class="loading-txt">Loading live logs...</div></div>
+      </div>
+    </div>
+  </div>`;
+  fetchLogs(podLabel,"lterm");
+}
 </script>
 </body>
 </html>

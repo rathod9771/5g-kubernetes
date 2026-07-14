@@ -88,7 +88,18 @@ def status():
 def deploy():
     ran_data = request.json
     ran = ran_data.get("ran")
-    ran = {"cran":"srsran","oran":"oai"}.get(ran,ran)
+    # Map architecture-stack combos to actual deployable helm releases
+    combo_map = {
+        "cran-srsran": "srsran",
+        "oran-oai": "oai",
+        # Not yet implemented combos - will return a friendly error
+    }
+    if ran in combo_map:
+        ran = combo_map[ran]
+    elif "-" in ran and ran not in ["srsran", "oai"]:
+        return jsonify({"error": f"Combination \'{ran}\' not yet implemented - only C-RAN+srsRAN and O-RAN+OAI are currently deployable"}), 400
+    else:
+        ran = {"cran":"srsran","oran":"oai"}.get(ran,ran)
     if ran not in ["srsran","oai","none"]:
         return jsonify({"error": "Invalid RAN"}), 400
     try:
