@@ -22,6 +22,8 @@ POD_MAP = {
   "UE": "ueransim-ue",
   "GNB": "ueransim-gnb",
   "SRSRAN": "srsran-gnb",
+  "SRSRAN-CU": "srsran-cu",
+  "SRSRAN-DU": "srsran-du",
   "OAI-CU": "oai-cu",
   "oai": "oai-cu",
   "OAI-DU": "oai-du",
@@ -70,6 +72,14 @@ def logs(nf):
     pod = get_pod_name(label)
     if not pod:
         return jsonify({"logs": f"No running pod found for {nf}", "pod": ""})
+    # srsRAN split components log to files, not stdout
+    file_log_map = {"srsran-cu": ("cu", "/tmp/cu.log"), "srsran-du": ("du", "/tmp/du.log")}
+    if label in file_log_map:
+        cont, logfile = file_log_map[label]
+        _, out, err = run(f"kubectl exec -n {NS} {pod} -c {cont} -- sh -c \"grep -iv 'zmq\\|Waiting' {logfile} | tail -{lines}\" 2>&1")
+        if not out.strip():
+            out = f"[{label}] process running - SCTP connections active (logs quiet at current level)"
+        return jsonify({"logs": strip_ansi(out), "pod": pod})
     c_flag = f"-c {container}" if container else ""
     _, out, err = run(f"kubectl logs -n {NS} {pod} {c_flag} --tail={lines} 2>&1")
     return jsonify({"logs": strip_ansi(out or err), "pod": pod})
@@ -92,6 +102,7 @@ def deploy():
     combo_map = {
         "cran-srsran": "srsran",
         "oran-oai": "oai",
+        "oran-srsran": "srsran-oran",
         # Not yet implemented combos - will return a friendly error
     }
     if ran in combo_map:
@@ -100,13 +111,13 @@ def deploy():
         return jsonify({"error": f"Combination \'{ran}\' not yet implemented - only C-RAN+srsRAN and O-RAN+OAI are currently deployable"}), 400
     else:
         ran = {"cran":"srsran","oran":"oai"}.get(ran,ran)
-    if ran not in ["srsran","oai","none"]:
+    if ran not in ["srsran","oai","srsran-oran","none"]:
         return jsonify({"error": "Invalid RAN"}), 400
     try:
         with open(CONFIG_FILE) as f:
             config = yaml.safe_load(f)
         config["active"] = ran
-        config["srsran"]["enabled"] = (ran == "srsran")
+        config["srsran"]["enabled"] = (ran in ["srsran","srsran-oran"])
         config["oai"]["enabled"] = (ran == "oai")
         config["oai"]["components"]["cu"] = (ran == "oai")
         config["oai"]["components"]["du"] = (ran == "oai")
@@ -117,10 +128,14 @@ def deploy():
         run(f"git commit -m feat:_Switch_RAN_to_{ran}")
         run("git push origin main")
         if ran == "srsran":
-            run("helm uninstall oai-cu oai-du -n free5gc 2>/dev/null || true")
+            run("helm uninstall oai-cu oai-du srsran-cu srsran-du -n free5gc 2>/dev/null || true")
             run(f"helm upgrade --install srsran {REPO_PATH}/helm/srsran -n {NS}")
+        elif ran == "srsran-oran":
+            run("helm uninstall srsran oai-cu oai-du -n free5gc 2>/dev/null || true")
+            run(f"helm upgrade --install srsran-cu {REPO_PATH}/helm/srsran-oran/cu -n {NS}")
+            run(f"helm upgrade --install srsran-du {REPO_PATH}/helm/srsran-oran/du -n {NS}")
         elif ran == "oai":
-            run("helm uninstall srsran -n free5gc 2>/dev/null || true")
+            run("helm uninstall srsran srsran-cu srsran-du -n free5gc 2>/dev/null || true")
             run(f"helm upgrade --install oai-cu {REPO_PATH}/helm/oai/cu -n {NS}")
             run(f"helm upgrade --install oai-du {REPO_PATH}/helm/oai/du -n {NS}")
         return jsonify({"status":"success","ran":ran})

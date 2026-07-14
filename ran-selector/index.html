@@ -540,7 +540,7 @@ async function deployCombo(){
 }
 
 function showComboDeployedPanel(comboKey,name,sub,stackKey){
-  const podLabel=stackKey==="srsran"?"ueransim-gnb":"oai";
+  const podLabel=(comboKey==="oran-srsran")?"SRSRAN-CU":(stackKey==="srsran"?"ueransim-gnb":"oai");
   const m=document.getElementById("main");
   m.innerHTML=`<div class="content-area">
     <div class="panel">
