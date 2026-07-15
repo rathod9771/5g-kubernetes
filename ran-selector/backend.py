@@ -25,6 +25,7 @@ POD_MAP = {
   "SRSRAN-CU": "srsran-cu",
   "SRSRAN-DU": "srsran-du",
   "OAI-CU": "oai-cu",
+  "OAI-CRAN": "oai-cran",
   "oai": "oai-cu",
   "OAI-DU": "oai-du",
 }
@@ -77,8 +78,24 @@ def logs(nf):
     if label in file_log_map:
         cont, logfile = file_log_map[label]
         _, out, err = run(f"kubectl exec -n {NS} {pod} -c {cont} -- sh -c \"grep -iv 'zmq\\|Waiting' {logfile} | tail -{lines}\" 2>&1")
-        if not out.strip():
-            out = f"[{label}] process running - SCTP connections active (logs quiet at current level)"
+        # Enrich with live SCTP association status - the real connection proof
+        _, sctp, _ = run(f"kubectl exec -n {NS} {pod} -c {cont} -- sh -c \"cat /proc/net/sctp/assocs 2>/dev/null | tail -n +2\" 2>&1")
+        sctp_summary = ""
+        for line in sctp.strip().split("\n"):
+            if "<->" in line:
+                parts = line.split()
+                try:
+                    arrow = parts.index("<->")
+                    lport, rport = parts[11], parts[12]
+                    laddr = parts[arrow-1]
+                    raddr = parts[arrow+1].lstrip("*")
+                    port_name = {"38412":"NGAP/AMF","38472":"F1-C","2152":"GTP-U"}.get(rport, rport)
+                    sctp_summary += f"[SCTP ESTABLISHED] {laddr}:{lport} <-> {raddr}:{rport} ({port_name})\n"
+                except (ValueError, IndexError):
+                    pass
+        if sctp.strip():
+            sctp_summary = "=== Live SCTP Associations (F1/NGAP) ===\n" + sctp_summary + "=== Log file ===\n"
+        out = sctp_summary + (out if out.strip() else f"[{label}] process running - startup complete, event logs quiet at current log level")
         return jsonify({"logs": strip_ansi(out), "pod": pod})
     c_flag = f"-c {container}" if container else ""
     _, out, err = run(f"kubectl logs -n {NS} {pod} {c_flag} --tail={lines} 2>&1")
@@ -101,6 +118,7 @@ def deploy():
     # Map architecture-stack combos to actual deployable helm releases
     combo_map = {
         "cran-srsran": "srsran",
+        "cran-oai": "oai-cran",
         "oran-oai": "oai",
         "oran-srsran": "srsran-oran",
         # Not yet implemented combos - will return a friendly error
@@ -111,7 +129,7 @@ def deploy():
         return jsonify({"error": f"Combination \'{ran}\' not yet implemented - only C-RAN+srsRAN and O-RAN+OAI are currently deployable"}), 400
     else:
         ran = {"cran":"srsran","oran":"oai"}.get(ran,ran)
-    if ran not in ["srsran","oai","srsran-oran","none"]:
+    if ran not in ["srsran","oai","srsran-oran","oai-cran","none"]:
         return jsonify({"error": "Invalid RAN"}), 400
     try:
         with open(CONFIG_FILE) as f:
@@ -128,19 +146,44 @@ def deploy():
         run(f"git commit -m feat:_Switch_RAN_to_{ran}")
         run("git push origin main")
         if ran == "srsran":
-            run("helm uninstall oai-cu oai-du srsran-cu srsran-du -n free5gc 2>/dev/null || true")
+            run("helm uninstall oai-cu oai-du srsran-cu srsran-du oai-cran -n free5gc --wait --timeout=60s 2>&1 || true")
             run(f"helm upgrade --install srsran {REPO_PATH}/helm/srsran -n {NS}")
+        elif ran == "oai-cran":
+            run("helm uninstall srsran srsran-cu srsran-du oai-cu oai-du -n free5gc --wait --timeout=60s 2>&1 || true")
+            run(f"helm upgrade --install oai-cran {REPO_PATH}/helm/oai-cran -n {NS}")
         elif ran == "srsran-oran":
-            run("helm uninstall srsran oai-cu oai-du -n free5gc 2>/dev/null || true")
+            run("helm uninstall srsran oai-cu oai-du oai-cran -n free5gc --wait --timeout=60s 2>&1 || true")
             run(f"helm upgrade --install srsran-cu {REPO_PATH}/helm/srsran-oran/cu -n {NS}")
             run(f"helm upgrade --install srsran-du {REPO_PATH}/helm/srsran-oran/du -n {NS}")
         elif ran == "oai":
-            run("helm uninstall srsran srsran-cu srsran-du -n free5gc 2>/dev/null || true")
+            run("helm uninstall srsran srsran-cu srsran-du oai-cran -n free5gc --wait --timeout=60s 2>&1 || true")
             run(f"helm upgrade --install oai-cu {REPO_PATH}/helm/oai/cu -n {NS}")
             run(f"helm upgrade --install oai-du {REPO_PATH}/helm/oai/du -n {NS}")
         return jsonify({"status":"success","ran":ran})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/verify-clean", methods=["GET"])
+def verify_clean():
+    """Check that only ONE RAN combo is actually running - detects leftover pods from failed switches"""
+    ran_labels = ["srsran-gnb", "srsran-cu", "srsran-du", "oai-cu", "oai-du", "oai-cran-gnb"]
+    running = []
+    for label in ran_labels:
+        _, out, _ = run(f"kubectl get pods -n {NS} --no-headers 2>/dev/null | grep {label} | grep Running")
+        if out.strip():
+            running.append(label)
+    # Group into combos
+    combos_present = set()
+    if "srsran-gnb" in running: combos_present.add("cran-srsran")
+    if "oai-cran-gnb" in running: combos_present.add("cran-oai")
+    if "srsran-cu" in running or "srsran-du" in running: combos_present.add("oran-srsran")
+    if "oai-cu" in running or "oai-du" in running: combos_present.add("oran-oai")
+    return jsonify({
+        "clean": len(combos_present) <= 1,
+        "active_combos": list(combos_present),
+        "running_pods": running
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8090, debug=False)

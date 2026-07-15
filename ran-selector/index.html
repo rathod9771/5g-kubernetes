@@ -119,6 +119,8 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
     <button class="top-btn" id="btn-ue" onclick="showTopPanel(this,'ue')">UE</button>
     <button class="top-btn" id="btn-slice" onclick="showTopPanel(this,'slice')">Slice / NW</button>
     <button class="top-btn" id="btn-istio" onclick="showTopPanel(this,'istio')">Istio</button>
+    <button class="top-btn" id="btn-verify" onclick="manualVerifyClean()">Verify Clean</button>
+    <span id="clean-badge" style="font-size:10px;padding:4px 10px;border-radius:6px;font-weight:600"></span>
   </div>
 </div>
 <div class="layout">
@@ -369,6 +371,7 @@ function showCorePanel(btn){
     <div id="nf-area"></div>
   </div>`;
   loadPods();
+setTimeout(()=>verifyClean(true), 1500);
 }
 
 function openNF(nf){
@@ -493,11 +496,81 @@ function selectStack(btn,stack,label){
   document.getElementById("combo-deploy-btn").disabled=false;
 }
 
+let lastDeployedCombo=null;
+
+function showConfirmModal(comboLabel, onYes){
+  const overlay=document.createElement("div");
+  overlay.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999";
+  overlay.innerHTML=`<div style="background:#13132a;border:1px solid #2a2a4a;border-radius:12px;padding:20px 24px;max-width:340px;text-align:center">
+    <div style="font-size:13px;color:#ccc;margin-bottom:16px;line-height:1.5">Do you really want to switch to <b style="color:#00d4ff">${comboLabel}</b>? The currently active RAN will be stopped.</div>
+    <div style="display:flex;gap:10px;justify-content:center">
+      <button id="confirm-no" style="padding:6px 18px;border-radius:6px;border:1px solid #2a2a4a;background:transparent;color:#888;font-size:12px;cursor:pointer;font-weight:600">No</button>
+      <button id="confirm-yes" style="padding:6px 18px;border-radius:6px;border:1px solid #00d4ff;background:#001a2e;color:#00d4ff;font-size:12px;cursor:pointer;font-weight:600">Yes, switch</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#confirm-no").onclick=()=>document.body.removeChild(overlay);
+  overlay.querySelector("#confirm-yes").onclick=()=>{document.body.removeChild(overlay); onYes();};
+}
+
+function showInfoModal(message){
+  const overlay=document.createElement("div");
+  overlay.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:9999";
+  overlay.innerHTML=`<div style="background:#13132a;border:1px solid #2a2a4a;border-radius:12px;padding:20px 24px;max-width:340px;text-align:center">
+    <div style="font-size:13px;color:#ccc;margin-bottom:16px;line-height:1.5">${message}</div>
+    <button id="info-ok" style="padding:6px 20px;border-radius:6px;border:1px solid #00d4ff;background:#001a2e;color:#00d4ff;font-size:12px;cursor:pointer;font-weight:600">OK</button>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#info-ok").onclick=()=>document.body.removeChild(overlay);
+}
+
+async function verifyClean(silent){
+  try{
+    const r=await fetch("/api/verify-clean");
+    const d=await r.json();
+    const badge=document.getElementById("clean-badge");
+    if(d.clean){
+      badge.textContent="\u2713 Clean";
+      badge.style.background="#0a2a1a";
+      badge.style.color="#00ff88";
+      badge.style.border="1px solid #00ff8844";
+    }else{
+      badge.textContent="\u26a0 "+d.active_combos.length+" RANs active!";
+      badge.style.background="#2a0a0a";
+      badge.style.color="#ff4444";
+      badge.style.border="1px solid #ff444444";
+      if(!silent){
+        showInfoModal("Warning: multiple RAN combos detected running simultaneously: "+d.active_combos.join(", ")+". Pods: "+d.running_pods.join(", "));
+      }
+    }
+  }catch(e){}
+}
+
+function manualVerifyClean(){ verifyClean(false); }
+
 async function deployCombo(){
   if(!selectedArch||!selectedStack)return;
   const comboKey=selectedArch.key+"-"+selectedStack.key;
   const name=selectedStack.label+" on "+selectedArch.label;
   const sub=selectedArch.label+" architecture using "+selectedStack.label+" software";
+
+  if(lastDeployedCombo!==null && lastDeployedCombo===comboKey){
+    showInfoModal(name+" is already deployed and running.");
+    return;
+  }
+  if(lastDeployedCombo!==null && lastDeployedCombo!==comboKey){
+    showConfirmModal(name, ()=>runDeployCombo(comboKey,name,sub));
+    return;
+  }
+  runDeployCombo(comboKey,name,sub);
+}
+
+async function runDeployCombo(comboKey,name,sub){
+  const badge=document.getElementById("clean-badge");
+  badge.textContent="\u23f3 Switching...";
+  badge.style.background="#2a1a0a";
+  badge.style.color="#ffaa00";
+  badge.style.border="1px solid #ffaa0044";
   clearTop();
 
   const btn=document.getElementById("combo-deploy-btn");
@@ -525,6 +598,8 @@ async function deployCombo(){
     if(d.status==="success"){
       btn.className="deploy-btn deployed";
       btn.textContent="\u2713 Deployed";
+      lastDeployedCombo=comboKey;
+      verifyClean();
       showComboDeployedPanel(comboKey,name,sub,selectedStack.key);
     }else{
       btn.className="deploy-btn";
@@ -540,7 +615,7 @@ async function deployCombo(){
 }
 
 function showComboDeployedPanel(comboKey,name,sub,stackKey){
-  const podLabel=(comboKey==="oran-srsran")?"SRSRAN-CU":(stackKey==="srsran"?"ueransim-gnb":"oai");
+  const podLabel=(comboKey==="oran-srsran")?"SRSRAN-CU":(comboKey==="cran-oai")?"OAI-CRAN":(stackKey==="srsran"?"ueransim-gnb":"oai");
   const m=document.getElementById("main");
   m.innerHTML=`<div class="content-area">
     <div class="panel">
