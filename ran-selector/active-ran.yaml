@@ -1,4 +1,4 @@
-active: srsran-oran
+active: srsran
 oai:
   components:
     cu: false
