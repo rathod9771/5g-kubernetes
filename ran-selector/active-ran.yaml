@@ -1,4 +1,4 @@
-active: oai-cran
+active: srsran-oran
 oai:
   components:
     cu: false
@@ -6,5 +6,5 @@ oai:
   enabled: false
   type: oran
 srsran:
-  enabled: false
+  enabled: true
   type: cran
