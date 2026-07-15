@@ -394,3 +394,42 @@ The OSM web UI's "Add K8s Cluster" form requires selecting a VIM Account before 
 
 ### Next step
 Package srsRAN Helm chart as a KNF (Kubernetes Network Function) descriptor, then build an NSD (Network Service Descriptor) so OSM can instantiate/terminate the RAN deployment as a proper Network Service — the ETSI-standard path alongside the existing GitOps dashboard.
+
+
+---
+
+## 🎛️ RAN Selector — Complete 2x2 Matrix (Architecture x Software Stack)
+
+Redesigned the RAN Selector as a two-step UI, matching mentor's specification: select **architecture** first (C-RAN, O-RAN, Cloud-RAN, V-CRAN, H-CRAN, F-RAN), then select **RAN software stack** (srsRAN or OAI). This makes explicit that RAN architecture and RAN software implementation are independent choices - not the same axis.
+
+### Core matrix status
+
+| | srsRAN | OAI |
+|---|---|---|
+| **C-RAN** | ✅ Monolithic gNB, NGAP to AMF confirmed | ✅ Monolithic gNB (rfsim, band78), NGAP to AMF confirmed |
+| **O-RAN** | ✅ srscu + srsdu split, F1 (SCTP) confirmed via `/proc/net/sctp/assocs` | ✅ CU + DU split, F1 confirmed |
+| Cloud-RAN | planned | planned |
+| V-CRAN | planned | planned |
+| H-CRAN | planned | planned |
+| F-RAN | planned | planned |
+
+### srsRAN split mode (O-RAN) - key discovery
+
+The srsRAN Project image ships **dedicated split binaries** distinct from the monolithic `gnb`:
+CU config uses `cu_cp.f1ap.bind_addr` + `cu_cp.amf.*`; DU config uses `f1ap.cu_cp_addr` + `f1u.*` + `cell_cfg` + `ru_sdr`. F1 connectivity verified directly via `cat /proc/net/sctp/assocs` on both pods rather than relying on log output (srsRAN logs to `/tmp/*.log` files, not stdout).
+
+**Known race condition:** the DU dials the CU once at startup and does not retry - if DU starts before CU's F1 listener is up, the association never forms. Currently resolved by deleting the DU pod once CU is confirmed listening (`kubectl exec ... cat /proc/net/sctp/eps`).
+
+### OAI monolithic C-RAN - key fix
+
+Used the official `gnb.sa.band78.106prb.rfsim.conf` from the OAI repo (not a hand-written config), patched for this network's PLMN (208/93), AMF IP, and NG bind address. The `--sa` command-line flag caused `unknown option` errors on the `2026.w13` image tag (standalone mode is now the implicit default) - removing it fixed startup.
+
+### Dashboard safety features
+
+- **Switch confirmation popup**: deploying a *different* combo than the currently active one shows a Yes/No confirmation ("The currently active RAN will be stopped"). The very first deploy in a session skips this since there is nothing to switch away from.
+- **Already-deployed guard**: re-selecting the currently active combo shows an info popup instead of re-running the deploy.
+- **`/api/verify-clean` endpoint**: greps running pods for every known RAN label (srsran-gnb, srsran-cu/du, oai-cu/du, oai-cran-gnb) and reports whether more than one combo is simultaneously active - this caught a real bug where a `helm uninstall` completed asynchronously and left a previous combo's pod running for 16 hours alongside the new one.
+- **Live status badge** in the top bar (green "Clean" / yellow "Switching..." / red "N RANs active!") - auto-checked on page load, after every deploy, and on-demand via a "Verify Clean" button.
+- **Hardened uninstalls**: all `helm uninstall` calls for RAN switches now use `--wait --timeout=60s` to avoid the async-completion race that caused the leftover-pod bug above.
+
+### Files
