@@ -1,5 +1,0 @@
-apiVersion: v2
-name: cloud-ran-oai
-description: OAI monolithic gNB - C-RAN architecture
-type: application
-version: 0.1.0

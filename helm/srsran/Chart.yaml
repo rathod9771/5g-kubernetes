@@ -1,8 +1,0 @@
-apiVersion: v2
-name: srsran
-description: srsRAN gNB - Centralized RAN (C-RAN) deployment on Kubernetes
-type: application
-version: 0.1.0
-appVersion: "latest"
-maintainers:
-  - name: Kumar

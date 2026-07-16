@@ -1,5 +1,0 @@
-apiVersion: v2
-name: srsran-oran-du
-description: srsRAN DU - O-RAN Distributed Unit
-type: application
-version: 0.1.0

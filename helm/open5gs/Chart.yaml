@@ -1,8 +1,0 @@
-apiVersion: v2
-name: open5gs
-description: Open5GS 5G Core Network deployed on Kubernetes
-type: application
-version: 0.1.0
-appVersion: "2.7.7"
-maintainers:
-  - name: Kumar
