@@ -244,6 +244,7 @@ spec:
         ran-type: oran
         component: du
       annotations:
+        sidecar.istio.io/inject: "false"
         k8s.v1.cni.cncf.io/networks: '[
           { "name": "n2network-oai-du",
             "ips": [ "10.100.50.253/29" ],

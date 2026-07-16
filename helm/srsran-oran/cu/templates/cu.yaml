@@ -47,6 +47,7 @@ spec:
         ran-type: oran
         component: cu
       annotations:
+        sidecar.istio.io/inject: "false"
         k8s.v1.cni.cncf.io/networks: '[
           { "name": "n2network-srsran-cu",
             "ips": [ "10.100.50.251/29" ],

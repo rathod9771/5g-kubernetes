@@ -277,6 +277,7 @@ spec:
         ran-type: cran
         component: gnb
       annotations:
+        sidecar.istio.io/inject: "false"
         k8s.v1.cni.cncf.io/networks: '[
           { "name": "n2network-oai-cran",
             "ips": [ "10.100.50.252/29" ],

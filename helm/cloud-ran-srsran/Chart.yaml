@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cloud-ran-srsran
+description: Cloud-RAN - monolithic srsRAN gNB with cloud-native elasticity profile
+type: application
+version: 0.1.0
