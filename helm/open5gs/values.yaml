@@ -1,0 +1,100 @@
+dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
+populate:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: gradiant/open5gs-dbctl
+    tag: 0.10.3
+    pullPolicy: IfNotPresent
+  initCommands:
+    - open5gs-dbctl add_ue_with_slice 208930000000003 8baf473f2f8fd09487cccbd7097c6862 8e27b6af0e692e750f32667a3b14605d internet 1 010203
+  dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
+
+# Disable top-level mongodb sub-chart entirely - using our own custom StatefulSet
+mongodb:
+  enabled: false
+
+smf:
+  enabled: true
+  config:
+    pcrf:
+      enabled: false
+  dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
+upf:
+  enabled: true
+  podAnnotations:
+    sidecar.istio.io/inject: "false"
+
+webui:
+  enabled: true
+  podAnnotations:
+    sidecar.istio.io/inject: "false"
+  dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
+  mongodb:
+    enabled: false
+
+# 4G - disabled, 5G SA only
+hss:
+  enabled: false
+mme:
+  enabled: false
+pcrf:
+  enabled: false
+sgwc:
+  enabled: false
+sgwu:
+  enabled: false
+
+# 5G core NFs
+amf:
+  enabled: true
+  config:
+    guamiList:
+      - plmn_id:
+          mcc: "208"
+          mnc: "93"
+        amf_id:
+          region: 2
+          set: 1
+    taiList:
+      - plmn_id:
+          mcc: "208"
+          mnc: "93"
+        tac: [1]
+    plmnList:
+      - plmn_id:
+          mcc: "208"
+          mnc: "93"
+        s_nssai:
+          - sst: 1
+            sd: "010203"
+ausf:
+  enabled: true
+bsf:
+  enabled: true
+nrf:
+  enabled: true
+nssf:
+  enabled: true
+  config:
+    nssiList:
+      - addr: nrf
+        sst: 1
+        sd: "010203"
+pcf:
+  enabled: true
+  dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
+  mongodb:
+    enabled: false
+scp:
+  enabled: true
+  dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
+  mongodb:
+    enabled: false
+udm:
+  enabled: true
+udr:
+  enabled: true
+  dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
+  mongodb:
+    enabled: false
