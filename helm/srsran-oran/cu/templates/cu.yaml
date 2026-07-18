@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: srsran-cu-config
+data:
+  cu-init.sh: |
+    #!/bin/bash
+    export POD_IP=$(awk 'END{print $1}' /etc/hosts)
+    export AMF_IP=$(getent hosts open5gs-amf-ngap | awk '{print $1}')
+    echo "CU starting: POD_IP=${POD_IP} AMF_IP=${AMF_IP}"
+    mkdir -p /etc/srsran
+    sed -e "s|AMF_IP|${AMF_IP}|g" -e "s|POD_IP|${POD_IP}|g" /mnt/srsran/cu.yml > /etc/srsran/cu.yml
+    exec srscu -c /etc/srsran/cu.yml
+  cu.yml: |
+    cu_cp:
+      f1ap:
+        bind_addr: POD_IP
+      amf:
+        addr: AMF_IP
+        bind_addr: POD_IP
+        supported_tracking_areas:
+          - tac: 1
+            plmn_list:
+              - plmn: "20893"
+                tai_slice_support_list:
+                  - sst: 1
+                    sd: 66051
+    log:
+      filename: /tmp/cu.log
+      all_level: warning
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: srsran-cu
+  labels:
+    app: srsran-cu
+    ran-type: oran
+    component: cu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: srsran-cu
+  template:
+    metadata:
+      labels:
+        app: srsran-cu
+        ran-type: oran
+        component: cu
+    spec:
+      containers:
+      - name: cu
+        image: ghcr.io/herlesupreeth/docker_srsran:master
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        command: ["bash", "/mnt/srsran/cu-init.sh"]
+        volumeMounts:
+        - name: cu-config
+          mountPath: /mnt/srsran
+      volumes:
+      - name: cu-config
+        configMap:
+          name: srsran-cu-config
+          defaultMode: 0755
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: srsran-cu
+spec:
+  selector:
+    app: srsran-cu
+  ports:
+  - name: ngap
+    port: 38412
+    targetPort: 38412
+    protocol: SCTP
+  - name: f1c
+    port: 38472
+    targetPort: 38472
+    protocol: SCTP
