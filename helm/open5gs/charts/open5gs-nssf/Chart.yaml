@@ -1,7 +1,7 @@
 annotations:
   artifacthub.io/category: networking
 apiVersion: v2
-appVersion: 2.7.0
+appVersion: 2.7.2
 dependencies:
 - name: common
   repository: https://charts.bitnami.com/bitnami
@@ -9,7 +9,7 @@ dependencies:
   - bitnami-common
   version: 1.x.x
 description: 'Helm chart to deploy Open5gs NSSF service on Kubernetes. '
-home: https://github.com/gradiant/openverso-charts
+home: https://github.com/gradiant/5g-charts
 icon: https://open5gs.org/assets/img/open5gs-logo.png
 keywords:
 - network
@@ -20,4 +20,4 @@ maintainers:
 name: open5gs-nssf
 sources:
 - http://open5gs.org
-version: 2.2.0
+version: 2.2.5

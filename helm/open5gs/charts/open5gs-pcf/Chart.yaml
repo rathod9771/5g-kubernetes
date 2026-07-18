@@ -1,7 +1,7 @@
 annotations:
   artifacthub.io/category: networking
 apiVersion: v2
-appVersion: 2.7.0
+appVersion: 2.7.2
 dependencies:
 - name: common
   repository: https://charts.bitnami.com/bitnami
@@ -13,7 +13,7 @@ dependencies:
   repository: https://charts.bitnami.com/bitnami
   version: ~12.1.19
 description: 'Helm chart to deploy Open5gs PCF service on Kubernetes. '
-home: https://github.com/gradiant/openverso-charts
+home: https://github.com/gradiant/5g-charts
 icon: https://open5gs.org/assets/img/open5gs-logo.png
 keywords:
 - network
@@ -25,4 +25,4 @@ maintainers:
 name: open5gs-pcf
 sources:
 - http://open5gs.org
-version: 2.2.0
+version: 2.2.5

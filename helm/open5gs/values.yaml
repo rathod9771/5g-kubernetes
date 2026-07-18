@@ -1,4 +1,5 @@
 dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
+
 populate:
   enabled: true
   image:
@@ -8,9 +9,8 @@ populate:
     pullPolicy: IfNotPresent
   initCommands:
     - open5gs-dbctl add_ue_with_slice 208930000000003 8baf473f2f8fd09487cccbd7097c6862 8e27b6af0e692e750f32667a3b14605d internet 1 010203
-  dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
 
-# Disable top-level mongodb sub-chart entirely - using our own custom StatefulSet
+# Using our own MongoDB StatefulSet (Bitnami tags are broken on Docker Hub)
 mongodb:
   enabled: false
 
@@ -19,21 +19,22 @@ smf:
   config:
     pcrf:
       enabled: false
+    sbi:
+      client:
+        nrf:
+          enabled: true
+        scp:
+          enabled: false
   dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
 upf:
   enabled: true
-  podAnnotations:
-    sidecar.istio.io/inject: "false"
-
 webui:
   enabled: true
-  podAnnotations:
-    sidecar.istio.io/inject: "false"
   dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
   mongodb:
     enabled: false
 
-# 4G - disabled, 5G SA only
+# 4G disabled - 5G SA only
 hss:
   enabled: false
 mme:
@@ -45,10 +46,16 @@ sgwc:
 sgwu:
   enabled: false
 
-# 5G core NFs
+# 5G NFs
 amf:
   enabled: true
   config:
+    sbi:
+      client:
+        nrf:
+          enabled: true
+        scp:
+          enabled: false
     guamiList:
       - plmn_id:
           mcc: "208"
@@ -70,31 +77,96 @@ amf:
             sd: "010203"
 ausf:
   enabled: true
+  customOpen5gsConfig:
+    logger:
+      level: info
+    global: {}
+    ausf:
+      serving:
+        - plmn_id:
+            mcc: "208"
+            mnc: "93"
+      sbi:
+        server:
+          - dev: eth0
+            port: 7777
+        client:
+          nrf:
+            - uri: http://open5gs-nrf-sbi:7777
 bsf:
   enabled: true
+  config:
+    sbi:
+      client:
+        nrf:
+          enabled: true
+        scp:
+          enabled: false
 nrf:
   enabled: true
 nssf:
   enabled: true
   config:
+    sbi:
+      client:
+        nrf:
+          enabled: true
+        scp:
+          enabled: false
     nssiList:
       - addr: nrf
         sst: 1
         sd: "010203"
 pcf:
   enabled: true
+  config:
+    sbi:
+      client:
+        nrf:
+          enabled: true
+        scp:
+          enabled: false
   dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
   mongodb:
     enabled: false
 scp:
-  enabled: true
-  dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
-  mongodb:
-    enabled: false
+  enabled: false
 udm:
   enabled: true
+  customOpen5gsConfig:
+    logger:
+      level: info
+    global: {}
+    udm:
+      serving:
+        - plmn_id:
+            mcc: "208"
+            mnc: "93"
+      sbi:
+        server:
+          - dev: eth0
+            port: 7777
+        client:
+          nrf:
+            - uri: http://open5gs-nrf-sbi:7777
 udr:
   enabled: true
+  customOpen5gsConfig:
+    logger:
+      level: info
+    global: {}
+    udr:
+      serving:
+        - plmn_id:
+            mcc: "208"
+            mnc: "93"
+      sbi:
+        server:
+          - dev: eth0
+            port: 7777
+        client:
+          nrf:
+            - uri: http://open5gs-nrf-sbi:7777
   dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
   mongodb:
     enabled: false
