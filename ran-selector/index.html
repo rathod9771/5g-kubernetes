@@ -112,6 +112,16 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 </style>
 </head>
 <body>
+<div id="liveBar" style="display:flex;gap:18px;align-items:center;padding:8px 16px;background:#0d1424;border-bottom:1px solid #1e2a45;font-size:13px;font-family:monospace;flex-wrap:wrap;">
+  <span style="color:#8899bb;">LIVE</span>
+  <span id="lb-ue" style="color:#666;">UE: ...</span>
+  <span id="lb-pdu" style="color:#666;">PDU: ...</span>
+  <span id="lb-rtt" style="color:#666;">RTT: ...</span>
+  <span id="lb-loss" style="color:#666;">Loss: ...</span>
+  <span id="lb-tun" style="color:#666;"></span>
+  <span id="lb-updated" style="color:#445;margin-left:auto;font-size:11px;"></span>
+</div>
+
 <div class="topbar">
   <h1>⚡ 5G PLATFORM DASHBOARD</h1>
   <div class="top-btns">
@@ -157,7 +167,7 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 </div>
 <script>
 const NF_LIST=["AMF","SMF","UPF","NRF","AUSF","UDM","UDR","PCF","NSSF"];
-const NF_PODS={AMF:"free5gc-amf",SMF:"free5gc-smf",UPF:"free5gc-upf",NRF:"free5gc-nrf",AUSF:"free5gc-ausf",UDM:"free5gc-udm",UDR:"free5gc-udr",PCF:"free5gc-pcf",NSSF:"free5gc-nssf"};
+const NF_PODS={AMF:"open5gs-amf",SMF:"open5gs-smf",UPF:"open5gs-upf",NRF:"open5gs-nrf",AUSF:"open5gs-ausf",UDM:"open5gs-udm",UDR:"open5gs-udr",PCF:"open5gs-pcf",NSSF:"open5gs-nssf"};
 const NF_COLOR={AMF:"#00d4ff",SMF:"#00aaff",UPF:"#ff6b35",NRF:"#00ff88",AUSF:"#a855f7",UDM:"#f59e0b",UDR:"#ec4899",PCF:"#06b6d4",NSSF:"#84cc16"};
 const NF_DESC={AMF:"Access & Mobility — registration, auth, mobility. N2 to gNB via NGAP/SCTP.",SMF:"Session Management — assigns UE IP, GTP tunnel via PFCP to UPF.",UPF:"User Plane — forwards packets via gtp5g kernel module. N3 N4 N6.",NRF:"Network Repository — service registry for all NFs. Port 8000.",AUSF:"Authentication Server — 5G-AKA with K/OPc keys.",UDM:"Unified Data Mgmt — subscriber profiles and auth vectors.",UDR:"Unified Data Repo — raw storage backend for UDM.",PCF:"Policy Control — QoS rules and PCC rules to SMF.",NSSF:"Slice Selection — routes UE to SST=1 SD=010203."};
 let podData={};
@@ -168,7 +178,7 @@ async function loadPods(){
     const r=await fetch("/api/pods");
     const d=await r.json();
     d.pods.forEach(p=>{
-      NF_LIST.forEach(nf=>{if(p.name.toLowerCase().includes("free5gc-"+nf.toLowerCase()))podData[nf]=p;});
+      NF_LIST.forEach(nf=>{if(p.name.toLowerCase().includes("open5gs-"+nf.toLowerCase()))podData[nf]=p;});
       if(p.name.includes("ueransim-ue"))podData["UE"]=p;
       if(p.name.includes("ueransim-gnb"))podData["GNB"]=p;
       if(p.name.includes("oai-cu"))podData["OAI-CU"]=p;
@@ -328,7 +338,13 @@ async function deployRAN(key,name,sub){
 }
 
 function showDeployedPanel(key,name,sub){
-  const podLabel=key==="cran"?"ueransim-gnb":"oai";
+  const COMBO_PODS={
+    "cran-srsran":"srsran-gnb",
+    "cran-oai":"oai-cran-gnb",
+    "oran-srsran":"srsran-cu",
+    "oran-oai":"oai-cu"
+  };
+  const podLabel=COMBO_PODS[lastDeployedCombo] || (key==="cran"?"srsran-gnb":"oai-cu");
   const m=document.getElementById("main");
   m.innerHTML=`<div class="content-area">
     <div class="panel">
@@ -357,7 +373,7 @@ function showCorePanel(btn){
       <div class="panel-hdr">
         <div style="display:flex;align-items:center;gap:10px">
           <div class="panel-title" style="color:#a855f7">5G Core Network</div>
-          <div class="panel-sub">free5gc v3.3.0 — all NFs running · click any NF to inspect</div>
+          <div class="panel-sub">Open5GS v2.7.2 — all NFs running · click any NF to inspect</div>
         </div>
         <button class="close-btn" onclick="blank()">✕</button>
       </div>
@@ -636,5 +652,62 @@ function showComboDeployedPanel(comboKey,name,sub,stackKey){
   fetchLogs(podLabel,"lterm");
 }
 </script>
+
+<script>
+async function refreshLiveBar(){
+  try{
+    const us = await (await fetch("/api/ue-status")).json();
+    document.getElementById("lb-ue").textContent = "UE: " + (us.registered ? "REGISTERED" : "NOT REGISTERED");
+    document.getElementById("lb-ue").style.color = us.registered ? "#00ff88" : "#ff4455";
+    document.getElementById("lb-pdu").textContent = "PDU: " + (us.pdu_session ? "ACTIVE" : "NONE");
+    document.getElementById("lb-pdu").style.color = us.pdu_session ? "#00ff88" : "#ff4455";
+    document.getElementById("lb-tun").textContent = us.tun ? "tun: " + us.tun.split(",")[1]?.replace("] is up","").trim() : "";
+  }catch(e){}
+  try{
+    const lt = await (await fetch("/api/latency")).json();
+    if(lt.rtt_ms !== null && lt.rtt_ms !== undefined){
+      document.getElementById("lb-rtt").textContent = "RTT: " + lt.rtt_ms.toFixed(1) + "ms";
+      document.getElementById("lb-rtt").style.color = lt.rtt_ms < 30 ? "#00ff88" : (lt.rtt_ms < 100 ? "#f59e0b" : "#ff4455");
+      document.getElementById("lb-loss").textContent = "Loss: " + lt.loss_pct + "%";
+      document.getElementById("lb-loss").style.color = lt.loss_pct === 0 ? "#00ff88" : "#ff4455";
+    } else {
+      document.getElementById("lb-rtt").textContent = "RTT: no user plane";
+      document.getElementById("lb-rtt").style.color = "#ff4455";
+      document.getElementById("lb-loss").textContent = "Loss: 100%";
+      document.getElementById("lb-loss").style.color = "#ff4455";
+    }
+  }catch(e){}
+  document.getElementById("lb-updated").textContent = "updated " + new Date().toLocaleTimeString();
+}
+refreshLiveBar();
+setInterval(refreshLiveBar, 10000);
+</script>
+
+
+<script>
+// Restore deployed-state UI from actual cluster state on page load
+const COMBO_DISPLAY = {
+  "cran-srsran": ["cran", "C-RAN + srsRAN", "Centralized monolithic gNB (srsRAN)"],
+  "cran-oai":    ["cran", "C-RAN + OAI",    "Centralized monolithic gNB (OAI)"],
+  "oran-srsran": ["oran", "O-RAN + srsRAN", "CU/DU split over F1 (srsRAN)"],
+  "oran-oai":    ["oran", "O-RAN + OAI",    "CU/DU split over F1 (OAI)"]
+};
+async function restoreDeployedState(){
+  try{
+    const r = await fetch("/api/verify-clean");
+    const d = await r.json();
+    if(d.active_combos && d.active_combos.length === 1){
+      const combo = d.active_combos[0];
+      const disp = COMBO_DISPLAY[combo];
+      if(disp && typeof showDeployedPanel === "function"){
+        lastDeployedCombo = combo;  // arm the already-deployed guard
+        showDeployedPanel(disp[0], disp[1], disp[2]);
+      }
+    }
+  }catch(e){ console.log("state restore failed", e); }
+}
+window.addEventListener("load", restoreDeployedState);
+</script>
+
 </body>
 </html>

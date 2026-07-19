@@ -146,17 +146,17 @@ def deploy():
         run(f"git commit -m feat:_Switch_RAN_to_{ran} 2>&1 || true")
         run("timeout 10 git push origin main 2>&1 || true")  # non-blocking: needs stored credentials to succeed
         if ran == "srsran":
-            run("helm uninstall oai-cu oai-du srsran-cu srsran-du oai-cran -n free5gc --wait --timeout=60s 2>&1 || true")
+            run("helm uninstall oai-cu -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall oai-du -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall srsran-cu -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall srsran-du -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall oai-cran -n free5gc --wait --timeout=60s 2>/dev/null; true")
             run(f"helm upgrade --install srsran {REPO_PATH}/helm/srsran -n {NS}")
         elif ran == "oai-cran":
-            run("helm uninstall srsran srsran-cu srsran-du oai-cu oai-du -n free5gc --wait --timeout=60s 2>&1 || true")
+            run("helm uninstall srsran -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall srsran-cu -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall srsran-du -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall oai-cu -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall oai-du -n free5gc --wait --timeout=60s 2>/dev/null; true")
             run(f"helm upgrade --install oai-cran {REPO_PATH}/helm/oai-cran -n {NS}")
         elif ran == "srsran-oran":
-            run("helm uninstall srsran oai-cu oai-du oai-cran -n free5gc --wait --timeout=60s 2>&1 || true")
+            run("helm uninstall srsran -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall oai-cu -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall oai-du -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall oai-cran -n free5gc --wait --timeout=60s 2>/dev/null; true")
             run(f"helm upgrade --install srsran-cu {REPO_PATH}/helm/srsran-oran/cu -n {NS}")
             run(f"helm upgrade --install srsran-du {REPO_PATH}/helm/srsran-oran/du -n {NS}")
         elif ran == "oai":
-            run("helm uninstall srsran srsran-cu srsran-du oai-cran -n free5gc --wait --timeout=60s 2>&1 || true")
+            run("helm uninstall srsran -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall srsran-cu -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall srsran-du -n free5gc --wait --timeout=60s 2>/dev/null; helm uninstall oai-cran -n free5gc --wait --timeout=60s 2>/dev/null; true")
             run(f"helm upgrade --install oai-cu {REPO_PATH}/helm/oai/cu -n {NS}")
             run(f"helm upgrade --install oai-du {REPO_PATH}/helm/oai/du -n {NS}")
         return jsonify({"status":"success","ran":ran})
@@ -184,6 +184,38 @@ def verify_clean():
         "active_combos": list(combos_present),
         "running_pods": running
     })
+
+
+@app.route("/api/latency")
+def latency():
+    """Live RTT through the 5G user plane (uesimtun0) - the real end-to-end latency"""
+    _, pod, _ = run(f"kubectl get pods -n {NS} -l component=ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
+    pod = pod.strip().strip("'")
+    if not pod:
+        return jsonify({"error": "UE pod not found", "rtt_ms": None})
+    _, out, _ = run(f"kubectl exec -n {NS} {pod} -- ping -I uesimtun0 -c 3 -W 2 8.8.8.8 2>&1")
+    import re as _re
+    m = _re.search(r"min/avg/max[^=]*= ([\d.]+)/([\d.]+)/([\d.]+)", out)
+    loss = _re.search(r"(\d+)% packet loss", out)
+    if m:
+        return jsonify({"rtt_min": float(m.group(1)), "rtt_ms": float(m.group(2)), "rtt_max": float(m.group(3)), "loss_pct": int(loss.group(1)) if loss else 0, "target": "8.8.8.8 via uesimtun0"})
+    return jsonify({"error": "no route through user plane", "rtt_ms": None, "loss_pct": 100, "raw": out[-200:]})
+
+@app.route("/api/ue-status")
+def ue_status():
+    """UE registration + PDU session state from live logs"""
+    _, pod, _ = run(f"kubectl get pods -n {NS} -l component=ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
+    pod = pod.strip().strip("'")
+    if not pod:
+        return jsonify({"registered": False, "pdu_session": False, "detail": "UE pod not found"})
+    _, out, _ = run(f"kubectl logs -n {NS} {pod} --tail=100 2>&1")
+    registered = "Initial Registration is successful" in out
+    pdu = "PDU Session establishment is successful" in out
+    tun = ""
+    for line in out.split("\n"):
+        if "TUN interface" in line:
+            tun = line.split("TUN interface")[-1].strip("[]. ")
+    return jsonify({"registered": registered, "pdu_session": pdu, "tun": tun, "pod": pod})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8090, debug=False)
