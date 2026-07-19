@@ -1,435 +1,170 @@
-# 5G Automated Deployment Platform
-
-## Project Overview
-An automated platform for deploying various 5G RAN scenarios on Kubernetes using open source tools.
-Inspired by Amrita University research project on "Automated Platform for various 5G Deployment Scenarios based on Open Source."
-
-Like choosing an OS at boot time — this platform lets you select which RAN to deploy with one click,
-automatically deploying it on Kubernetes via GitOps.
-
-## Architecture RAN Selector UI (Web Dashboard)
-
-|
-
-v
-
-Flask Backend --> GitHub (active-ran.yaml)
-
-|
-
-v
-
-ArgoCD (GitOps)
-
-|
-
-v
-
-Kubernetes (kubeadm)
-
-/                    
-srsRAN (C-RAN)        OpenAirInterface (O-RAN)
-
-Single gNB pod         CU pod + DU pod
-
-Centralized            Disaggregated (F1 interface)
-
-\                    /
-
-free5gc 5G Core
-
-AMF -> SMF -> UPF -> Internet## Deployment Scenarios
-
-### Scenario 1 - C-RAN (Centralized RAN) using srsRAN
-- Single gNB pod handles all baseband processing
-- Connects to AMF via NGAP/SCTP
-- Supports ZMQ simulation + USRP B210 real RF
-
-### Scenario 2 - O-RAN (Disaggregated RAN) using OpenAirInterface
-- Two separate pods: CU (Central Unit) + DU (Distributed Unit)
-- CU connects to AMF via NGAP
-- DU connects to CU via F1 interface (SCTP port 38472)
-- True functional split as per 3GPP O-RAN specifications
-
-## Results Achieved
-- free5gc 5G Core: 12 pods running on Kubernetes
-- UERANSIM UE registered and connected
-- End-to-end ping: 8.8.8.8 successful (12ms) through 5G core
-- srsRAN C-RAN: gNB connected to AMF via NGAP
-- OAI O-RAN: CU connected to AMF + DU connected to CU via F1
-- RAN switching: one click via web UI triggers GitOps deployment
-
-## Stack
-
-| Tool | Role |
-|------|------|
-| kubeadm | Bare metal Kubernetes cluster on Ubuntu 24.04 |
-| free5gc v3.3.0 | 5G Core (AMF, SMF, UPF, NRF, AUSF, UDM, PCF) |
-| UERANSIM v3.2.6 | Simulated gNB + UE for testing |
-| srsRAN | C-RAN deployment (Centralized gNB) |
-| OpenAirInterface | O-RAN deployment (CU + DU split) |
-| Helm | Kubernetes packaging and templating |
-| ArgoCD | GitOps CD - auto deploys on GitHub changes |
-| Flannel | Pod networking CNI |
-| Multus | Multiple network interfaces (N2, N3, N4, N6, F1) |
-| gtp5g v0.8.10 | GTP kernel module for UPF data plane |
-| Flask | RAN Selector backend API |
-| GitHub | Single source of truth for GitOps |
-
-## Network Interfaces (Multus)
-
-| Interface | Subnet | Used By |
-|-----------|--------|---------|
-| N2 | 10.100.50.248/29 | AMF (.249), srsRAN (.251), OAI-CU (.252), OAI-DU (.253) |
-| N3 | 10.100.50.232/29 | UPF ↔ gNB (GTP-U) |
-| N4 | 10.100.50.240/29 | SMF ↔ UPF (PFCP) |
-| N6 | 10.100.100.0/24 | UPF ↔ Internet |
-
-## Repository Structure
-RAN Selector UI (Web Dashboard)
-
-|
-
-v
-
-Flask Backend --> GitHub (active-ran.yaml)
-
-|
-
-v
-
-ArgoCD (GitOps)
-
-|
-
-v
-
-Kubernetes (kubeadm)
-
-/                    
-srsRAN (C-RAN)        OpenAirInterface (O-RAN)
-
-Single gNB pod         CU pod + DU pod
-
-Centralized            Disaggregated (F1 interface)
-
-\                    /
-
-free5gc 5G Core
-
-AMF -> SMF -> UPF -> Internet >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>## Deployment Scenarios
-
-### Scenario 1 - C-RAN (Centralized RAN) using srsRAN
-- Single gNB pod handles all baseband processing
-- Connects to AMF via NGAP/SCTP
-- Supports ZMQ simulation + USRP B210 real RF
-
-### Scenario 2 - O-RAN (Disaggregated RAN) using OpenAirInterface
-- Two separate pods: CU (Central Unit) + DU (Distributed Unit)
-- CU connects to AMF via NGAP
-- DU connects to CU via F1 interface (SCTP port 38472)
-- True functional split as per 3GPP O-RAN specifications
-
-## Results Achieved
-- free5gc 5G Core: 12 pods running on Kubernetes
-- UERANSIM UE registered and connected
-- End-to-end ping: 8.8.8.8 successful (12ms) through 5G core
-- srsRAN C-RAN: gNB connected to AMF via NGAP
-- OAI O-RAN: CU connected to AMF + DU connected to CU via F1
-- RAN switching: one click via web UI triggers GitOps deployment
-
-## Stack
-
-| Tool | Role |
-|------|------|
-| kubeadm | Bare metal Kubernetes cluster on Ubuntu 24.04 |
-| free5gc v3.3.0 | 5G Core (AMF, SMF, UPF, NRF, AUSF, UDM, PCF) |
-| UERANSIM v3.2.6 | Simulated gNB + UE for testing |
-| srsRAN | C-RAN deployment (Centralized gNB) |
-| OpenAirInterface | O-RAN deployment (CU + DU split) |
-| Helm | Kubernetes packaging and templating |
-| ArgoCD | GitOps CD - auto deploys on GitHub changes |
-| Flannel | Pod networking CNI |
-| Multus | Multiple network interfaces (N2, N3, N4, N6, F1) |
-| gtp5g v0.8.10 | GTP kernel module for UPF data plane |
-| Flask | RAN Selector backend API |
-| GitHub | Single source of truth for GitOps |
-
-## Network Interfaces (Multus)
-
-| Interface | Subnet | Used By |
-|-----------|--------|---------|
-| N2 | 10.100.50.248/29 | AMF (.249), srsRAN (.251), OAI-CU (.252), OAI-DU (.253) |
-| N3 | 10.100.50.232/29 | UPF ↔ gNB (GTP-U) |
-| N4 | 10.100.50.240/29 | SMF ↔ UPF (PFCP) |
-| N6 | 10.100.100.0/24 | UPF ↔ Internet |
-
-## Repository Structure
-## Deployment Scenarios
-
-### Scenario 1 - C-RAN (Centralized RAN) using srsRAN
-- Single gNB pod handles all baseband processing
-- Connects to AMF via NGAP/SCTP
-- Supports ZMQ simulation + USRP B210 real RF
-
-### Scenario 2 - O-RAN (Disaggregated RAN) using OpenAirInterface
-- Two separate pods: CU (Central Unit) + DU (Distributed Unit)
-- CU connects to AMF via NGAP
-- DU connects to CU via F1 interface (SCTP port 38472)
-- True functional split as per 3GPP O-RAN specifications
-
-## Results Achieved
-- free5gc 5G Core: 12 pods running on Kubernetes
-- UERANSIM UE registered and connected
-- End-to-end ping: 8.8.8.8 successful (12ms) through 5G core
-- srsRAN C-RAN: gNB connected to AMF via NGAP
-- OAI O-RAN: CU connected to AMF + DU connected to CU via F1
-- RAN switching: one click via web UI triggers GitOps deployment
-
-## Stack
-
-| Tool | Role |
-|------|------|
-| kubeadm | Bare metal Kubernetes cluster on Ubuntu 24.04 |
-| free5gc v3.3.0 | 5G Core (AMF, SMF, UPF, NRF, AUSF, UDM, PCF) |
-| UERANSIM v3.2.6 | Simulated gNB + UE for testing |
-| srsRAN | C-RAN deployment (Centralized gNB) |
-| OpenAirInterface | O-RAN deployment (CU + DU split) |
-| Helm | Kubernetes packaging and templating |
-| ArgoCD | GitOps CD - auto deploys on GitHub changes |
-| Flannel | Pod networking CNI |
-| Multus | Multiple network interfaces (N2, N3, N4, N6, F1) |
-| gtp5g v0.8.10 | GTP kernel module for UPF data plane |
-| Flask | RAN Selector backend API |
-| GitHub | Single source of truth for GitOps |
-
-## Network Interfaces (Multus)
-
-| Interface | Subnet | Used By |
-|-----------|--------|---------|
-| N2 | 10.100.50.248/29 | AMF (.249), srsRAN (.251), OAI-CU (.252), OAI-DU (.253) |
-| N3 | 10.100.50.232/29 | UPF ↔ gNB (GTP-U) |
-| N4 | 10.100.50.240/29 | SMF ↔ UPF (PFCP) |
-| N6 | 10.100.100.0/24 | UPF ↔ Internet |
-
-## Repository Structure
-5g-kubernetes/
-
-├── helm/
-
-│   ├── open5gs/          # Custom Open5GS Helm charts
-
-│   ├── srsran/           # C-RAN Helm chart (srsRAN gNB)
-
-│   └── oai/
-
-│       ├── cu/           # O-RAN CU Helm chart
-
-│       └── du/           # O-RAN DU Helm chart
-
-├── ran-selector/
-
-│   ├── index.html        # RAN Selector Web UI
-
-│   ├── backend.py        # Flask API - updates GitHub + deploys
-
-│   ├── select.sh         # CLI selector script
-
-│   └── active-ran.yaml   # GitOps config (ArgoCD watches this)
-
-└── README.md
-## How GitOps Works
-User clicks "Deploy srsRAN" or "Deploy OAI O-RAN" in Web UI
-Flask backend updates active-ran.yaml on disk
-Flask runs git push to GitHub
-ArgoCD detects change in GitHub (polls every 3 min)
-ArgoCD runs helm install/upgrade on Kubernetes
-New RAN pods start and connect to free5gc core
-UI shows green "Running" status
-## Challenges Solved
-1. Minikube doesnt support gtp5g kernel module - switched to kubeadm
-2. Network interface mismatch (eth0 vs enp3s0) - patched all NADs
-3. gtp5g version mismatch - downgraded to v0.8.10
-4. UPF internet routing - policy routing with iptables MARK
-5. OAI F1 port conflict (2152 used by both GTP-U and F1) - used 38472 for F1
-6. OAI config format - used official .conf format with full RF parameters
-
-## Author
-Kumar - Telco Cloud Engineer
-Amrita Vishwa Vidyapeetham - ECE Department
-
+# 5G Network Deployment Platform on Kubernetes
+
+**Automated Platform for 5G Deployment Scenarios based on Open Source**
+
+A research platform (Amrita University) that deploys a complete, working 5G
+network — core, RAN, and simulated UE — on a single-node Kubernetes cluster,
+with a web dashboard for switching between RAN architectures at the click of
+a button.
+
+**Current state: fully operational end-to-end.** A simulated UE registers
+through 5G-AKA authentication, establishes a PDU session, and reaches the
+internet through the GTP-U user plane (verified: 0% loss, ~10-20 ms RTT
+through `uesimtun0`).
 
 ---
 
-## 🎛️ Management Layer
+## Stack
 
-| Tool | Port | Purpose |
+| Layer | Component | Version |
 |---|---|---|
-| **Rancher** | 8443 | Kubernetes cluster management — visual pod inspection, logs, shell access |
-| **Custom Dashboard** | 8090 | RAN selector + live NF logs + deploy via GitOps |
-| **Kiali** | 20001 | Istio service mesh observability — traffic graph, success rates |
-| **free5gc WebUI** | 30500 | Subscriber management |
+| 5G Core | Open5GS (Gradiant Helm chart 2.2.6) | 2.7.2 |
+| RAN | srsRAN Project + OpenAirInterface | latest / 2026.w13 |
+| UE/gNB simulator | UERANSIM (towards5gs chart) | v3.2.6 |
+| Database | MongoDB (custom StatefulSet) | 6.0 |
+| Orchestration | kubeadm Kubernetes + Flannel + Multus | v1.29 |
+| Dashboard | Flask + vanilla JS | — |
 
-### Rancher Setup
-
-```bash
-# Install cert-manager (required by Rancher)
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.15.3/cert-manager.yaml
-
-# Install Rancher
-helm repo add rancher-latest https://releases.rancher.com/server-charts/latest
-helm install rancher rancher-latest/rancher \
-  --namespace cattle-system \
-  --set hostname=rancher.<HOST_IP>.sslip.io \
-  --set bootstrapPassword=<PASSWORD> \
-  --set replicas=1
-
-# Access via port-forward
-kubectl port-forward -n cattle-system svc/rancher 8443:443 --address 0.0.0.0
-# Open: https://<HOST_IP>:8443
-```
-
-### Istio Service Mesh
-
-All 8 control plane NFs (AMF, SMF, NRF, AUSF, UDM, UDR, PCF, NSSF) run with Envoy sidecars (2/2).
-UPF is intentionally excluded — it handles GTP-U data plane traffic which the mesh does not proxy.
-
-Key integration steps:
-1. Installed Istio with **CNI plugin** (`components.cni.enabled=true`) — avoids init container breakage with Multus
-2. Labeled namespace: `kubectl label namespace free5gc istio-injection=enabled`
-3. Excluded NRF and MongoDB ClusterIPs from interception via `traffic.sidecar.istio.io/excludeOutboundIPRanges` so init containers (wait-nrf, wait-mongo) can reach dependencies before Envoy starts
-4. Result: 100% SBI success rate, ~12ms p50 latency in Kiali
-
-### Architecture (matches Amrita reference poster)
-## 🗺️ Roadmap
-
-- [x] free5gc core on Kubernetes — all 12 pods
-- [x] UERANSIM end-to-end — UE pings 8.8.8.8 through 5G core
-- [x] srsRAN (C-RAN) connected to AMF via NGAP
-- [x] OAI O-RAN CU+DU deployed with F1 interface
-- [x] RAN Selector dashboard with GitOps deploy + live kubectl logs
-- [x] Istio service mesh — 8 NFs with Envoy sidecars
-- [x] Rancher cluster management
-- [x] OSM (Open Source MANO) - ETSI NFV orchestration - 14/14 pods running
-- [ ] O-RAN Near-RT RIC — activate OAI E2 interface
-- [ ] USRP B210 — real RF with physical SIM
-
+Previous free5gc-based platform (including Istio service-mesh integration,
+Rancher, and OSM onboarding) is preserved at tag **`free5gc-platform-v1`**.
 
 ---
 
-## 🏗️ OSM (Open Source MANO) — ETSI NFV Orchestration
+## RAN Architecture Matrix
 
-Deployed OSM 14 onto the existing kubeadm cluster (not a separate installer-managed cluster) by using its Helm chart directly instead of the full installer script.
-
-### Why not the standard installer?
-`install_osm.sh` assumes a blank machine and tries to run its own `kubeadm init` — which collides with an already-running cluster (port 6443, existing etcd, manifest files). Solution: extract the Helm chart the installer ships (`/usr/share/osm-devops/installers/helm/osm`) and deploy it directly into an `osm` namespace on the existing cluster.
-
-### Challenges & fixes
-
-| Problem | Root Cause | Fix |
-|---|---|---|
-| 5 Services failed on `helm install` | Chart hardcodes ports outside the NodePort range (80, 3000, 9091, 9998, 9999) | Overrode via `--set` for most; patched `grafana-service.yaml` directly (its port was hardcoded, not templated) |
-| `ngui` CrashLoopBackOff | nginx couldn't resolve `nbi` upstream | Resolved once NBI came up (see below) |
-| `nbi`, `ro`, `mon`, `lcm` stuck in `Init` | MongoDB was never deployed — OSM's chart expects it as a **separate** release | `helm install mongodb-k8s bitnami/mongodb -f mongodb-values.yaml` |
-| `lcm` `FailedMount: secret "lcm-client-cert" not found` | cert-manager `Certificate` → `ClusterIssuer(ca-issuer)` → needs `osm-ca` secret, but cert-manager reads CA secrets from **its own namespace**, while the chart created it in `osm` | Copied `osm-ca` secret from `osm` → `cert-manager` namespace, then restarted the cert-manager controller pod to force re-evaluation |
-| `lcm` init container `alpine:latest` never pulled | No internet image pull path for that tag in containerd cache | `docker pull` → `docker save` → `ctr images import` (same pattern used earlier for free5gc/UPF images) |
-
-### Result
-All 14 OSM pods Running: NBI, LCM, RO, MON, Keystone, NG-UI, Kafka, Zookeeper, MongoDB (+arbiter), MySQL, Prometheus, Grafana, Webhook-translator.
-
-Access:
-```bash
-# OSM UI
-http://<HOST_IP>:30080   # admin / admin
-
-# OSM NBI (API)
-http://<HOST_IP>:30999
-```
-
-### Architecture — matches Amrita reference poster in full
-
-
----
-
-## 🔗 OSM — Kubernetes Cluster Registration (VIM Integration)
-
-Registered the existing kubeadm cluster as a target for OSM-orchestrated deployments.
-
-### Steps
-
-**1. Install OSM client (snap):**
-```bash
-sudo snap install osmclient
-export OSM_HOSTNAME=172.30.18.32:30999
-```
-
-**2. Create a placeholder VIM account** (OSM requires every K8s cluster to be linked to a VIM, even for pure-Kubernetes deployments with no OpenStack/AWS backing):
-```bash
-osm --hostname 172.30.18.32:30999 vim-create \
-  --name dummy-vim --user admin --password admin \
-  --auth_url http://localhost/dummy --tenant admin \
-  --account_type dummy
-```
-
-**3. Register the cluster:**
-```bash
-# Snap sandboxing blocks direct access to ~/.kube/config - copy it to a readable path first
-cp ~/.kube/config ~/osm-kubeconfig/config
-chmod 644 ~/osm-kubeconfig/config
-
-osm --hostname 172.30.18.32:30999 k8scluster-add \
-  --creds ~/osm-kubeconfig/config \
-  --version '1.29' \
-  --vim dummy-vim \
-  --description "Local kubeadm 5G cluster" \
-  --k8s-nets '{"net1": "cluster-network"}' \
-  local-5g-cluster
-```
-
-### Result
-**Helm: ENABLED** is what matters — all existing KNFs (free5gc, srsRAN, OAI) are Helm-based, so OSM can deploy/manage them through this connector. Juju:ERROR is expected and harmless since no Juju-charm VNFs are used in this project (Juju requires a separately bootstrapped controller).
-
-### Key challenge solved
-The OSM web UI's "Add K8s Cluster" form requires selecting a VIM Account before it will let you submit — but the VIM Accounts page had no generic/no-op option in the UI. Solved by using the `osmclient` CLI directly, which exposes the `--account_type dummy` VIM type not surfaced in the web form.
-
-### Next step
-Package srsRAN Helm chart as a KNF (Kubernetes Network Function) descriptor, then build an NSD (Network Service Descriptor) so OSM can instantiate/terminate the RAN deployment as a proper Network Service — the ETSI-standard path alongside the existing GitOps dashboard.
-
-
----
-
-## 🎛️ RAN Selector — Complete 2x2 Matrix (Architecture x Software Stack)
-
-Redesigned the RAN Selector as a two-step UI, matching mentor's specification: select **architecture** first (C-RAN, O-RAN, Cloud-RAN, V-CRAN, H-CRAN, F-RAN), then select **RAN software stack** (srsRAN or OAI). This makes explicit that RAN architecture and RAN software implementation are independent choices - not the same axis.
-
-### Core matrix status
+Six deployable RAN variants — three architectures × two software stacks:
 
 | | srsRAN | OAI |
 |---|---|---|
-| **C-RAN** | ✅ Monolithic gNB, NGAP to AMF confirmed | ✅ Monolithic gNB (rfsim, band78), NGAP to AMF confirmed |
-| **O-RAN** | ✅ srscu + srsdu split, F1 (SCTP) confirmed via `/proc/net/sctp/assocs` | ✅ CU + DU split, F1 confirmed |
-| Cloud-RAN | planned | planned |
-| V-CRAN | planned | planned |
-| H-CRAN | planned | planned |
-| F-RAN | planned | planned |
+| **C-RAN** (centralized, monolithic gNB) | `helm/srsran` | `helm/oai-cran` |
+| **O-RAN** (CU/DU split over F1) | `helm/srsran-oran/{cu,du}` | `helm/oai/{cu,du}` |
+| **Cloud-RAN** (resource-profiled cloud workload) | `helm/cloud-ran-srsran` | `helm/cloud-ran-oai` |
 
-### srsRAN split mode (O-RAN) - key discovery
+### Terminology
 
-The srsRAN Project image ships **dedicated split binaries** distinct from the monolithic `gnb`:
-CU config uses `cu_cp.f1ap.bind_addr` + `cu_cp.amf.*`; DU config uses `f1ap.cu_cp_addr` + `f1u.*` + `cell_cfg` + `ru_sdr`. F1 connectivity verified directly via `cat /proc/net/sctp/assocs` on both pods rather than relying on log output (srsRAN logs to `/tmp/*.log` files, not stdout).
+These terms carry ambiguity in industry literature, so we state our working
+definitions explicitly:
 
-**Known race condition:** the DU dials the CU once at startup and does not retry - if DU starts before CU's F1 listener is up, the association never forms. Currently resolved by deleting the DU pod once CU is confirmed listening (`kubectl exec ... cat /proc/net/sctp/eps`).
+- **C-RAN (Centralized RAN):** all gNB functions (CU + DU + PHY) centralized
+  in a single monolithic deployment — one pod running the full gNB stack.
+- **O-RAN (Open / Disaggregated RAN):** gNB disaggregated into CU and DU as
+  independent network functions communicating over the standardized F1
+  interface (F1-C on SCTP 38472), discovered via Kubernetes Services.
+- **Cloud-RAN:** RAN functions as cloud-native workloads under Kubernetes
+  elastic resource management (explicit requests/limits: 1 CPU / 1 Gi
+  requested, 4 CPU / 4 Gi limit).
 
-### OAI monolithic C-RAN - key fix
+*Historical note:* "C-RAN" originated as Centralized RAN (China Mobile, 2010 —
+pooled BBUs with remote radio heads over fronthaul) and was later also read
+as "Cloud RAN" by parts of the industry. "O-RAN" strictly refers to the O-RAN
+Alliance interface specifications (E2/O1/RIC); we use it in the common looser
+sense of an open CU/DU functional split.
 
-Used the official `gnb.sa.band78.106prb.rfsim.conf` from the OAI repo (not a hand-written config), patched for this network's PLMN (208/93), AMF IP, and NG bind address. The `--sa` command-line flag caused `unknown option` errors on the `2026.w13` image tag (standalone mode is now the implicit default) - removing it fixed startup.
+---
 
-### Dashboard safety features
+## Network Configuration
 
-- **Switch confirmation popup**: deploying a *different* combo than the currently active one shows a Yes/No confirmation ("The currently active RAN will be stopped"). The very first deploy in a session skips this since there is nothing to switch away from.
-- **Already-deployed guard**: re-selecting the currently active combo shows an info popup instead of re-running the deploy.
-- **`/api/verify-clean` endpoint**: greps running pods for every known RAN label (srsran-gnb, srsran-cu/du, oai-cu/du, oai-cran-gnb) and reports whether more than one combo is simultaneously active - this caught a real bug where a `helm uninstall` completed asynchronously and left a previous combo's pod running for 16 hours alongside the new one.
-- **Live status badge** in the top bar (green "Clean" / yellow "Switching..." / red "N RANs active!") - auto-checked on page load, after every deploy, and on-demand via a "Verify Clean" button.
-- **Hardened uninstalls**: all `helm uninstall` calls for RAN switches now use `--wait --timeout=60s` to avoid the async-completion race that caused the leftover-pod bug above.
+| Parameter | Value |
+|---|---|
+| PLMN | 208 / 93 |
+| TAC | 1 |
+| Slice | SST 1, SD 0x010203 |
+| Test subscriber | IMSI 208930000000003 (auto-provisioned via Helm hook) |
+| UE subnet | 10.45.0.0/16 (UPF `ogstun`, NAT to internet) |
 
-### Files
+---
+
+## Quick Start
+
+```bash
+# 1. Core (namespace kept as 'free5gc' for historical continuity)
+helm install open5gs ./helm/open5gs -n free5gc
+
+# 2. UE + simulated gNB
+helm install ueransim ./helm/ueransim -n free5gc
+
+# 3. Any RAN variant, e.g. O-RAN + srsRAN (CU first, then DU)
+helm install srsran-cu ./helm/srsran-oran/cu -n free5gc
+sleep 30
+helm install srsran-du ./helm/srsran-oran/du -n free5gc
+
+# 4. Dashboard
+cd ran-selector && python3 backend.py   # http://<host>:8090
+
+# Validate end-to-end
+UEPOD=$(kubectl get pods -n free5gc -l component=ue -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n free5gc $UEPOD -- ping -I uesimtun0 -c 4 8.8.8.8
+```
+
+---
+
+## Dashboard
+
+`ran-selector/` — Flask backend (port 8090) + single-page UI:
+
+- **Two-step selector:** architecture (C-RAN / O-RAN / Cloud-RAN) → stack
+  (srsRAN / OAI), with switch-confirmation and already-deployed guards
+- **Live status bar:** UE registration state, PDU session, real RTT and
+  packet loss measured through the 5G user plane (`/api/latency`,
+  `/api/ue-status`)
+- **NF inspection panels:** live logs and status for every Open5GS NF
+- **State recovery:** on page load the UI restores the actually-deployed
+  combo from cluster state (`/api/verify-clean`) — refresh-proof
+- **Clean-switch enforcement:** every release uninstalled individually;
+  `verify-clean` endpoint proves exactly one combo is active
+
+---
+
+## Engineering Notes (hard-won)
+
+Documented for anyone reproducing this — each cost real debugging time:
+
+1. **Bitnami image tags:** Bitnami moved Docker Hub to SHA-only "Secure
+   Images" tagging; the chart's mongodb dependency references tags that no
+   longer exist. Replaced with a minimal official-image MongoDB StatefulSet
+   and per-NF `dbURI` overrides. The webui chart additionally hardcodes a
+   Bitnami mongo init image *in its template* (not values-controlled) and
+   needs `mongo:5.0` — 6.0+ dropped the legacy `mongo` shell its script calls.
+2. **Open5GS 2.7.0 NRF segfaults** under NF churn (fixed by 2.7.2). Chart
+   and image versions must move together — 2.7.5 images broke config-schema
+   compatibility with the 2.2.0-era chart templates.
+3. **Serving PLMN:** AUSF/UDM/UDR register with built-in default PLMN 999/70
+   unless a `serving:` PLMN is set. NRF then treats same-network discovery
+   as roaming, attempts SEPP lookup, and returns 500 — surfacing at the UE
+   as `SEMANTICALLY_INCORRECT_MESSAGE`. Fixed via `customOpen5gsConfig`.
+4. **SCP removed:** direct-NRF SBI mode on all NFs (matches reference
+   architectures; also sidesteps SCP-triggered NRF instability).
+5. **SMF freeDiameter:** `smf.config.pcrf.enabled` defaults true independent
+   of the top-level `pcrf.enabled=false` → Gx init crash. Disable both.
+6. **gNB bind addresses:** a gNB that binds 0.0.0.0 advertises 0.0.0.0 as its
+   GTP-U endpoint — control plane works, user plane silently dead. Every RAN
+   chart substitutes the pod's real IP at startup (downward-API / /etc/hosts)
+   and resolves the AMF from the `open5gs-amf-ngap` service DNS.
+7. **Slice SD is mandatory** in gNB configs here: srsRAN takes decimal
+   (`sd: 66051`), OAI takes hex (`sd = 0x010203`). Omitting it → NG Setup
+   rejected with `slice-not-supported`.
+8. **`helm uninstall a b c` aborts at the first missing release** — cleanup
+   lists must uninstall per-release or previous combos survive switches.
+9. **ipvlan (Multus) secondary interfaces can't reach ClusterIP services** —
+   kube-proxy NAT isn't visible from them. The Open5GS model needs no Multus
+   on RAN pods at all.
+
+---
+
+## Roadmap
+
+- [x] Open5GS core on Kubernetes, full UE registration + internet
+- [x] 6-variant RAN matrix ported and verified
+- [x] Dashboard v2 with live metrics
+- [ ] USRP B210 bare-metal srsRAN + real smartphone (mentor demo)
+- [ ] Kamailio IMS for VoNR voice calls
+- [ ] Containerized USRP RAN profile
+
+## References
+
+- Open5GS — https://open5gs.org
+- Gradiant 5G charts — https://github.com/Gradiant/5g-charts
+- srsRAN Project — https://www.srsran.com
+- OpenAirInterface — https://openairinterface.org
+- UERANSIM — https://github.com/aligungr/UERANSIM
+- towards5gs-helm (Orange) — https://github.com/Orange-OpenSource/towards5gs-helm
