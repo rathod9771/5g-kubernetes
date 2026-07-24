@@ -274,6 +274,92 @@ AUSF/UDM/UDR chain (error table #3). Step 6 failing with step 5 passing →
 GTP-U addressing (error table #6). Step 7 failing with step 6 passing →
 UPF NAT/forwarding (`iptables -t nat`, `ip_forward`).
 
+---
+
+## RF Tuning for Over-the-Air Operation (USRP B210)
+
+Once real phones were registering, the remaining work was making the radio link
+survive. This section records the RF-layer problems found while driving a USRP
+B210 from a bare-metal srsRAN gNB, and how each was diagnosed.
+
+### Antenna constraint drove the band choice
+
+The lab's antennas are Ettus VERT900, rated for 824-960 MHz and 1710-1990 MHz.
+Band n78 (3489 MHz) is far outside that range, so the antennas radiated and
+received very inefficiently there: uplink SINR sat between -14 and -31 dB and
+the link collapsed within about two minutes. The gNB was retuned to band n3
+(dl_arfcn 368500, 1842.5 MHz), which falls inside the antenna's upper range.
+Uplink SINR immediately improved to positive double digits.
+
+### Errors encountered and how they were resolved
+
+| # | Symptom | Root cause | Fix |
+|---|---|---|---|
+| 1 | Uplink SINR -14 to -31 dB, RLF within ~2 min on band n78 | VERT900 antennas are out of band at 3.5 GHz | Retune the cell to band n3 (1842.5 MHz), inside the antenna's 1710-1990 MHz range |
+| 2 | gNB log: Real-time failure in RF: underflow | Host not feeding IQ samples to the B210 fast enough over USB | otw_format sc12 (12-bit over-the-wire) plus deeper USB buffers via num_recv_frames and num_send_frames set to 512 |
+| 3 | RLF with cause MAC max KOs reached, 100 consecutive HARQ-ACK KOs or undecoded CSIs | Uplink control channel not decoding | Two separate contributors, see rows 4 and 6 |
+| 4 | rsrp column reported ovl in the metrics table; SINR stuck at 2-5 dB despite a close handset | Receiver front-end overload: rx_gain was set too high (65), saturating the ADC so samples arrived distorted | Lower rx_gain to 40. SINR rose to 20-26 dB and throughput to roughly 1.6 Mbps down / 774 kbps up |
+| 5 | phr column persistently negative (-9 to -32) | Handset already at maximum transmit power, so raising gNB tx_gain cannot improve the uplink | Treat uplink as power-limited; fix reception instead of demanding more from the UE |
+| 6 | ta column showing negative timing advance, rsrp falling ~40 dB in one second on a stationary handset | Timing/frequency drift of the B210's free-running internal oscillator. A negative timing advance is physically impossible for a real distance, so it indicates loss of sync rather than propagation loss | Discipline the clock with an external reference (GPSDO). srsRAN's own band-3 B210 reference configuration specifies an external 10 MHz reference for this reason. Open item at time of writing |
+| 7 | Raising max_consecutive_kos from 100 to 400 barely extended the session | The link was not failing from a few unlucky errors but degrading until nothing decoded, consistent with drift rather than noise | Config tolerance is not a substitute for clock discipline |
+| 8 | Link survived 60-90 s before the gain fix, but only 5-10 s afterwards | With better SINR the scheduler selects a higher MCS (up to 20), and higher-order modulation tolerates far less timing error | Cap max_ue_mcs to trade throughput for resilience while the clock issue is outstanding |
+| 9 | gNB froze during radio init, never reaching gNB started | The process was launched piped through tee; when the pipe buffer filled, back-pressure stalled a real-time thread | Never pipe the live gNB. It writes its own logfile; read that separately |
+| 10 | uhd_usrp_probe: No devices found for subdev A:B / clock_source external | subdev and clock_source are runtime settings applied after the device is opened, not device-discovery arguments | Do not put them in --args. Let srsRAN set them via its own config keys |
+| 11 | Phones stopped attaching entirely, with no new activity in the AMF log | A helm upgrade and AMF pod restart tears down the gNB's NGAP association, and srsRAN does not reconnect on its own | Restart the bare-metal gNB after any AMF restart |
+
+### Working parameters at time of writing
+
+| Parameter | Value | Note |
+|---|---|---|
+| band | 3 | Chosen to match VERT900 antenna range |
+| dl_arfcn | 368500 | 1842.5 MHz downlink, 1747.5 MHz uplink (FDD) |
+| channel_bandwidth_MHz | 10 | Lower bandwidth eases USB and CPU load |
+| common_scs | 15 | Required for band n3 |
+| srate | 15.36 | Must be one of the rates valid for the PRACH configuration |
+| tx_gain | 60 | Reduced from 80; excessive transmit gain worsened self-interference |
+| rx_gain | 40 | Reduced from 65 to clear receiver overload |
+| otw_format | sc12 | Cuts USB bandwidth |
+| device_args | num_recv_frames=512, num_send_frames=512 | Deeper USB buffering |
+
+### Diagnostic commands
+
+Live metrics table, the fastest way to read link health. Press t inside the
+running gNB terminal to toggle it. Columns worth watching: pusch is uplink
+SINR, rsrp shows ovl when the receiver is overloaded, phr goes negative when
+the handset is out of transmit power, ta should be a stable positive value,
+and the nok percentage shows block errors.
+
+```bash
+# start the gNB (never pipe this through tee or grep)
+sudo ~/srsRAN_Project/build/apps/gnb/gnb -c ~/usrp-gnb/gnb_b210.yml
+
+# uplink SINR history from the logfile
+grep csi1 /tmp/gnb_b210.log | grep -oE "sinr=[-0-9.]+dB" | tail -20
+
+# radio link failures and their causes
+grep -iE "RLF|KOs|underflow|late" /tmp/gnb_b210.log | tail -20
+
+# confirm the radio is healthy and on USB 3
+sudo uhd_usrp_probe | grep -iE "B210|USB"
+
+# how many gNBs the core currently has attached
+AMFPOD=$(kubectl get pods -n free5gc -l app.kubernetes.io/name=amf -o jsonpath='{.items[0].metadata.name}')
+kubectl logs $AMFPOD -n free5gc | grep -iE "gNB-N2 accepted|Number of gNBs" | tail
+```
+
+Note that SINR lines only appear when the gNB log level is set to info; at
+warning level the PHY lines are suppressed.
+
+### Interpreting the failure signature
+
+The distinction that mattered most in diagnosis was between a weak link and a
+drifting clock. A weak link degrades gradually: SINR sags, block errors climb,
+then the connection drops. A drifting clock fails abruptly with SINR still
+high, and it leaves a fingerprint in the timing advance column, which turns
+negative or jumps erratically. Recognising the second pattern is what
+redirected the work from gain and antenna tuning to clock discipline.
+
+
 ## Roadmap
 
 - [x] Open5GS core on Kubernetes, full UE registration + internet
