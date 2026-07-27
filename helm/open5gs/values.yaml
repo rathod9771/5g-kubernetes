@@ -63,16 +63,33 @@ amf:
         amf_id:
           region: 2
           set: 1
+      - plmn_id:
+          mcc: "001"
+          mnc: "01"
+        amf_id:
+          region: 2
+          set: 1
     taiList:
       - plmn_id:
           mcc: "208"
           mnc: "93"
+        tac: [1]
+      - plmn_id:
+          mcc: "001"
+          mnc: "01"
         tac: [1]
     plmnList:
       - plmn_id:
           mcc: "208"
           mnc: "93"
         s_nssai:
+          - sst: 1
+            sd: "010203"
+      - plmn_id:
+          mcc: "001"
+          mnc: "01"
+        s_nssai:
+          - sst: 1
           - sst: 1
             sd: "010203"
 ausf:
@@ -86,6 +103,9 @@ ausf:
         - plmn_id:
             mcc: "208"
             mnc: "93"
+        - plmn_id:
+            mcc: "001"
+            mnc: "01"
       sbi:
         server:
           - dev: eth0
@@ -116,6 +136,8 @@ nssf:
     nssiList:
       - addr: nrf
         sst: 1
+      - addr: nrf
+        sst: 1
         sd: "010203"
 pcf:
   enabled: true
@@ -142,6 +164,9 @@ udm:
         - plmn_id:
             mcc: "208"
             mnc: "93"
+        - plmn_id:
+            mcc: "001"
+            mnc: "01"
       sbi:
         server:
           - dev: eth0
@@ -160,6 +185,9 @@ udr:
         - plmn_id:
             mcc: "208"
             mnc: "93"
+        - plmn_id:
+            mcc: "001"
+            mnc: "01"
       sbi:
         server:
           - dev: eth0

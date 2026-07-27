@@ -1,0 +1,47 @@
+# srsRAN Project 25.10 - USRP B210 - band n3 - Open5GS core (Kubernetes)
+cu_cp:
+  inactivity_timer: 7200
+  amf:
+    addr: 10.105.213.28
+    port: 38412
+    bind_addr: 172.30.18.32
+    supported_tracking_areas:
+      - tac: 1
+        plmn_list:
+          - plmn: "00101"
+            tai_slice_support_list:
+              - sst: 1
+
+ru_sdr:
+  device_driver: uhd
+  device_args: type=b200,num_recv_frames=512,num_send_frames=512
+  otw_format: sc12
+  time_alignment_calibration: auto
+  srate: 15.36
+  tx_gain: 74
+  rx_gain: 36
+
+cell_cfg:
+  dl_arfcn: 368500
+  band: 3
+  channel_bandwidth_MHz: 10
+  common_scs: 15
+  plmn: "00101"
+  tac: 1
+  pci: 1
+  pdsch:
+    mcs_table: qam64
+    olla_target_bler: 0.05
+    max_consecutive_kos: 400
+  pusch:
+    max_ue_mcs: 10
+    olla_target_bler: 0.05
+    max_consecutive_kos: 400
+    max_nof_harq_retxs: 8
+
+log:
+  filename: /tmp/gnb_b210.log
+  all_level: warning
+
+pcap:
+  ngap_enable: false
