@@ -7,8 +7,7 @@ populate:
     repository: gradiant/open5gs-dbctl
     tag: 0.10.3
     pullPolicy: IfNotPresent
-  initCommands:
-    - open5gs-dbctl add_ue_with_slice 208930000000003 8baf473f2f8fd09487cccbd7097c6862 8e27b6af0e692e750f32667a3b14605d internet 1 010203
+  initCommands: []
 
 # Using our own MongoDB StatefulSet (Bitnami tags are broken on Docker Hub)
 mongodb:
@@ -17,6 +16,13 @@ mongodb:
 smf:
   enabled: true
   config:
+    subnetList:
+      - subnet: 10.45.0.0/16
+        gateway: 10.45.0.1
+        dnn: internet
+      - subnet: 10.46.0.0/16
+        gateway: 10.46.0.1
+        dnn: ims
     pcrf:
       enabled: false
     sbi:
@@ -28,6 +34,22 @@ smf:
   dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
 upf:
   enabled: true
+  config:
+    subnetList:
+      - subnet: 10.45.0.0/16
+        gateway: 10.45.0.1
+        dnn: internet
+        dev: ogstun
+        mask: 16
+        createDev: true
+        enableNAT: true
+      - subnet: 10.46.0.0/16
+        gateway: 10.46.0.1
+        dnn: ims
+        dev: ogstun2
+        mask: 16
+        createDev: true
+        enableNAT: true
 webui:
   enabled: true
   dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
