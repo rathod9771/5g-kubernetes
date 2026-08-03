@@ -16,6 +16,17 @@ mongodb:
 smf:
   enabled: true
   config:
+    info:
+      - s_nssai:
+          - sst: 1
+            sd: "010203"
+            dnn:
+              - internet
+              - ims
+          - sst: 1
+            dnn:
+              - internet
+              - ims
     subnetList:
       - subnet: 10.45.0.0/16
         gateway: 10.45.0.1
@@ -23,6 +34,8 @@ smf:
       - subnet: 10.46.0.0/16
         gateway: 10.46.0.1
         dnn: ims
+    pcscfList:
+      - 172.22.0.21
     pcrf:
       enabled: false
     sbi:
@@ -155,12 +168,12 @@ nssf:
           enabled: true
         scp:
           enabled: false
-    nssiList:
-      - addr: nrf
-        sst: 1
+    nsiList:
       - addr: nrf
         sst: 1
         sd: "010203"
+      - addr: nrf
+        sst: 1
 pcf:
   enabled: true
   config:
