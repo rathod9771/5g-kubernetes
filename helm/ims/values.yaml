@@ -1,0 +1,9 @@
+configHostPath: /home/rclab/docker_open5gs
+mysqlDataHostPath: /home/rclab/ims-mysql-data
+pcscfServiceIP: 10.99.99.99
+images:
+  dns: docker.io/library/docker_dns:latest
+  mysql: docker.io/library/docker_mysql:latest
+  pyhss: docker.io/library/docker_pyhss:latest
+  kamailio: docker.io/library/docker_kamailio:latest
+  rtpengine: docker.io/library/docker_rtpengine:latest

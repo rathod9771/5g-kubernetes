@@ -1,0 +1,432 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ims
+  labels:
+    app: ims
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ims
+  template:
+    metadata:
+      labels:
+        app: ims
+    spec:
+      dnsPolicy: "None"
+      dnsConfig:
+        nameservers:
+        - 127.0.0.1
+        searches:
+        - ims.mnc01.mcc001.3gppnetwork.org
+      containers:
+      - name: dns
+        image: {{ .Values.images.dns }}
+        imagePullPolicy: Never
+        securityContext:
+          privileged: false
+          capabilities:
+            add: ["NET_ADMIN"]
+        envFrom:
+        - configMapRef:
+            name: ims-env
+        env:
+        - name: COMPONENT_NAME
+          value: "dns"
+        - name: DEPLOY_MODE
+          value: "5G"
+        - name: DNS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: MYSQL_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PYHSS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ICSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: RTPENGINE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: UPF_ADVERTISE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: cfg-dns
+          mountPath: /mnt/dns
+      - name: mysql
+        image: {{ .Values.images.mysql }}
+        imagePullPolicy: Never
+        securityContext:
+          privileged: false
+          capabilities:
+            add: ["NET_ADMIN"]
+        envFrom:
+        - configMapRef:
+            name: ims-env
+        env:
+        - name: COMPONENT_NAME
+          value: "mysql"
+        - name: DEPLOY_MODE
+          value: "5G"
+        - name: DNS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: MYSQL_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PYHSS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ICSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: RTPENGINE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: UPF_ADVERTISE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: MYSQL_ALLOW_EMPTY_PASSWORD
+          value: "yes"
+        volumeMounts:
+        - name: cfg-mysql
+          mountPath: /mnt/mysql
+      - name: rtpengine
+        image: {{ .Values.images.rtpengine }}
+        imagePullPolicy: Never
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN"]
+        envFrom:
+        - configMapRef:
+            name: ims-env
+        env:
+        - name: COMPONENT_NAME
+          value: "rtpengine"
+        - name: DEPLOY_MODE
+          value: "5G"
+        - name: DNS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: MYSQL_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PYHSS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ICSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: RTPENGINE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: UPF_ADVERTISE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: cfg-rtpengine
+          mountPath: /mnt/rtpengine
+      - name: pyhss
+        image: {{ .Values.images.pyhss }}
+        imagePullPolicy: Never
+        securityContext:
+          privileged: false
+          capabilities:
+            add: ["NET_ADMIN"]
+        envFrom:
+        - configMapRef:
+            name: ims-env
+        env:
+        - name: COMPONENT_NAME
+          value: "pyhss"
+        - name: DEPLOY_MODE
+          value: "5G"
+        - name: DNS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: MYSQL_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PYHSS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ICSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: RTPENGINE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: UPF_ADVERTISE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: cfg-pyhss
+          mountPath: /mnt/pyhss
+      - name: icscf
+        image: {{ .Values.images.kamailio }}
+        imagePullPolicy: Never
+        securityContext:
+          privileged: false
+          capabilities:
+            add: ["NET_ADMIN"]
+        envFrom:
+        - configMapRef:
+            name: ims-env
+        env:
+        - name: COMPONENT_NAME
+          value: "icscf"
+        - name: DEPLOY_MODE
+          value: "5G"
+        - name: DNS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: MYSQL_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PYHSS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ICSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: RTPENGINE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: UPF_ADVERTISE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: cfg-icscf
+          mountPath: /mnt/icscf
+      - name: scscf
+        image: {{ .Values.images.kamailio }}
+        imagePullPolicy: Never
+        securityContext:
+          privileged: false
+          capabilities:
+            add: ["NET_ADMIN"]
+        envFrom:
+        - configMapRef:
+            name: ims-env
+        env:
+        - name: COMPONENT_NAME
+          value: "scscf"
+        - name: DEPLOY_MODE
+          value: "5G"
+        - name: DNS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: MYSQL_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PYHSS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ICSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: RTPENGINE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: UPF_ADVERTISE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: cfg-scscf
+          mountPath: /mnt/scscf
+      - name: pcscf
+        image: {{ .Values.images.kamailio }}
+        imagePullPolicy: Never
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN"]
+        envFrom:
+        - configMapRef:
+            name: ims-env
+        env:
+        - name: COMPONENT_NAME
+          value: "pcscf"
+        - name: DEPLOY_MODE
+          value: "5G"
+        - name: DNS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: MYSQL_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PYHSS_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ICSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: PCSCF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: RTPENGINE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: DOCKER_HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: UPF_ADVERTISE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        volumeMounts:
+        - name: cfg-pcscf
+          mountPath: /mnt/pcscf
+      volumes:
+      - name: cfg-dns
+        hostPath:
+          path: {{ .Values.configHostPath }}/dns
+          type: Directory
+      - name: cfg-mysql
+        hostPath:
+          path: {{ .Values.configHostPath }}/mysql
+          type: Directory
+      - name: cfg-rtpengine
+        hostPath:
+          path: {{ .Values.configHostPath }}/rtpengine
+          type: Directory
+      - name: cfg-pyhss
+        hostPath:
+          path: {{ .Values.configHostPath }}/pyhss
+          type: Directory
+      - name: cfg-icscf
+        hostPath:
+          path: {{ .Values.configHostPath }}/icscf
+          type: Directory
+      - name: cfg-scscf
+        hostPath:
+          path: {{ .Values.configHostPath }}/scscf
+          type: Directory
+      - name: cfg-pcscf
+        hostPath:
+          path: {{ .Values.configHostPath }}/pcscf
+          type: Directory
