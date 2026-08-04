@@ -377,3 +377,99 @@ redirected the work from gain and antenna tuning to clock discipline.
 - OpenAirInterface — https://openairinterface.org
 - UERANSIM — https://github.com/aligungr/UERANSIM
 - towards5gs-helm (Orange) — https://github.com/Orange-OpenSource/towards5gs-helm
+
+
+---
+
+## IMS (Kamailio) on Kubernetes
+
+VoNR requires an IMS alongside the 5G core: Kamailio in three roles (P-CSCF,
+I-CSCF, S-CSCF), PyHSS with a MySQL backend for IMS subscriber data, rtpengine
+for media, and a DNS server, since IMS routing resolves component names within
+the 3gppnetwork.org realm.
+
+### Why a single pod
+
+The components were first run from the upstream docker_open5gs compose file
+beside the cluster. That failed on networking: pods on flannel could not reach
+the Docker bridge network at all, while the host could. Two container runtimes
+writing iptables rules on one host proved to be a recurring fight rather than a
+one-off.
+
+The chart in helm/ims therefore runs all seven components as containers in a
+single pod. That solves the addressing problem directly: in compose each
+component has a static IP baked into the DNS zone and every config, whereas in
+Kubernetes pod IPs are dynamic. Sharing one pod means one IP, so every
+component's *_IP environment variable is set from status.podIP via fieldRef and
+the upstream init scripts configure themselves unchanged. Ports do not collide
+(SIP on 4060/5060/6060, Diameter on 3868-3871), and the UE reaches everything
+through one Service ClusterIP.
+
+### Core-side prerequisites
+
+The UE opens a second PDU session purely for SIP signalling, so the core needs:
+
+- an `ims` DNN on 10.46.0.0/16, with the UPF creating a second tunnel
+  interface (ogstun2) alongside ogstun
+- subscribers carrying both DNNs (`open5gs-dbctl update_apn <imsi> ims 0`)
+- the SMF advertising the P-CSCF address during session establishment, so the
+  handset learns where to send SIP
+
+### Errors encountered and how they were resolved
+
+| # | Symptom | Root cause | Fix |
+|---|---|---|---|
+| 1 | Compose containers all reported Up, but CSCFs and PyHSS never started; connections to MySQL timed out with error 110 | Kubernetes sets the iptables FORWARD policy to DROP, which silently discards Docker inter-container traffic. Error 110 (timeout) rather than 111 (refused) is the signature: packets vanish rather than being rejected | `iptables -P FORWARD ACCEPT`, or a targeted rule on the Docker bridge. Neither survives a reboot, and kube-proxy may reset it |
+| 2 | Container reported Up while the service inside was not running | These images run an init script that polls MySQL and only then starts the real process. Docker and Kubernetes both report the wrapper, not the service | Check for the actual process (`kamailio -f`, `python3 apiService.py`) rather than trusting container status |
+| 3 | Pods on flannel could not reach the compose network at all, though the host could reach it in 0.067 ms | Traffic between the CNI bridge and the Docker bridge was dropped before reaching any rule that would accept it; Docker 29 replaced the familiar isolation chains, and a Tailscale forward chain also sits in the path | Not resolved at the compose layer. Superseded by moving IMS into the cluster |
+| 4 | MySQL container ran but mysqld never started | A hostPath volume was mounted over /var/lib/mysql. Docker named volumes copy the image's existing content in on first use; Kubernetes hostPath mounts do not, so the empty directory shadowed the database baked into the image | Do not mount over /var/lib/mysql. Persistence would need an init step that seeds the directory first |
+| 5 | PyHSS API did not answer on 8080; apiService.py appeared as a zombie | The init script starts three PyHSS services in parallel and does not supervise them. Two race to create the schema, and the loser dies with `Table 'auc' already exists` rather than retrying | Restart apiService inside the container. Kubernetes restarts of the whole container also resolve it once the schema exists. A retry wrapper is the proper fix |
+| 6 | P-CSCF logged repeated failures registering itself as an NF | Its 5G-mode config points at an SCP address from the compose network, which does not exist in this deployment | Point SCP_IP and NRF_IP at the cluster NRF |
+| 7 | Test REGISTER returned 504 Server Time-Out, with the Contact header accumulating alias parameters on each pass until Kamailio reported a buffer overrun | The Request-URI was set to the P-CSCF's own IP. A UE sends REGISTER with the home domain as Request-URI, which the P-CSCF resolves onward to the I-CSCF on 4060; given its own address it forwards to itself in a loop | Request-URI must be the home realm, not the proxy address |
+| 8 | ClusterIP did not answer ping, suggesting the Service was unreachable | kube-proxy forwards only the ports and protocols a Service declares; ICMP is never forwarded | Test a ClusterIP with TCP to a declared port, not with ping |
+
+### Verified
+
+The UE reaches the IMS through the `ims` PDU session: a request from inside the
+UE pod via the ims tunnel to the PyHSS API returns 200, and the P-CSCF's SIP
+port is open. The P-CSCF receives and parses SIP REGISTER correctly (source,
+Contact and expiry all logged), DNS resolves the CSCF names to the pod with SRV
+records pointing at 4060, and all three Kamailio instances are listening.
+
+The authentication round-trip remains untested with a generic SIP client:
+sipsak forces an SRV lookup for the realm that the UE pod's resolver cannot
+satisfy. A handset constructs a correct IMS REGISTER natively, including the
+IPsec security negotiation the P-CSCF expects, so that is the next test.
+
+### Useful commands
+
+```bash
+# IMS pod and service
+kubectl get pods -n free5gc -l app=ims
+kubectl get svc -n free5gc ims
+
+# check the services inside actually started
+IMSPOD=$(kubectl get pods -n free5gc -l app=ims -o jsonpath='{.items[0].metadata.name}')
+for c in icscf scscf pcscf; do
+  kubectl exec -n free5gc $IMSPOD -c $c -- ps aux | grep -c "kamailio -f"
+done
+
+# PyHSS API through the Service
+curl -s -o /dev/null -w "%{http_code}\n" http://10.99.99.99:8080/docs/
+
+# if the API does not answer, restart it inside the container
+kubectl exec -n free5gc $IMSPOD -c pyhss -- \
+  sh -c "cd /pyhss/services; nohup python3 apiService.py >/tmp/api.log 2>&1 &"
+
+# watch SIP arrive at the P-CSCF
+kubectl logs -n free5gc $IMSPOD -c pcscf -f | grep -iE "REGISTER|INVITE|401|200 OK"
+
+# UE side: both PDU sessions
+UEPOD=$(kubectl get pods -n free5gc -l component=ue -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n free5gc $UEPOD -- ip -br addr show | grep uesimtun
+
+# reachability from the UE over the ims tunnel (TCP, not ping)
+kubectl exec -n free5gc $UEPOD -- curl -s -o /dev/null -w "%{http_code}\n" \
+  --interface uesimtun1 http://10.99.99.99:8080/docs/
+```
+

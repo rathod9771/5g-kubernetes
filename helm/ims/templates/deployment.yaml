@@ -19,7 +19,7 @@ spec:
         nameservers:
         - 127.0.0.1
         searches:
-        - ims.mnc01.mcc001.3gppnetwork.org
+        - ims.mnc001.mcc001.3gppnetwork.org
       containers:
       - name: dns
         image: {{ .Values.images.dns }}
