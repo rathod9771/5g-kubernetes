@@ -787,6 +787,7 @@ spec:
         cell-tier: {{ .Values.cellTier }}
       annotations:
         sidecar.istio.io/inject: "false"
+        checksum/config: {{ toYaml .Values.cell | sha256sum }}
     spec:
       containers:
       - name: gnb
