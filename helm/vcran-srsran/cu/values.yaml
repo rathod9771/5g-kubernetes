@@ -1,0 +1,16 @@
+# Virtualized Cloud-RAN: the CU is an elastic, resource-governed workload.
+# The DU stays fixed - it is bound to its cell and real-time deadlines.
+cu:
+  replicas: 1
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUPercent: 70
