@@ -1,0 +1,22 @@
+# Defaults describe the MACRO cell.
+# Deploy the small cell by overriding with values-small.yaml.
+cellName: hcran-macro
+cellTier: macro
+
+cell:
+  pci: 1
+  dlArfcn: 632628        # band n78
+  bandwidthMHz: 20       # same channel as small cell; differentiation is power + capacity
+  txGain: 80             # higher power, wider reach
+
+zmq:
+  txPort: 2000
+  rxPort: 2001
+
+resources:
+  requests:
+    cpu: "1"
+    memory: "2Gi"
+  limits:
+    cpu: "2"          # macro: coverage-oriented, fewer users, less compute
+    memory: "4Gi"

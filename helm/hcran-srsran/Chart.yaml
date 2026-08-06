@@ -1,0 +1,5 @@
+apiVersion: v2
+name: hcran-srsran
+description: Heterogeneous Cloud-RAN cell (macro or small) - srsRAN gNB on one shared core
+version: 0.1.0
+appVersion: "25.10"
