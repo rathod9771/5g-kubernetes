@@ -1,0 +1,5 @@
+apiVersion: v2
+name: fran-edge
+description: Fog RAN edge application (MEC) reachable via the edge UPF local breakout
+version: 0.1.0
+appVersion: "1.0"

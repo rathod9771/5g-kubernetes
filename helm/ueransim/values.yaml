@@ -164,6 +164,11 @@ ue:
         slice:
           sst: 0x01
           sd: 0x010203
+      - type: "IPv4"
+        apn: "edge"
+        slice:
+          sst: 0x01
+          sd: 0x010203
     # Configured NSSAI for this UE by HPLMN
     configured-nssai:
       - sst: 0x01

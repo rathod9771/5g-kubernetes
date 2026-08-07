@@ -23,10 +23,12 @@ smf:
             dnn:
               - internet
               - ims
+              - edge
           - sst: 1
             dnn:
               - internet
               - ims
+              - edge
     subnetList:
       - subnet: 10.45.0.0/16
         gateway: 10.45.0.1
@@ -34,6 +36,9 @@ smf:
       - subnet: 10.46.0.0/16
         gateway: 10.46.0.1
         dnn: ims
+      - subnet: 10.47.0.0/16
+        gateway: 10.47.0.1
+        dnn: edge
     pcscfList:
       - 10.99.99.99
     pcrf:
@@ -63,6 +68,13 @@ upf:
         mask: 16
         createDev: true
         enableNAT: true
+      - subnet: 10.47.0.0/16
+        gateway: 10.47.0.1
+        dnn: edge
+        dev: ogstun3
+        mask: 16
+        createDev: true
+        enableNAT: false
 webui:
   enabled: true
   dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"

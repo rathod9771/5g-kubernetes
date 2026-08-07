@@ -1,0 +1,6 @@
+edgeApp:
+  image: nginx:alpine
+  serviceIP: 10.47.255.10   # inside the edge DNN subnet
+  resources:
+    requests: {cpu: "50m", memory: "64Mi"}
+    limits:   {cpu: "200m", memory: "128Mi"}
