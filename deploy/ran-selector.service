@@ -1,0 +1,16 @@
+[Unit]
+Description=5G RAN Selector dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rclab
+WorkingDirectory=/home/rclab/5g-kubernetes/ran-selector
+Environment=KUBECONFIG=/home/rclab/.kube/config
+ExecStart=/usr/bin/python3 /home/rclab/5g-kubernetes/ran-selector/backend.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
