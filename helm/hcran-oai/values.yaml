@@ -1,0 +1,7 @@
+# MACRO cell (defaults). Small cell overrides via values-small.yaml.
+cellName: hcran-oai-macro
+cellTier: macro
+cell:
+  gnbId: "0xe00"
+  nrCellId: "12345678"
+  physCellId: 0

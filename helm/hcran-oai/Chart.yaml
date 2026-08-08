@@ -1,0 +1,5 @@
+apiVersion: v2
+name: hcran-oai
+description: Heterogeneous Cloud-RAN cell (macro or small) - OAI gNB on one shared core
+version: 0.1.0
+appVersion: "2026.w13"
