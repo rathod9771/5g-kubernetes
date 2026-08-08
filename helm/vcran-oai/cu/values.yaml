@@ -1,0 +1,33 @@
+image:
+  repository: oaisoftwarealliance/oai-gnb
+  tag: 2026.w13
+  pullPolicy: IfNotPresent
+cu:
+  mcc: "208"
+  mnc: "93"
+  tac: 1
+  plmn: "20893"
+  amf:
+    address: ""          # resolved at runtime via getent open5gs-amf-ngap
+    port: 38412
+  f1:
+    port: 38472
+  # v-CRAN: the CU is an elastic, resource-governed workload
+  replicas: 1
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 2
+    targetCPUPercent: 70
+network:
+  masterIf: enp3s0
+ran:
+  type: vcran
+  component: cu

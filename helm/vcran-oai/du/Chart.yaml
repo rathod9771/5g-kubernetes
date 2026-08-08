@@ -1,0 +1,8 @@
+apiVersion: v2
+name: oai-du
+description: OpenAirInterface DU - O-RAN Distributed Unit deployment on Kubernetes
+type: application
+version: 0.1.0
+appVersion: "latest"
+maintainers:
+  - name: Kumar
