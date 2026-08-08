@@ -141,10 +141,10 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
       <div id="arch-list" style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px">
         <button class="arch-btn" data-arch="cran" onclick="selectArch(this,'cran','C-RAN',true)">C-RAN <span class="bdg-mini live">live</span></button>
         <button class="arch-btn" data-arch="oran" onclick="selectArch(this,'oran','O-RAN',true)">O-RAN <span class="bdg-mini live">live</span></button>
-        <button class="arch-btn" data-arch="cloudran" onclick="selectArch(this,'cloudran','Cloud-RAN',false)">Cloud-RAN <span class="bdg-mini soon">soon</span></button>
-        <button class="arch-btn" data-arch="vcran" onclick="selectArch(this,'vcran','V-CRAN',false)">V-CRAN <span class="bdg-mini soon">soon</span></button>
-        <button class="arch-btn" data-arch="hcran" onclick="selectArch(this,'hcran','H-CRAN',false)">H-CRAN <span class="bdg-mini soon">soon</span></button>
-        <button class="arch-btn" data-arch="fran" onclick="selectArch(this,'fran','F-RAN',false)">F-RAN <span class="bdg-mini soon">soon</span></button>
+        <button class="arch-btn" data-arch="cloudran" onclick="selectArch(this,'cloudran','Cloud-RAN',true)">Cloud-RAN <span class="bdg-mini live">live</span></button>
+        <button class="arch-btn" data-arch="vcran" onclick="selectArch(this,'vcran','V-CRAN',true)">V-CRAN <span class="bdg-mini live">live</span></button>
+        <button class="arch-btn" data-arch="hcran" onclick="selectArch(this,'hcran','H-CRAN',true)">H-CRAN <span class="bdg-mini live">live</span></button>
+        <button class="arch-btn" data-arch="fran" onclick="selectArch(this,'fran','F-RAN',true,true)">F-RAN <span class="bdg-mini live">live</span></button>
       </div>
 
       <div id="stack-section" style="display:none">
@@ -342,7 +342,14 @@ function showDeployedPanel(key,name,sub){
     "cran-srsran":"srsran-gnb",
     "cran-oai":"oai-cran-gnb",
     "oran-srsran":"srsran-cu",
-    "oran-oai":"oai-cu"
+    "oran-oai":"oai-cu",
+    "cloudran-srsran":"cloud-ran-gnb",
+    "cloudran-oai":"cloud-ran-oai-gnb",
+    "hcran-srsran":"hcran-macro",
+    "hcran-oai":"hcran-oai-macro",
+    "vcran-srsran":"srsran-cu",
+    "vcran-oai":"oai-cu",
+    "fran":"fran-edge-app"
   };
   const podLabel=COMBO_PODS[lastDeployedCombo] || (key==="cran"?"srsran-gnb":"oai-cu");
   const m=document.getElementById("main");
@@ -493,16 +500,26 @@ setInterval(loadPods,20000);
 
 let selectedArch=null, selectedStack=null;
 
-function selectArch(btn,arch,label,enabled){
+function selectArch(btn,arch,label,enabled,additive){
   if(!enabled)return;
   document.querySelectorAll(".arch-btn").forEach(b=>b.classList.remove("sel"));
   btn.classList.add("sel");
-  selectedArch={key:arch,label:label};
+  selectedArch={key:arch,label:label,additive:!!additive};
   selectedStack=null;
   document.querySelectorAll(".stack-btn").forEach(b=>b.classList.remove("sel"));
-  document.getElementById("stack-section").style.display="block";
-  document.getElementById("combo-deploy-btn").disabled=true;
-  document.getElementById("combo-deploy-btn").textContent="\u25b6 Deploy";
+  const stackSec=document.getElementById("stack-section");
+  const btnEl=document.getElementById("combo-deploy-btn");
+  if(additive){
+    // F-RAN is core-side: no vendor choice, and it coexists with any RAN
+    stackSec.style.display="block";
+    document.getElementById("stack-list").style.display="none";
+    btnEl.disabled=false;
+  }else{
+    stackSec.style.display="block";
+    document.getElementById("stack-list").style.display="flex";
+    btnEl.disabled=true;
+  }
+  btnEl.textContent="\u25b6 Deploy";
 }
 
 function selectStack(btn,stack,label){
@@ -565,7 +582,14 @@ async function verifyClean(silent){
 function manualVerifyClean(){ verifyClean(false); }
 
 async function deployCombo(){
-  if(!selectedArch||!selectedStack)return;
+  if(!selectedArch)return;
+  if(selectedArch.additive){
+    // additive scenarios add to whatever RAN is running - no replacement prompt
+    runDeployCombo(selectedArch.key, selectedArch.label,
+                   "Edge breakout scenario - coexists with the active RAN");
+    return;
+  }
+  if(!selectedStack)return;
   const comboKey=selectedArch.key+"-"+selectedStack.key;
   const name=selectedStack.label+" on "+selectedArch.label;
   const sub=selectedArch.label+" architecture using "+selectedStack.label+" software";

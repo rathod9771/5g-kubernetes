@@ -22,11 +22,11 @@ SCENARIOS = {
   "oran-srsran": {"name": "O-RAN + srsRAN (CU/DU over F1)",
     "releases": [("srsran-cu", "helm/srsran-oran/cu", None),
                  ("srsran-du", "helm/srsran-oran/du", None)],
-    "pods": ["srsran-cu", "srsran-du"]},
+    "selector": "ran-type=oran", "pods": ["srsran-cu", "srsran-du"]},
   "oran-oai": {"name": "O-RAN + OAI (CU/DU over F1)",
     "releases": [("oai-cu", "helm/oai/cu", None),
                  ("oai-du", "helm/oai/du", None)],
-    "pods": ["oai-cu", "oai-du"]},
+    "selector": "ran-type=oran", "pods": ["oai-cu", "oai-du"]},
   "cloudran-srsran": {"name": "Cloud-RAN + srsRAN",
     "releases": [("cloud-ran-srsran", "helm/cloud-ran-srsran", None)],
     "pods": ["cloud-ran-gnb"]},
@@ -44,11 +44,11 @@ SCENARIOS = {
   "vcran-srsran": {"name": "v-CRAN + srsRAN (autoscaling CU)",
     "releases": [("vcran-cu", "helm/vcran-srsran/cu", None),
                  ("vcran-du", "helm/vcran-srsran/du", None)],
-    "pods": ["srsran-cu", "srsran-du"], "hpa": "srsran-cu"},
+    "selector": "ran-type=vcran", "pods": ["srsran-cu", "srsran-du"], "hpa": "srsran-cu"},
   "vcran-oai": {"name": "v-CRAN + OAI (autoscaling CU)",
     "releases": [("vcran-oai-cu", "helm/vcran-oai/cu", None),
                  ("vcran-oai-du", "helm/vcran-oai/du", None)],
-    "pods": ["oai-cu", "oai-du"], "hpa": "oai-cu"},
+    "selector": "ran-type=vcran", "pods": ["oai-cu", "oai-du"], "hpa": "oai-cu"},
   "fran": {"name": "F-RAN edge breakout (MEC app)", "additive": True,
     "releases": [("fran-edge", "helm/fran-edge", None)],
     "pods": ["fran-edge-app"]},
@@ -89,6 +89,13 @@ POD_MAP = {
   "OAI-CRAN": "oai-cran",
   "oai": "oai-cu",
   "OAI-DU": "oai-du",
+  "HCRAN-MACRO": "hcran-macro",
+  "HCRAN-SMALL": "hcran-small",
+  "HCRAN-OAI-MACRO": "hcran-oai-macro",
+  "HCRAN-OAI-SMALL": "hcran-oai-small",
+  "CLOUD-RAN": "cloud-ran-gnb",
+  "CLOUD-RAN-OAI": "cloud-ran-oai-gnb",
+  "FRAN-EDGE": "fran-edge-app",
 }
 
 import re
@@ -167,7 +174,8 @@ def status():
     try:
         with open(CONFIG_FILE) as f:
             config = yaml.safe_load(f)
-        _, pods_out, _ = run(f"kubectl get pods -n {NS} | grep -E 'srsran|oai'")
+        frags = sorted({p for s in SCENARIOS.values() for p in s["pods"]})
+        _, pods_out, _ = run(f"kubectl get pods -n {NS} | grep -E '" + "|".join(frags) + "'")
         return jsonify({"active": config.get("active","none"), "pods": pods_out.strip()})
     except Exception as e:
         return jsonify({"active": "none", "error": str(e)})
@@ -238,8 +246,10 @@ def verify_clean():
         if key == "none":
             continue
         hits = []
+        sel = scen.get("selector")
+        lflag = f" -l {sel}" if sel else ""
         for frag in scen["pods"]:
-            _, out, _ = run(f"kubectl get pods -n {NS} --no-headers 2>/dev/null | grep {frag} | grep Running")
+            _, out, _ = run(f"kubectl get pods -n {NS}{lflag} --no-headers 2>/dev/null | grep {frag} | grep Running")
             if out.strip():
                 hits.append(frag)
         if hits:
@@ -248,6 +258,7 @@ def verify_clean():
     ran_active = [k for k in present if not SCENARIOS[k].get("additive")]
     return jsonify({"clean": len(ran_active) <= 1,
                     "active_scenarios": present,
+                    "active_combos": ran_active,      # legacy key the UI reads
                     "ran_scenarios": ran_active,
                     "running_pods": running})
 
