@@ -1,5 +1,11 @@
 apiVersion: v2
 name: fran-edge
-description: Fog RAN edge application (MEC) reachable via the edge UPF local breakout
+description: |
+  Fog RAN edge application (MEC) reachable via the edge UPF local breakout.
+  F-RAN is a core-side scenario: the edge DNN, the NAT-disabled tunnel and
+  this MEC application define it, while the gNB only carries traffic. It is
+  therefore vendor-independent - verified with srsRAN (nginx logging the UE
+  unmasqueraded at 10.47.0.2, internet unreachable over the edge session)
+  and confirmed with an OAI gNB attached to the same core.
 version: 0.1.0
 appVersion: "1.0"
