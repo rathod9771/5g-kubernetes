@@ -1,5 +1,6 @@
 active: hcran-srsran
-additive: []
+additive:
+- fran
 oai:
   components:
     cu: false
