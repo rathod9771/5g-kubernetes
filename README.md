@@ -507,3 +507,31 @@ pkill iperf3
 | O-RAN + OAI | 320 Mbit/s sustained (10s) | ~9.7-10.1 ms to 8.8.8.8 | 473 TCP retransmits over the run, likely attributable to the ZMQ-simulated radio interface rather than the core or CU/DU split itself |
 | v-CRAN + OAI | 339 Mbit/s sustained (10s) | ~9.8-12.6 ms to 8.8.8.8 | 441 TCP retransmits, same profile as O-RAN. HPA (target 70% CPU on the CU) watched live during the burst and stayed flat at 3-4% — the CU handles RRC/PDCP signalling only, so bulk UE throughput does not load it; scaling this CU needs concurrent registrations/handovers, not more data volume from one UE |
 
+### Capacity testing: where does load actually land?
+
+The single-stream test above raised an obvious follow-up: since the CU
+never scales under bulk UE traffic, what *does* limit throughput as load
+increases — the DU's CPU, or something else? Repeated the v-CRAN+OAI test
+with a heavier, longer burst (60s, 4 parallel TCP streams) while watching
+both pods resource use live.
+
+| Test | Throughput | Retransmits | DU CPU | CU CPU |
+|---|---|---|---|---|
+| 1 stream, 10s | 339 Mbit/s | 441 | not measured | 3-4% (idle) |
+| 4 streams, 60s | 312 Mbit/s | 17,289 | 216m (~2.7% of 8 cores) | 18m (idle) |
+
+Adding parallel streams made things *worse*, not better — throughput
+dropped and retransmits rose by roughly 39x. Neither pod was anywhere
+near its CPU ceiling (the DU has no resource limit set at all, and used
+under 3% of the node regardless). That rules out Kubernetes resource
+constraints as the bottleneck.
+
+The constraint is the **ZMQ-simulated radio link** standing in for real
+RF hardware — it does not handle concurrent high-throughput streams
+gracefully, and the retransmit explosion is consistent with packets
+queuing and dropping there rather than anywhere in the CU/DU/core path.
+Worth stating plainly: this is a limit of the simulated radio interface
+used for this testbed, not a limit of the cloud-native RAN/core design
+itself.
+
+
