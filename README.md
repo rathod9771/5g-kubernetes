@@ -505,4 +505,5 @@ pkill iperf3
 | Scenario | Throughput | Latency (RTT) | Notes |
 |---|---|---|---|
 | O-RAN + OAI | 320 Mbit/s sustained (10s) | ~9.7-10.1 ms to 8.8.8.8 | 473 TCP retransmits over the run, likely attributable to the ZMQ-simulated radio interface rather than the core or CU/DU split itself |
+| v-CRAN + OAI | 339 Mbit/s sustained (10s) | ~9.8-12.6 ms to 8.8.8.8 | 441 TCP retransmits, same profile as O-RAN. HPA (target 70% CPU on the CU) watched live during the burst and stayed flat at 3-4% — the CU handles RRC/PDCP signalling only, so bulk UE throughput does not load it; scaling this CU needs concurrent registrations/handovers, not more data volume from one UE |
 
