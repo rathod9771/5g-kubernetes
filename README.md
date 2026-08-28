@@ -473,3 +473,36 @@ kubectl exec -n free5gc $UEPOD -- curl -s -o /dev/null -w "%{http_code}\n" \
   --interface uesimtun1 http://10.99.99.99:8080/docs/
 ```
 
+
+## Performance
+
+Latency and throughput measured end-to-end through each RAN scenario, using
+the UE's own PDU session — traffic genuinely traverses the full path from
+the UE pod through the RAN (DU/gNB → CU, where applicable) into the core and
+out via the UPF.
+
+**Method**
+
+```bash
+# server on the host
+iperf3 -s -D
+
+# find the host bridge IP pods use to reach it (usually 10.244.0.1)
+ip addr show cni0 | grep "inet "
+
+# client inside the UE pod, source-bound to its tunnel so traffic
+# actually goes through the RAN/core rather than any shortcut
+UEPOD=$(kubectl get pods -n free5gc -l component=ue -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n free5gc $UEPOD -- iperf3 -c <host-cni0-ip> -B <ue-tunnel-ip> -t 10
+
+# latency over the same tunnel
+kubectl exec -n free5gc $UEPOD -- ping -I uesimtun0 -c 20 8.8.8.8
+
+# stop the server when done
+pkill iperf3
+```
+
+| Scenario | Throughput | Latency (RTT) | Notes |
+|---|---|---|---|
+| O-RAN + OAI | 320 Mbit/s sustained (10s) | ~9.7-10.1 ms to 8.8.8.8 | 473 TCP retransmits over the run, likely attributable to the ZMQ-simulated radio interface rather than the core or CU/DU split itself |
+
