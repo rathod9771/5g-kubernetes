@@ -85,10 +85,6 @@ data:
       ngap_log_level = "info";
     };
     
-    e2_agent = {
-      near_ric_ip_addr = "127.0.0.1";
-      sm_dir = "/usr/local/lib/flexric/"
-    };
     
 ---
 apiVersion: apps/v1
