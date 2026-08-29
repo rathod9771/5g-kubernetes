@@ -131,6 +131,8 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
     <button class="top-btn" id="btn-istio" onclick="showTopPanel(this,'istio')">Istio</button>
     <button class="top-btn" id="btn-verify" onclick="manualVerifyClean()">Verify Clean</button>
     <span id="clean-badge" style="font-size:10px;padding:4px 10px;border-radius:6px;font-weight:600"></span>
+    <button class="top-btn" onclick="window.open('https://172.30.18.32:8443/dashboard/','_blank')">🐄 Rancher ↗</button>
+    <button class="top-btn" id="btn-osm" onclick="showExternalPanel(this,'osm')">📡 OSM</button>
   </div>
 </div>
 <div class="layout">
@@ -580,6 +582,26 @@ async function verifyClean(silent){
 }
 
 function manualVerifyClean(){ verifyClean(false); }
+
+const EXTERNAL_PANELS = {
+  rancher: { url: "https://172.30.18.32:8091/dashboard/", label: "Rancher" },
+  osm:     { url: "http://172.30.18.32:30080/",           label: "OSM (Open Source MANO)" }
+};
+
+function showExternalPanel(btn, key){
+  document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("sel"));
+  btn.classList.add("sel");
+  const p = EXTERNAL_PANELS[key];
+  const m = document.getElementById("main");
+  m.innerHTML = `<div style="display:flex;flex-direction:column;height:100%">
+    <div style="padding:8px 14px;background:#0d1424;border-bottom:1px solid #1e2a45;font-size:12px;color:#8899bb;display:flex;justify-content:space-between;align-items:center">
+      <span>${p.label} — embedded, no separate login tab needed</span>
+      <a href="${p.url}" target="_blank" style="color:#00d4ff;text-decoration:none;font-size:11px">Open in new tab ↗</a>
+    </div>
+    <iframe src="${p.url}" style="flex:1;width:100%;border:none;background:#fff"
+      sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"></iframe>
+  </div>`;
+}
 
 async function deployCombo(){
   if(!selectedArch)return;
