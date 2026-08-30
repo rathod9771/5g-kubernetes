@@ -31,3 +31,8 @@ network:
 ran:
   type: vcran
   component: cu
+
+# Bump this by 1 whenever you edit cu.yaml's template text directly
+# (not via values) - e.g. removing the e2_agent block. Values-only
+# changes are already covered automatically via the values hash below.
+configRevision: 1

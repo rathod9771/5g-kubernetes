@@ -5,3 +5,6 @@ cell:
   gnbId: "0xe00"
   nrCellId: "12345678"
   physCellId: 0
+
+# Bump by 1 whenever gnb.yaml template text changes directly (not via values)
+configRevision: 1

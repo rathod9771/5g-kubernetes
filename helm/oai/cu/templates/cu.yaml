@@ -108,6 +108,7 @@ spec:
         component: cu
       annotations:
         sidecar.istio.io/inject: "false"
+        checksum/config: "r{{ .Values.configRevision | default 1 }}-{{ toYaml .Values | sha256sum | trunc 8 }}"
     spec:
       containers:
       - name: cu
