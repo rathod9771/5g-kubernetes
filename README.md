@@ -508,6 +508,31 @@ pkill iperf3
 | v-CRAN + OAI | 339 Mbit/s sustained (10s) | ~9.8-12.6 ms to 8.8.8.8 | 441 TCP retransmits, same profile as O-RAN. HPA (target 70% CPU on the CU) watched live during the burst and stayed flat at 3-4% — the CU handles RRC/PDCP signalling only, so bulk UE throughput does not load it; scaling this CU needs concurrent registrations/handovers, not more data volume from one UE |
 | H-CRAN + OAI (macro+small) | 292 Mbit/s sustained (10s) | ~9.8-11.9 ms to 8.8.8.8 (mean 10.2) | 415 TCP retransmits. Both cells attached simultaneously (confirmed via AMF gNB count), but the UE only ever uses the one it registered on — a second cell being present has no measurable effect on the active session
 
+### F-RAN: edge vs. internet latency
+
+F-RAN'''s value proposition isn'''t throughput — it'''s how much faster a
+local edge service responds versus one reached over the normal path.
+Measured from the same UE, back to back, on O-RAN+OAI as the base RAN
+with F-RAN'''s edge DNN and MEC app layered on top (F-RAN is additive,
+not a RAN choice of its own).
+
+Ping couldn'''t be used for the edge target — it'''s a Kubernetes
+ClusterIP, and ClusterIPs never answer ICMP (kube-proxy only forwards
+real TCP/UDP traffic to declared ports). Used curl'''s TCP connect time
+instead, which is the fairer comparison for "how fast can a client
+start talking to this service" anyway.
+
+| Path | TCP connect time (10 runs) |
+|---|---|
+| Edge DNN — local breakout to the MEC app, never leaves the node | ~0.6-2.0 ms, median ~0.8 ms |
+| Internet DNN — same UE, normal path out | ~5.0 ms steady-state (first sample excluded: DNS + cold-connect overhead) |
+
+Roughly a 6x latency advantage for the edge path, even on a single-node
+testbed where the physical distance advantage a real deployment would
+have doesn'''t exist. The gap here comes entirely from the edge session
+never leaving the cluster'''s internal network, versus the internet
+session'''s extra hop out through NAT.
+
 ### Capacity testing: where does load actually land?
 
 The single-stream test above raised an obvious follow-up: since the CU
