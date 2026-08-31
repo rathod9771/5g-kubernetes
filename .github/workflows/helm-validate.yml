@@ -1,0 +1,61 @@
+name: Validate Helm Charts
+
+on:
+  push:
+    paths:
+      - 'helm/**'
+  pull_request:
+    paths:
+      - 'helm/**'
+
+jobs:
+  lint-and-template:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Discover charts
+        id: find
+        run: |
+          charts=$(find helm -maxdepth 3 -name Chart.yaml -exec dirname {} \;)
+          echo "Found charts:"
+          echo "$charts"
+          echo "charts<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$charts" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: helm lint every chart
+        run: |
+          fail=0
+          while IFS= read -r chart; do
+            [ -z "$chart" ] && continue
+            echo "::group::lint $chart"
+            helm lint "$chart" || fail=1
+            echo "::endgroup::"
+          done <<< "${{ steps.find.outputs.charts }}"
+          exit $fail
+
+      - name: helm template every chart (catches syntax errors like unbalanced {{ }})
+        run: |
+          fail=0
+          while IFS= read -r chart; do
+            [ -z "$chart" ] && continue
+            echo "::group::template $chart"
+            helm template ci-check "$chart" > /dev/null || { echo "FAILED: $chart"; fail=1; }
+            echo "::endgroup::"
+          done <<< "${{ steps.find.outputs.charts }}"
+          exit $fail
+
+      - name: Check for known problem patterns
+        run: |
+          # .Files.Get on templates/ always returns empty - Helm excludes that dir.
+          # Catches the exact mistake that produced a checksum of an empty string earlier.
+          if grep -rn '\.Files\.Get "templates/' helm/ 2>/dev/null; then
+            echo "::error::.Files.Get referencing templates/ always returns empty - Helm excludes that directory from .Files"
+            exit 1
+          fi
