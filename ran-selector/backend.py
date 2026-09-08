@@ -180,6 +180,32 @@ def status():
     except Exception as e:
         return jsonify({"active": "none", "error": str(e)})
 
+@app.route("/api/osm/status")
+def osm_status():
+    """OSM 19 + FluxCD health for the OSM panel."""
+    out = {"pods": {"ready": 0, "total": 0}, "flux": [], "error": None}
+    try:
+        _, po, _ = run("kubectl get pods -n osm -o json")
+        items = json.loads(po).get("items", [])
+        ready = 0
+        for p in items:
+            cs = p["status"].get("containerStatuses", [])
+            if cs and all(c.get("ready") for c in cs):
+                ready += 1
+        out["pods"] = {"ready": ready, "total": len(items)}
+        cmd = ("kubectl get gitrepository,kustomization -n flux-system "
+               "-o jsonpath='{range .items[*]}{.kind}|{.metadata.name}|"
+               "{.status.conditions[?(@.type==\"Ready\")].status}{\"\\n\"}{end}'")
+        _, fo, _ = run(cmd)
+        for line in fo.strip().splitlines():
+            parts = line.split("|")
+            if len(parts) == 3:
+                out["flux"].append({"kind": parts[0], "name": parts[1],
+                                    "ready": parts[2] == "True"})
+    except Exception as e:
+        out["error"] = str(e)
+    return jsonify(out)
+
 @app.route("/api/scenarios")
 def scenarios():
     """Everything the UI needs to render the selector - derived from the registry."""

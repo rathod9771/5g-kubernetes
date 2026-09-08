@@ -585,7 +585,7 @@ function manualVerifyClean(){ verifyClean(false); }
 
 const EXTERNAL_PANELS = {
   rancher: { url: "https://172.30.18.32:8091/dashboard/", label: "Rancher" },
-  osm:     { url: "http://172.30.18.32:30080/",           label: "OSM (Open Source MANO)" }
+  osm:     { url: "https://gui.172.30.18.32.nip.io:30843/", label: "OSM 19 (Open Source MANO)" }
 };
 
 function showExternalPanel(btn, key){
@@ -598,9 +598,32 @@ function showExternalPanel(btn, key){
       <span>${p.label} — embedded, no separate login tab needed</span>
       <a href="${p.url}" target="_blank" style="color:#00d4ff;text-decoration:none;font-size:11px">Open in new tab ↗</a>
     </div>
+    ${key === "osm" ? '<div id="osm-status" style="padding:6px 14px;background:#0a1020;border-bottom:1px solid #1e2a45;font-size:11px;color:#8899bb">loading OSM status…</div>' : ""}
     <iframe src="${p.url}" style="flex:1;width:100%;border:none;background:#fff"
       sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"></iframe>
   </div>`;
+  if(key === "osm") loadOsmStatus();
+}
+
+async function loadOsmStatus(){
+  const el = document.getElementById("osm-status");
+  if(!el) return;
+  try{
+    const r = await fetch("/api/osm/status");
+    const d = await r.json();
+    if(d.error){ el.innerHTML = `<span style="color:#ff6b6b">status error: ${d.error}</span>`; return; }
+    const allPods = d.pods.total > 0 && d.pods.ready === d.pods.total;
+    const podCol = allPods ? "#3ddc84" : "#ffb454";
+    const flux = d.flux.map(f =>
+      `<span style="color:${f.ready ? "#3ddc84" : "#ff6b6b"}">${f.kind==="GitRepository"?"git":"sync"} ${f.ready?"\u2713":"\u2717"}</span>`
+    ).join(" \u00b7 ") || `<span style="color:#ff6b6b">flux not found</span>`;
+    el.innerHTML =
+      `<span style="color:${podCol}">pods ${d.pods.ready}/${d.pods.total}</span>` +
+      ` &nbsp;\u00b7&nbsp; GitOps: ${flux}` +
+      ` &nbsp;\u00b7&nbsp; <span style="color:#667">blank frame? open in a new tab once to accept the self-signed certificate</span>`;
+  }catch(e){
+    el.innerHTML = `<span style="color:#ff6b6b">status unavailable</span>`;
+  }
 }
 
 async function deployCombo(){
