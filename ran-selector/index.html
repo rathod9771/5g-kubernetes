@@ -133,6 +133,7 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
     <span id="clean-badge" style="font-size:10px;padding:4px 10px;border-radius:6px;font-weight:600"></span>
     <button class="top-btn" onclick="window.open('https://172.30.18.32:8443/dashboard/','_blank')">🐄 Rancher ↗</button>
     <button class="top-btn" id="btn-osm" onclick="showExternalPanel(this,'osm')">📡 OSM</button>
+    <button class="top-btn" id="btn-docs" onclick="showDocsPanel(this)">📘 Documentation</button>
   </div>
 </div>
 <div class="layout">
@@ -159,7 +160,6 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
       </div>
     </div>
 </div>
-  </div>
   <div class="main" id="main">
     <div class="blank">
       <div class="blank-icon">📡</div>
@@ -605,6 +605,121 @@ function showExternalPanel(btn, key){
   if(key === "osm") loadOsmStatus();
 }
 
+const DOCS = {
+  pdf:  "/api/docs/RAN_Architectures.pdf",
+  pptx: "/api/docs/RAN_Architectures.pptx",
+  title: "RAN Architectures"
+};
+let _docSlides = [], _docIdx = 0, _docStrip = false;
+
+async function showDocsPanel(btn){
+  document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("sel"));
+  btn.classList.add("sel");
+  const m = document.getElementById("main");
+
+  // #main is a flex column; fill it with a flex child, not absolute positioning
+  m.innerHTML = `
+  <div id="docwrap" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column;background:#080d18">
+
+    <div style="flex:0 0 auto;padding:6px 14px;background:#0d1424;border-bottom:1px solid #1e2a45;
+                display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#8899bb">
+      <span style="font-weight:600;color:#ccd6e8">${DOCS.title}</span>
+      <span style="display:flex;align-items:center;gap:13px">
+        <span id="docCounter" style="font-size:11px;color:#667a99;font-variant-numeric:tabular-nums"></span>
+        <button onclick="docToggleStrip()" id="docStripBtn" title="Slide thumbnails"
+          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
+                 padding:2px 8px;font-size:11px;cursor:pointer">&#9783;</button>
+        <button onclick="docFullscreen()" title="Fullscreen"
+          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
+                 padding:2px 8px;font-size:11px;cursor:pointer">&#9974;</button>
+        <a href="${DOCS.pdf}" target="_blank" style="color:#00d4ff;text-decoration:none;font-size:11px">PDF &#8599;</a>
+        <a href="${DOCS.pptx}" download style="color:#00d4ff;text-decoration:none;font-size:11px">.pptx &#8595;</a>
+      </span>
+    </div>
+
+    <div id="docStage" style="flex:1 1 auto;min-height:0;position:relative;display:flex;
+                              align-items:center;justify-content:center;padding:10px 52px;overflow:hidden">
+      <img id="docImg" alt="" style="max-width:100%;max-height:100%;width:auto;height:auto;
+           object-fit:contain;border-radius:5px;box-shadow:0 5px 26px rgba(0,0,0,.6)">
+      <button onclick="docGo(-1)" aria-label="Previous"
+        style="position:absolute;left:8px;top:50%;transform:translateY(-50%);width:34px;height:58px;
+               background:#0d1424cc;border:1px solid #1e2a45;color:#8899bb;border-radius:7px;
+               font-size:18px;cursor:pointer">&#8249;</button>
+      <button onclick="docGo(1)" aria-label="Next"
+        style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:58px;
+               background:#0d1424cc;border:1px solid #1e2a45;color:#8899bb;border-radius:7px;
+               font-size:18px;cursor:pointer">&#8250;</button>
+    </div>
+
+    <div id="docStrip" style="flex:0 0 auto;display:none;gap:5px;padding:6px 12px;overflow-x:auto;
+                              background:#0a1020;border-top:1px solid #1e2a45"></div>
+  </div>`;
+
+  if(!_docSlides.length){
+    try{
+      const r = await fetch("/api/docs/slides");
+      _docSlides = (await r.json()).slides || [];
+    }catch(e){ _docSlides = []; }
+  }
+  if(!_docSlides.length){
+    document.getElementById("docStage").innerHTML =
+      `<div style="color:#8899bb;font-size:12px;text-align:center;line-height:1.7">
+         No slide images found.<br>
+         <span style="color:#667a99">Run <code style="color:#00d4ff">./make-docs.sh</code> in the ran-selector directory, then restart the service.</span>
+       </div>`;
+    return;
+  }
+  _docIdx = 0;
+  docRenderStrip();
+  docShow(0);
+  document.onkeydown = docKeys;
+}
+
+function docShow(i){
+  if(!_docSlides.length) return;
+  _docIdx = Math.max(0, Math.min(_docSlides.length - 1, i));
+  const img = document.getElementById("docImg");
+  if(img) img.src = _docSlides[_docIdx];
+  const c = document.getElementById("docCounter");
+  if(c) c.textContent = String(_docIdx + 1).padStart(2,"0") + " / " + _docSlides.length;
+  document.querySelectorAll("#docStrip img").forEach((t, n)=>{
+    t.style.borderColor = n === _docIdx ? "#00d4ff" : "#1e2a45";
+    t.style.opacity = n === _docIdx ? "1" : "0.5";
+    if(n === _docIdx && _docStrip) t.scrollIntoView({block:"nearest", inline:"center", behavior:"smooth"});
+  });
+}
+function docGo(d){ docShow(_docIdx + d); }
+function docToggleStrip(){
+  _docStrip = !_docStrip;
+  const s = document.getElementById("docStrip");
+  const b = document.getElementById("docStripBtn");
+  if(s) s.style.display = _docStrip ? "flex" : "none";
+  if(b){ b.style.borderColor = _docStrip ? "#00d4ff" : "#24406b";
+         b.style.color = _docStrip ? "#00d4ff" : "#8899bb"; }
+  if(_docStrip) docShow(_docIdx);
+}
+function docKeys(e){
+  if(!document.getElementById("docImg")) { document.onkeydown = null; return; }
+  if(e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); docGo(1); }
+  if(e.key === "ArrowLeft")  { e.preventDefault(); docGo(-1); }
+  if(e.key === "Home") docShow(0);
+  if(e.key === "End")  docShow(_docSlides.length - 1);
+}
+function docRenderStrip(){
+  const strip = document.getElementById("docStrip");
+  if(!strip) return;
+  strip.innerHTML = _docSlides.map((s, n) =>
+    `<img src="${s}" onclick="docShow(${n})" loading="lazy"
+      style="height:42px;flex:0 0 auto;border:1.5px solid #1e2a45;border-radius:3px;
+             cursor:pointer;opacity:.5;transition:opacity .15s,border-color .15s">`
+  ).join("");
+}
+function docFullscreen(){
+  const el = document.getElementById("docwrap");
+  if(!el) return;
+  if(document.fullscreenElement) document.exitFullscreen();
+  else if(el.requestFullscreen) el.requestFullscreen();
+}
 async function loadOsmStatus(){
   const el = document.getElementById("osm-status");
   if(!el) return;

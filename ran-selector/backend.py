@@ -206,6 +206,42 @@ def osm_status():
         out["error"] = str(e)
     return jsonify(out)
 
+DOCS_DIR = os.path.join(os.path.dirname(CONFIG_FILE), "docs")
+
+@app.route("/api/docs/slides")
+def docs_slides():
+    """List the rendered slide images, in order."""
+    d = os.path.join(DOCS_DIR, "slides")
+    try:
+        files = sorted(f for f in os.listdir(d) if f.lower().endswith((".jpg", ".png")))
+    except FileNotFoundError:
+        files = []
+    return jsonify({"slides": ["/api/docs/slides/" + f for f in files]})
+
+@app.route("/api/docs/slides/<path:name>")
+def docs_slide_file(name):
+    if "/" in name or ".." in name:
+        return jsonify({"error": "bad name"}), 400
+    return send_from_directory(os.path.join(DOCS_DIR, "slides"), name)
+
+@app.route("/api/docs/<path:name>")
+def docs_file(name):
+    """Serve documentation assets (the architecture deck as PDF and PPTX)."""
+    if "/" in name or ".." in name:
+        return jsonify({"error": "bad name"}), 400
+    if not os.path.isfile(os.path.join(DOCS_DIR, name)):
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(DOCS_DIR, name)
+
+@app.route("/api/docs")
+def docs_list():
+    """What documentation is available."""
+    try:
+        files = sorted(f for f in os.listdir(DOCS_DIR) if not f.startswith("."))
+    except FileNotFoundError:
+        files = []
+    return jsonify({"files": files})
+
 @app.route("/api/scenarios")
 def scenarios():
     """Everything the UI needs to render the selector - derived from the registry."""
