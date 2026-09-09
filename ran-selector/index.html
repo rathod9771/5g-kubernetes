@@ -590,19 +590,58 @@ const EXTERNAL_PANELS = {
 
 function showExternalPanel(btn, key){
   document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("sel"));
-  btn.classList.add("sel");
+  if(btn) btn.classList.add("sel");
   const p = EXTERNAL_PANELS[key];
   const m = document.getElementById("main");
-  m.innerHTML = `<div style="display:flex;flex-direction:column;height:100%">
-    <div style="padding:8px 14px;background:#0d1424;border-bottom:1px solid #1e2a45;font-size:12px;color:#8899bb;display:flex;justify-content:space-between;align-items:center">
+  _extKey = key;
+  const btnStyle = "background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;"
+                 + "padding:1px 9px;font-size:12px;cursor:pointer;line-height:1.4";
+  m.innerHTML = `<div id="extwrap" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column">
+    <div style="flex:0 0 auto;padding:6px 14px;background:#0d1424;border-bottom:1px solid #1e2a45;font-size:12px;color:#8899bb;display:flex;justify-content:space-between;align-items:center">
       <span>${p.label} — embedded, no separate login tab needed</span>
-      <a href="${p.url}" target="_blank" style="color:#00d4ff;text-decoration:none;font-size:11px">Open in new tab ↗</a>
+      <span style="display:flex;align-items:center;gap:12px">
+        <a href="${p.url}" target="_blank" style="color:#00d4ff;text-decoration:none;font-size:11px">Open in new tab ↗</a>
+        <span style="width:1px;height:15px;background:#24406b"></span>
+        <button onclick="extMinimize()" title="Minimize" style="${btnStyle}">&#8211;</button>
+        <button onclick="extFullscreen()" title="Fullscreen" style="${btnStyle}">&#9974;</button>
+        <button onclick="extClose()" title="Close" style="${btnStyle}"
+          onmouseover="this.style.borderColor='#ff5566';this.style.color='#ff5566'"
+          onmouseout="this.style.borderColor='#24406b';this.style.color='#8899bb'">&#10005;</button>
+      </span>
     </div>
-    ${key === "osm" ? '<div id="osm-status" style="padding:6px 14px;background:#0a1020;border-bottom:1px solid #1e2a45;font-size:11px;color:#8899bb">loading OSM status…</div>' : ""}
-    <iframe src="${p.url}" style="flex:1;width:100%;border:none;background:#fff"
+    ${key === "osm" ? '<div id="osm-status" style="flex:0 0 auto;padding:6px 14px;background:#0a1020;border-bottom:1px solid #1e2a45;font-size:11px;color:#8899bb">loading OSM status…</div>' : ""}
+    <iframe src="${p.url}" style="flex:1 1 auto;min-height:0;width:100%;border:none;background:#fff"
       sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"></iframe>
   </div>`;
+  document.onkeydown = function(e){ if(e.key === "Escape") extClose(); };
   if(key === "osm") loadOsmStatus();
+}
+
+let _extKey = null;
+function extMinimize(){
+  document.onkeydown = null;
+  const b = document.getElementById("btn-" + _extKey);
+  if(b) b.classList.add("sel");
+  extRestoreCanvas();
+}
+function extClose(){
+  document.onkeydown = null;
+  document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("sel"));
+  _extKey = null;
+  extRestoreCanvas();
+}
+function extFullscreen(){
+  const el = document.getElementById("extwrap");
+  if(!el) return;
+  if(document.fullscreenElement) document.exitFullscreen();
+  else if(el.requestFullscreen) el.requestFullscreen();
+}
+function extRestoreCanvas(){
+  const m = document.getElementById("main");
+  if(m) m.innerHTML = `<div class="blank">
+      <div class="blank-icon">&#128225;</div>
+      <div class="blank-txt">Deploy a RAN or select a component from the top bar</div>
+    </div>`;
 }
 
 const DOCS = {
@@ -610,30 +649,39 @@ const DOCS = {
   pptx: "/api/docs/RAN_Architectures.pptx",
   title: "RAN Architectures"
 };
-let _docSlides = [], _docIdx = 0, _docStrip = false;
+// first slide of each architecture's section in the deck (1-based)
+const DOC_SECTIONS = { cran:3, oran:5, cloudran:7, vcran:9, hcran:11, fran:13 };
+let _docSlides = [], _docIdx = 0, _docStrip = false, _docOpen = false;
 
 async function showDocsPanel(btn){
   document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("sel"));
-  btn.classList.add("sel");
+  if(btn) btn.classList.add("sel");
+  _docOpen = true;
+  docBadge(false);
   const m = document.getElementById("main");
 
-  // #main is a flex column; fill it with a flex child, not absolute positioning
   m.innerHTML = `
   <div id="docwrap" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column;background:#080d18">
 
     <div style="flex:0 0 auto;padding:6px 14px;background:#0d1424;border-bottom:1px solid #1e2a45;
                 display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#8899bb">
       <span style="font-weight:600;color:#ccd6e8">${DOCS.title}</span>
-      <span style="display:flex;align-items:center;gap:13px">
+      <span style="display:flex;align-items:center;gap:12px">
         <span id="docCounter" style="font-size:11px;color:#667a99;font-variant-numeric:tabular-nums"></span>
-        <button onclick="docToggleStrip()" id="docStripBtn" title="Slide thumbnails"
-          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
-                 padding:2px 8px;font-size:11px;cursor:pointer">&#9783;</button>
-        <button onclick="docFullscreen()" title="Fullscreen"
-          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
-                 padding:2px 8px;font-size:11px;cursor:pointer">&#9974;</button>
         <a href="${DOCS.pdf}" target="_blank" style="color:#00d4ff;text-decoration:none;font-size:11px">PDF &#8599;</a>
         <a href="${DOCS.pptx}" download style="color:#00d4ff;text-decoration:none;font-size:11px">.pptx &#8595;</a>
+        <span style="width:1px;height:15px;background:#24406b"></span>
+        <button onclick="docMinimize()" title="Minimize"
+          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
+                 padding:1px 9px;font-size:12px;cursor:pointer;line-height:1.4">&#8211;</button>
+        <button onclick="docFullscreen()" title="Fullscreen"
+          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
+                 padding:1px 8px;font-size:12px;cursor:pointer;line-height:1.4">&#9974;</button>
+        <button onclick="docClose()" title="Close"
+          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
+                 padding:1px 9px;font-size:12px;cursor:pointer;line-height:1.4"
+          onmouseover="this.style.borderColor='#ff5566';this.style.color='#ff5566'"
+          onmouseout="this.style.borderColor='#24406b';this.style.color='#8899bb'">&#10005;</button>
       </span>
     </div>
 
@@ -649,6 +697,14 @@ async function showDocsPanel(btn){
         style="position:absolute;right:8px;top:50%;transform:translateY(-50%);width:34px;height:58px;
                background:#0d1424cc;border:1px solid #1e2a45;color:#8899bb;border-radius:7px;
                font-size:18px;cursor:pointer">&#8250;</button>
+    </div>
+
+    <div style="flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;
+                padding:3px 12px;background:#0a1020;border-top:1px solid #1e2a45">
+      <span style="font-size:9.5px;color:#4a5a75">&#8592; &#8594; navigate &nbsp;&middot;&nbsp; Esc close</span>
+      <button onclick="docToggleStrip()" id="docStripBtn"
+        style="background:transparent;border:none;color:#667a99;font-size:10px;cursor:pointer;padding:2px 6px">
+        <span id="docStripCaret">&#9650;</span> thumbnails</button>
     </div>
 
     <div id="docStrip" style="flex:0 0 auto;display:none;gap:5px;padding:6px 12px;overflow-x:auto;
@@ -669,9 +725,9 @@ async function showDocsPanel(btn){
        </div>`;
     return;
   }
-  _docIdx = 0;
   docRenderStrip();
-  docShow(0);
+  if(_docStrip){ const s=document.getElementById("docStrip"); if(s) s.style.display="flex"; }
+  docShow(_docIdx);
   document.onkeydown = docKeys;
 }
 
@@ -689,22 +745,25 @@ function docShow(i){
   });
 }
 function docGo(d){ docShow(_docIdx + d); }
+
 function docToggleStrip(){
   _docStrip = !_docStrip;
   const s = document.getElementById("docStrip");
-  const b = document.getElementById("docStripBtn");
+  const caret = document.getElementById("docStripCaret");
   if(s) s.style.display = _docStrip ? "flex" : "none";
-  if(b){ b.style.borderColor = _docStrip ? "#00d4ff" : "#24406b";
-         b.style.color = _docStrip ? "#00d4ff" : "#8899bb"; }
+  if(caret) caret.innerHTML = _docStrip ? "&#9660;" : "&#9650;";
   if(_docStrip) docShow(_docIdx);
 }
+
 function docKeys(e){
   if(!document.getElementById("docImg")) { document.onkeydown = null; return; }
   if(e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); docGo(1); }
   if(e.key === "ArrowLeft")  { e.preventDefault(); docGo(-1); }
   if(e.key === "Home") docShow(0);
   if(e.key === "End")  docShow(_docSlides.length - 1);
+  if(e.key === "Escape") docClose();
 }
+
 function docRenderStrip(){
   const strip = document.getElementById("docStrip");
   if(!strip) return;
@@ -714,11 +773,66 @@ function docRenderStrip(){
              cursor:pointer;opacity:.5;transition:opacity .15s,border-color .15s">`
   ).join("");
 }
+
 function docFullscreen(){
   const el = document.getElementById("docwrap");
   if(!el) return;
   if(document.fullscreenElement) document.exitFullscreen();
   else if(el.requestFullscreen) el.requestFullscreen();
+}
+
+// minimize: keep the slide position, mark the top-bar button, restore the canvas
+function docMinimize(){
+  _docOpen = false;
+  document.onkeydown = null;
+  docBadge(true);
+  docRestoreCanvas();
+}
+function docClose(){
+  _docOpen = false;
+  _docIdx = 0;
+  document.onkeydown = null;
+  docBadge(false);
+  const b = document.getElementById("btn-docs");
+  if(b) b.classList.remove("sel");
+  docRestoreCanvas();
+}
+function docRestoreCanvas(){
+  const m = document.getElementById("main");
+  if(m) m.innerHTML = `<div class="blank">
+      <div class="blank-icon">&#128225;</div>
+      <div class="blank-txt">Deploy a RAN or select a component from the top bar</div>
+    </div>`;
+}
+function docBadge(on){
+  const b = document.getElementById("btn-docs");
+  if(!b) return;
+  const existing = b.querySelector(".docbadge");
+  if(existing) existing.remove();
+  b.classList.toggle("sel", on);
+  if(on){
+    const s = document.createElement("span");
+    s.className = "docbadge";
+    s.style.cssText = "margin-left:6px;font-size:9px;color:#00d4ff;font-weight:700";
+    s.textContent = String(_docIdx + 1) + "/" + (_docSlides.length || "?");
+    b.appendChild(s);
+  }
+}
+
+// jump to an architecture's section when its sidebar button is clicked
+function docJumpToArch(arch){
+  if(!_docOpen || !_docSlides.length) return;
+  const n = DOC_SECTIONS[arch];
+  if(n) docShow(n - 1);
+}
+if(typeof selectArch === "function" && !selectArch._docWrapped){
+  const _origSelectArch = selectArch;
+  selectArch = function(btn, arch){
+    const r = _origSelectArch.apply(this, arguments);
+    try { docJumpToArch(arch); } catch(e){}
+    return r;
+  };
+  selectArch._docWrapped = true;
 }
 async function loadOsmStatus(){
   const el = document.getElementById("osm-status");
