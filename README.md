@@ -115,6 +115,42 @@ kubectl exec -n free5gc $UEPOD -- ping -I uesimtun0 -c 4 8.8.8.8
 
 ---
 
+### Documentation viewer
+
+The dashboard's **Documentation** panel renders the RAN architectures deck as
+slide images on the dashboard's own dark theme — no PDF.js chrome — with
+arrow-key navigation, a thumbnail filmstrip, fullscreen, and links to the PDF
+and original `.pptx`. Clicking an architecture in the sidebar jumps the viewer
+to that section (`DOC_SECTIONS` in `index.html` maps architecture → slide).
+
+The rendered assets are gitignored and regenerate from the deck:
+
+```bash
+cd ran-selector
+./make-docs.sh                       # pptx -> pdf -> docs/slides/*.jpg
+sudo systemctl restart ran-selector
+```
+
+Edit the deck without re-running this and the viewer silently shows stale
+slides.
+
+### OSM 19
+
+OSM Release 19 with FluxCD GitOps runs on the same cluster and is embedded in
+the dashboard's **OSM** panel, with a status strip showing OSM pod readiness
+and Flux sync state. Install notes, including several upstream quirks worth
+knowing, are in [`docs/OSM19_INSTALL.md`](docs/OSM19_INSTALL.md).
+
+```
+https://gui.172.30.18.32.nip.io:30843      OSM UI      (admin / admin)
+https://nbi.172.30.18.32.nip.io:30843      NBI API
+```
+
+Both use a self-signed certificate, so the browser needs a one-time exception
+before the iframe will load — open the URL in its own tab and accept it.
+
+---
+
 ## Engineering Notes (hard-won)
 
 Documented for anyone reproducing this — each cost real debugging time:
@@ -148,6 +184,14 @@ Documented for anyone reproducing this — each cost real debugging time:
 9. **ipvlan (Multus) secondary interfaces can't reach ClusterIP services** —
    kube-proxy NAT isn't visible from them. The Open5GS model needs no Multus
    on RAN pods at all.
+10. **k3s and kubeadm both default to port 6443.** Whichever bound first won,
+    and `kube-apiserver` crash-looped on the other — 125 restarts over 95 days.
+    It surfaced as `bind: address already in use` in the apiserver logs, and
+    from the outside as intermittent `kubectl` failures: connection refused,
+    or `x509: certificate signed by unknown authority` (the cert error is
+    misleading — it just means nothing valid was listening). Fixed with
+    `sudo systemctl stop k3s && sudo systemctl disable k3s`. To run k3s again
+    alongside kubeadm it needs a different port: `--https-listen-port 6444`.
 
 ---
 
@@ -507,6 +551,59 @@ pkill iperf3
 | O-RAN + OAI | 320 Mbit/s sustained (10s) | ~9.7-10.1 ms to 8.8.8.8 | 473 TCP retransmits over the run, likely attributable to the ZMQ-simulated radio interface rather than the core or CU/DU split itself |
 | v-CRAN + OAI | 339 Mbit/s sustained (10s) | ~9.8-12.6 ms to 8.8.8.8 | 441 TCP retransmits, same profile as O-RAN. HPA (target 70% CPU on the CU) watched live during the burst and stayed flat at 3-4% — the CU handles RRC/PDCP signalling only, so bulk UE throughput does not load it; scaling this CU needs concurrent registrations/handovers, not more data volume from one UE |
 | H-CRAN + OAI (macro+small) | 292 Mbit/s sustained (10s) | ~9.8-11.9 ms to 8.8.8.8 (mean 10.2) | 415 TCP retransmits. Both cells attached simultaneously (confirmed via AMF gNB count), but the UE only ever uses the one it registered on — a second cell being present has no measurable effect on the active session
+
+### All ten combinations
+
+Five architectures across both RAN stacks, one identical procedure per run
+(10 s single-stream iperf3, 15-packet ping, same source binding).
+
+| Architecture | srsRAN Mbit/s | srsRAN RTT | srsRAN retr | OAI Mbit/s | OAI RTT | OAI retr |
+|---|---|---|---|---|---|---|
+| C-RAN | 205 \* | 8.84 ms | 339 | 287 | 9.04 ms | 463 |
+| O-RAN (CU/DU over F1) | 215 | 8.23 ms | 313 | 302 | 8.17 ms | 419 |
+| Cloud-RAN | 199 | 8.69 ms | 253 | 295 | 9.63 ms | 400 |
+| H-CRAN (macro + small) | 147 | 8.35 ms | 195 | 304 | 8.34 ms | 402 |
+| v-CRAN (autoscaling CU) | 222 † | 9.95 ms | 337 | 343 † | 8.53 ms | 500 |
+
+\* C-RAN + srsRAN drives a real USRP B210 rather than the ZMQ simulator, so
+it is not directly comparable to the other nine.
+
+† Re-measured after the sweep — see the caveat below.
+
+**Read these as indicative, not definitive.** All ten ran back-to-back on one
+node in a single session *without tearing down each scenario*, so later runs
+were measured on a progressively busier machine and throughput tracks run
+order as much as architecture. v-CRAN, measured last, first read 130 and 117
+Mbit/s; re-measured on a quieter node it gave 343 and 222, matching an
+independent earlier reading of 339. Separating architecture from load would
+need each scenario measured from the same idle baseline, with a teardown and
+a settle period between runs.
+
+Across every architecture OAI outperformed srsRAN by roughly 1.3-2x on this
+testbed. That gap is consistent enough to be worth noting, though the same
+load caveat applies.
+
+### Benchmarking
+
+`bench-all-ran.sh` walks every combination through the dashboard API, waits
+for the UE to hold a real `10.45.x` address on `uesimtun0` (not merely for
+pods to reach Running), runs the tests, and appends to `results.csv`.
+
+```bash
+sudo -v                       # the edge-route fix needs sudo
+./bench-all-ran.sh            # all ten, roughly 90-110 minutes
+./bench-all-ran.sh oran-oai   # or a subset
+```
+
+Two things to know before running it:
+
+- The UE image ships without `iperf3` and the install does not survive a pod
+  restart, so the script reinstalls it after every deploy.
+- **A single RAN scenario takes this node from ~4.5 load to 30+.** Everything
+  else — 5G core, OSM, Rancher, Longhorn, monitoring, Gitea, MinIO — is
+  already running. Leaving a scenario deployed after a run is what caused an
+  8-hour CPU leak and an unresponsive API server; the script now tears down
+  the last scenario when it finishes.
 
 ### F-RAN: edge vs. internet latency
 
