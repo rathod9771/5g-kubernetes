@@ -43,7 +43,17 @@ Two upstream bugs found while investigating, worth knowing if anyone revisits it
   so passing it through the documented entry point has no effect.
 
 LXD and a Juju controller (`osm-controller`, api-port 17070) were set up for this
-path and are now unused. They can be removed.
+path before it was abandoned. Both have since been removed:
+
+```bash
+juju destroy-controller osm-controller --destroy-all-models --no-prompt
+sudo snap remove juju
+sudo snap remove lxd
+sudo iptables -t nat -D POSTROUTING -s 10.112.108.0/24 -o enp3s0 -j MASQUERADE
+sudo netfilter-persistent save
+```
+
+That reclaimed ~2.5 GB.
 
 ---
 
@@ -79,10 +89,11 @@ After this, downloads ran at 16–27 MB/s with no resets. The installer has no r
 logic on any of its dozens of `curl` calls, so a single transient failure aborts the
 whole run — which is why this looked like many different problems.
 
-**Note:** this file was later removed during debugging. Re-apply it, or the download
-failures return. Nothing in the cluster (flannel, kube-proxy, the 5G stack) depended
-on IPv6; disabling and re-enabling it caused no lasting damage, though kube-proxy and
-flannel were restarted afterwards as a precaution.
+**Note:** this file is required. It was briefly removed while diagnosing an unrelated
+networking question and the download failures immediately returned. Nothing in the
+cluster (flannel, kube-proxy, the 5G stack) depends on IPv6; disabling and re-enabling
+it caused no lasting damage, though kube-proxy and flannel were restarted afterwards
+as a precaution.
 
 ---
 
@@ -342,12 +353,13 @@ restart and the IPv6 changes.
 ## Access
 
 ```
-https://gui.172.30.18.32.nip.io      OSM UI
-https://nbi.172.30.18.32.nip.io      NBI API
-https://airflow.172.30.18.32.nip.io  Airflow
+https://gui.172.30.18.32.nip.io:30843      OSM UI      (admin / admin)
+https://nbi.172.30.18.32.nip.io:30843      NBI API     (401 without auth, as expected)
+https://airflow.172.30.18.32.nip.io:30843  Airflow
 ```
 
-Served by ingress-nginx. HTTP is NodePort 31225; find the HTTPS NodePort with:
+Served by ingress-nginx: HTTP on NodePort 31225, HTTPS on 30843. If those NodePorts
+change, find them with:
 
 ```bash
 kubectl get svc -n ingress-nginx ingress-nginx-controller \
@@ -359,12 +371,49 @@ entries are needed for these (unlike `git.myexample.com`).
 
 ---
 
+## Dashboard integration
+
+The RAN selector dashboard (`ran-selector/`) has an OSM panel. Its URL was still the
+dead v14 NodePort (`:30080`) and now points at the OSM 19 ingress. OSM 19 sends no
+`X-Frame-Options`, so unlike Rancher it embeds in an iframe cleanly.
+
+`backend.py` gained `/api/osm/status`, returning OSM pod readiness and the Flux
+GitRepository/Kustomization ready state:
+
+```json
+{"pods":{"ready":14,"total":14},
+ "flux":[{"kind":"GitRepository","ready":true},{"kind":"Kustomization","ready":true}]}
+```
+
+`index.html` renders that as a status strip above the iframe, so the panel shows the
+GitOps loop is live rather than just embedding a UI.
+
+One caveat worth keeping in the UI text: the dashboard is HTTP on :8090 and OSM is
+HTTPS with a self-signed cert, so the iframe stays blank until the browser has
+visited the OSM URL directly once and accepted the certificate.
+
+---
+
+## Housekeeping done after the install
+
+- Gitea `osm-developer` token rotated. The provisioning script had accumulated eight
+  tokens across re-runs; a new one was created, written into the `flux-system` secret
+  in `flux-system`, verified (`GitRepository` stayed `READY True`), and the other
+  seven revoked.
+
+```bash
+kubectl -n flux-system create secret generic flux-system \
+  --from-literal=username=osm-developer --from-literal=password="${NEW_TOKEN}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n flux-system annotate gitrepository flux-system \
+  reconcile.fluxcd.io/requestedAt="$(date +%s)" --overwrite
+```
+
+- LXD, Juju and the `lxdbr0` masquerade rule removed (see the Charmed OSM section).
+
+---
+
 ## Still open
 
-- Rotate the Gitea `osm-developer` token — it was echoed in plaintext during
-  debugging.
-- Re-apply `/etc/sysctl.d/99-disable-ipv6.conf`; it was removed while diagnosing an
-  unrelated networking question and downloads will start failing again without it.
-- Remove the unused LXD/Juju controller left over from the Charmed OSM attempt.
 - Decide whether Istio and the standalone Prometheus are still needed — this node
   runs 115 pods and sits at load ~7.5 idle.
