@@ -1,0 +1,22 @@
+nsd:
+  nsd:
+  - description: NS consisting of a single KNF ims_knf connected to mgmt network
+    designer: Amrita5G
+    df:
+    - id: default-df
+      vnf-profile:
+      - id: ims
+        virtual-link-connectivity:
+        - constituent-cpd-id:
+          - constituent-base-element-id: ims
+            constituent-cpd-id: mgmt-ext
+          virtual-link-profile-id: net1
+        vnfd-id: ims_knf
+    id: ims_ns
+    name: ims_ns
+    version: 1.0
+    virtual-link-desc:
+    - id: net1
+      mgmt-network: true
+    vnfd-id:
+    - ims_knf

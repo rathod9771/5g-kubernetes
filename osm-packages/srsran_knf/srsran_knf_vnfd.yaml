@@ -1,0 +1,18 @@
+vnfd:
+  description: KNF with single KDU using a helm-chart for srsRAN gNB
+  df:
+  - id: default-df
+  ext-cpd:
+  - id: mgmt-ext
+    k8s-cluster-net: net1
+  id: srsran_knf
+  k8s-cluster:
+    nets:
+    - id: net1
+  kdu:
+  - name: srsran
+    helm-chart: srsran
+  mgmt-cp: mgmt-ext
+  product-name: srsran_knf
+  provider: Amrita5G
+  version: '1.0'

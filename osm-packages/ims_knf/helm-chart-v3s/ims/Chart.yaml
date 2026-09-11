@@ -1,0 +1,5 @@
+apiVersion: v2
+name: ims
+description: Kamailio IMS (P/I/S-CSCF, PyHSS, MySQL, DNS, rtpengine) in a single pod
+version: 0.1.0
+appVersion: "1.0"
