@@ -9,7 +9,7 @@ gnb:
   tac: 1
   plmn: "20893"
   amf:
-    address: "open5gs-0061527717-amf-ngap"
+    address: "amf-ngap-stable"
     port: 38412
 
 network:
