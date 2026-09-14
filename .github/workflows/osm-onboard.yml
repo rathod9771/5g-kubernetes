@@ -1,0 +1,18 @@
+name: OSM Package Onboarding
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'osm-packages/**'
+
+jobs:
+  onboard:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Onboard changed OSM packages
+        env:
+          OSM_PASSWORD: ${{ secrets.OSM_PASSWORD }}
+        run: |
+          bash scripts/osm-onboard.sh
