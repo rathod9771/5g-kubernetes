@@ -1,0 +1,20 @@
+vnfd:
+  description: KNF with two KDUs (CU + DU) using OAI helm-charts for a disaggregated O-RAN gNB
+  df:
+  - id: default-df
+  ext-cpd:
+  - id: mgmt-ext
+    k8s-cluster-net: net1
+  id: oai_cu_du_knf
+  k8s-cluster:
+    nets:
+    - id: net1
+  kdu:
+  - name: oai-cu
+    helm-chart: oai-cu
+  - name: oai-du
+    helm-chart: oai-du
+  mgmt-cp: mgmt-ext
+  product-name: oai_cu_du_knf
+  provider: Amrita5G
+  version: '1.0'
