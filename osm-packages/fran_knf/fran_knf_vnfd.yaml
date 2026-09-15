@@ -1,18 +1,18 @@
 vnfd:
-  description: KNF with single KDU using a helm-chart for cloud-ran-oai
+  description: KNF with single KDU using a helm-chart for fran-edge (Fog RAN edge/MEC app)
   df:
   - id: default-df
   ext-cpd:
   - id: mgmt-ext
     k8s-cluster-net: net1
-  id: cloud_ran_oai_knf
+  id: fran_knf
   k8s-cluster:
     nets:
     - id: net1
   kdu:
-  - name: cloud-ran-oai
-    helm-chart: cloud-ran-oai
+  - name: fran-edge
+    helm-chart: fran-edge
   mgmt-cp: mgmt-ext
-  product-name: cloud_ran_oai_knf
+  product-name: fran_knf
   provider: Amrita5G
   version: '1.0'

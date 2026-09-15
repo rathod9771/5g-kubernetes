@@ -5,7 +5,7 @@ vnfd:
   ext-cpd:
   - id: mgmt-ext
     k8s-cluster-net: net1
-  id: cloud_ran_srsran_knf
+  id: cloudran_srsran_knf
   k8s-cluster:
     nets:
     - id: net1
@@ -13,6 +13,6 @@ vnfd:
   - name: cloud-ran-srsran
     helm-chart: cloud-ran-srsran
   mgmt-cp: mgmt-ext
-  product-name: cloud_ran_srsran_knf
+  product-name: cloudran_srsran_knf
   provider: Amrita5G
   version: '1.0'

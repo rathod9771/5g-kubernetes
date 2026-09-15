@@ -5,7 +5,7 @@ vnfd:
   ext-cpd:
   - id: mgmt-ext
     k8s-cluster-net: net1
-  id: oai_cu_du_knf
+  id: oran_oai_knf
   k8s-cluster:
     nets:
     - id: net1
@@ -15,6 +15,6 @@ vnfd:
   - name: oai-du
     helm-chart: oai-du
   mgmt-cp: mgmt-ext
-  product-name: oai_cu_du_knf
+  product-name: oran_oai_knf
   provider: Amrita5G
   version: '1.0'
