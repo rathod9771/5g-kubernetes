@@ -1,0 +1,28 @@
+{{- if .Values.cu.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: srsran-cu
+  labels:
+    ran-type: vcran
+    component: cu
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: srsran-cu
+  minReplicas: {{ .Values.cu.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.cu.autoscaling.maxReplicas }}
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.cu.autoscaling.targetCPUPercent }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 120
+{{- end }}

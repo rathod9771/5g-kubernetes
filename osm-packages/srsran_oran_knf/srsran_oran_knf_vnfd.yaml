@@ -1,0 +1,20 @@
+vnfd:
+  description: KNF with two KDUs (CU + DU) for srsran-oran disaggregated gNB
+  df:
+  - id: default-df
+  ext-cpd:
+  - id: mgmt-ext
+    k8s-cluster-net: net1
+  id: srsran_oran_knf
+  k8s-cluster:
+    nets:
+    - id: net1
+  kdu:
+  - name: cu
+    helm-chart: cu
+  - name: du
+    helm-chart: du
+  mgmt-cp: mgmt-ext
+  product-name: srsran_oran_knf
+  provider: Amrita5G
+  version: '1.0'

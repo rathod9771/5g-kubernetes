@@ -1,0 +1,5 @@
+apiVersion: v2
+name: srsran-oran-cu
+description: srsRAN CU - O-RAN Central Unit
+type: application
+version: 0.1.0
