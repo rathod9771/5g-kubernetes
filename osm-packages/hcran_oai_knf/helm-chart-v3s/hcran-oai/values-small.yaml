@@ -1,0 +1,7 @@
+# SMALL cell: distinct gNB identity and cell id
+cellName: hcran-oai-small
+cellTier: small
+cell:
+  gnbId: "0xe01"
+  nrCellId: "12345679"
+  physCellId: 1

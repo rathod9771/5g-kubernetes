@@ -1,0 +1,5 @@
+apiVersion: v2
+name: oai-cran
+description: OAI monolithic gNB - C-RAN architecture
+type: application
+version: 0.1.0
