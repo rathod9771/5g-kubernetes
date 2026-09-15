@@ -1,0 +1,21 @@
+# SMALL cell: capacity-oriented, lower power, distinct PCI and ZMQ ports
+cellName: hcran-small
+cellTier: small
+
+cell:
+  pci: 2
+  dlArfcn: 632628
+  bandwidthMHz: 20       # wider channel = more capacity
+  txGain: 60             # lower power, smaller footprint
+
+zmq:
+  txPort: 2100
+  rxPort: 2101
+
+resources:
+  requests:
+    cpu: "2"
+    memory: "2Gi"
+  limits:
+    cpu: "4"
+    memory: "4Gi"
