@@ -25,7 +25,7 @@ nsd:
           - constituent-base-element-id: srsran
             constituent-cpd-id: mgmt-ext
           virtual-link-profile-id: net1
-        vnfd-id: srsran_knf
+        vnfd-id: cran_srsran_knf
     id: full_stack_ns
     name: full_stack_ns
     version: 1.0
@@ -35,4 +35,4 @@ nsd:
     vnfd-id:
     - open5gs_knf
     - ims_knf
-    - srsran_knf
+    - cran_srsran_knf

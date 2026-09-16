@@ -1,22 +1,22 @@
 nsd:
   nsd:
-  - description: NS consisting of a single KNF srsran_knf connected to mgmt network
+  - description: NS consisting of a single KNF cloudran_oai_knf connected to mgmt network
     designer: Amrita5G
     df:
     - id: default-df
       vnf-profile:
-      - id: srsran
+      - id: cloudran-oai
         virtual-link-connectivity:
         - constituent-cpd-id:
-          - constituent-base-element-id: srsran
+          - constituent-base-element-id: cloudran-oai
             constituent-cpd-id: mgmt-ext
           virtual-link-profile-id: net1
-        vnfd-id: srsran_knf
-    id: srsran_ns
-    name: srsran_ns
+        vnfd-id: cloudran_oai_knf
+    id: cloudran_oai_ns
+    name: cloudran_oai_ns
     version: 1.0
     virtual-link-desc:
     - id: net1
       mgmt-network: true
     vnfd-id:
-    - srsran_knf
+    - cloudran_oai_knf

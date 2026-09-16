@@ -1,0 +1,22 @@
+nsd:
+  nsd:
+  - description: NS consisting of a single KNF hcran_oai_knf connected to mgmt network
+    designer: Amrita5G
+    df:
+    - id: default-df
+      vnf-profile:
+      - id: hcran-oai
+        virtual-link-connectivity:
+        - constituent-cpd-id:
+          - constituent-base-element-id: hcran-oai
+            constituent-cpd-id: mgmt-ext
+          virtual-link-profile-id: net1
+        vnfd-id: hcran_oai_knf
+    id: hcran_oai_ns
+    name: hcran_oai_ns
+    version: 1.0
+    virtual-link-desc:
+    - id: net1
+      mgmt-network: true
+    vnfd-id:
+    - hcran_oai_knf
