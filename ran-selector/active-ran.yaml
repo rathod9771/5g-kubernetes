@@ -1,4 +1,4 @@
-active: oran-oai
+active: cloudran-oai
 additive:
 - fran
 oai:
@@ -7,6 +7,9 @@ oai:
     du: false
   enabled: false
   type: oran
+osm:
+  active_instance_id: 72c16bd2-de5c-4640-951b-5acf78e407a3
+  active_scenario: cloudran-oai
 srsran:
   enabled: true
   type: cran
