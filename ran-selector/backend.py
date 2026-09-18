@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from flask import Flask, request, jsonify, send_from_directory
 import subprocess, yaml, os, json
+import time
+import osm_client
 
 app = Flask(__name__)
 REPO_PATH = os.path.expanduser("~/5g-kubernetes")
@@ -252,6 +254,31 @@ def scenarios():
         for k, v in SCENARIOS.items() if k != "none"]})
 
 
+
+def _pods_present(frags, selector=None):
+    """True if any pod matching the given name fragments is Running."""
+    lflag = f" -l {selector}" if selector else ""
+    for frag in frags:
+        _, out, _ = run(f"kubectl get pods -n {NS}{lflag} --no-headers 2>/dev/null | grep {frag} | grep Running")
+        if out.strip():
+            return True
+    return False
+
+
+def _wait_pods_gone(frags, selector=None, timeout=90, interval=5):
+    waited = 0
+    while waited < timeout:
+        if not _pods_present(frags, selector):
+            return True
+        time.sleep(interval)
+        waited += interval
+    return False
+
+
+def _nsd_name_for(key):
+    return key.replace("-", "_") + "_ns"
+
+
 @app.route("/api/deploy", methods=["POST"])
 def deploy():
     key = (request.json or {}).get("ran", "")
@@ -260,30 +287,42 @@ def deploy():
         return jsonify({"error": f"Unknown scenario '{key}'",
                         "available": sorted(SCENARIOS)}), 400
     scen = SCENARIOS[key]
+
     try:
-        # Additive scenarios (F-RAN) never tear down the RAN choice, and a RAN
-        # switch never tears down an additive one - F-RAN's edge DNN lives in
-        # the open5gs release, so removing it would change core config.
+        with open(CONFIG_FILE) as fh:
+            config = yaml.safe_load(fh) or {}
+    except Exception:
+        config = {}
+    config.setdefault("osm", {})
+
+    try:
         if not scen.get("additive"):
-            others = [k for k, v in SCENARIOS.items()
-                      if k != key and not v.get("additive")]
-            for rel in _releases_of(others):
-                run(f"helm uninstall {rel} -n {NS} --wait --timeout=60s 2>/dev/null; true")
+            old = config["osm"].get("active_instance_id")
+            old_key = config["osm"].get("active_scenario")
+            if old and old_key and old_key in SCENARIOS:
+                old_scen = SCENARIOS[old_key]
+                op = osm_client.terminate_ns(old)
+                osm_client.wait_for_op(op, timeout=180)
+                if not _wait_pods_gone(old_scen["pods"], old_scen.get("selector"), timeout=90):
+                    return jsonify({"error": f"Old RAN '{old_key}' did not tear down cleanly; "
+                                              "manual cleanup may be required"}), 500
+                osm_client.delete_ns_instance(old)
 
-        for rel in scen["releases"]:
-            name, chart, vals = rel[0], rel[1], rel[2]
-            vflag = f" -f {REPO_PATH}/{chart}/{vals}" if vals else ""
-            run(f"helm upgrade --install {name} {REPO_PATH}/{chart} -n {NS}{vflag}")
+        nsd_name = _nsd_name_for(key)
+        ns_name = f"ran-{key}"
+        ns_id, op_id = osm_client.instantiate_ns(nsd_name, ns_name)
+        state = osm_client.wait_for_op(op_id, timeout=180)
+        if state not in ("COMPLETED", "PARTIALLY_COMPLETED"):
+            return jsonify({"error": f"Instantiate failed for '{key}': operation state {state}"}), 500
 
-        # GitOps record of the switch (non-blocking)
+        if scen.get("additive"):
+            config["osm"].setdefault("additive_instances", {})[key] = ns_id
+        else:
+            config["osm"]["active_instance_id"] = ns_id
+            config["osm"]["active_scenario"] = key
+            config["active"] = key
+
         try:
-            with open(CONFIG_FILE) as fh:
-                config = yaml.safe_load(fh) or {}
-            if not scen.get("additive"):
-                config["active"] = key
-            config.setdefault("additive", [])
-            if scen.get("additive") and key not in config["additive"]:
-                config["additive"].append(key)
             with open(CONFIG_FILE, "w") as fh:
                 yaml.dump(config, fh, default_flow_style=False)
             os.chdir(REPO_PATH)
@@ -293,9 +332,8 @@ def deploy():
         except Exception:
             pass
 
-        return jsonify({"status": "success", "ran": key,
-                        "name": scen["name"],
-                        "released": [r[0] for r in scen["releases"]]})
+        return jsonify({"status": "success", "ran": key, "name": scen["name"],
+                        "ns_instance_id": ns_id})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

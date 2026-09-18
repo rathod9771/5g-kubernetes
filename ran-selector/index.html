@@ -929,7 +929,20 @@ async function runDeployCombo(comboKey,name,sub){
 }
 
 function showComboDeployedPanel(comboKey,name,sub,stackKey){
-  const podLabel=(comboKey==="oran-srsran")?"SRSRAN-CU":(comboKey==="cran-oai")?"OAI-CRAN":(stackKey==="srsran"?"ueransim-gnb":"oai");
+  const COMBO_PODS_DEPLOYED={
+    "cran-srsran":"srsran-gnb",
+    "cran-oai":"oai-cran-gnb",
+    "oran-srsran":"srsran-cu",
+    "oran-oai":"oai-cu",
+    "cloudran-srsran":"cloud-ran-gnb",
+    "cloudran-oai":"cloud-ran-oai-gnb",
+    "hcran-srsran":"hcran-macro",
+    "hcran-oai":"hcran-oai-macro",
+    "vcran-srsran":"srsran-cu",
+    "vcran-oai":"oai-cu",
+    "fran":"fran-edge-app"
+  };
+  const podLabel=COMBO_PODS_DEPLOYED[comboKey] || (stackKey==="srsran"?"ueransim-gnb":"oai");
   const m=document.getElementById("main");
   m.innerHTML=`<div class="content-area">
     <div class="panel">
@@ -985,10 +998,17 @@ setInterval(refreshLiveBar, 10000);
 <script>
 // Restore deployed-state UI from actual cluster state on page load
 const COMBO_DISPLAY = {
-  "cran-srsran": ["cran", "C-RAN + srsRAN", "Centralized monolithic gNB (srsRAN)"],
-  "cran-oai":    ["cran", "C-RAN + OAI",    "Centralized monolithic gNB (OAI)"],
-  "oran-srsran": ["oran", "O-RAN + srsRAN", "CU/DU split over F1 (srsRAN)"],
-  "oran-oai":    ["oran", "O-RAN + OAI",    "CU/DU split over F1 (OAI)"]
+  "cran-srsran":     ["cran",     "C-RAN + srsRAN",     "Centralized monolithic gNB (srsRAN)"],
+  "cran-oai":        ["cran",     "C-RAN + OAI",        "Centralized monolithic gNB (OAI)"],
+  "oran-srsran":     ["oran",     "O-RAN + srsRAN",     "CU/DU split over F1 (srsRAN)"],
+  "oran-oai":        ["oran",     "O-RAN + OAI",        "CU/DU split over F1 (OAI)"],
+  "cloudran-srsran": ["cloudran", "Cloud-RAN + srsRAN", "Cloud-native elastic gNB (srsRAN)"],
+  "cloudran-oai":    ["cloudran", "Cloud-RAN + OAI",    "Cloud-native elastic gNB (OAI)"],
+  "hcran-srsran":    ["hcran",    "H-CRAN + srsRAN",    "Heterogeneous macro + small cell (srsRAN)"],
+  "hcran-oai":       ["hcran",    "H-CRAN + OAI",       "Heterogeneous macro + small cell (OAI)"],
+  "vcran-srsran":    ["vcran",    "V-CRAN + srsRAN",    "CU/DU split with autoscaling (srsRAN)"],
+  "vcran-oai":       ["vcran",    "V-CRAN + OAI",       "CU/DU split with autoscaling (OAI)"],
+  "fran":            ["fran",     "F-RAN",              "Fog RAN edge/MEC breakout"]
 };
 async function restoreDeployedState(){
   try{
