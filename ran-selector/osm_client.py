@@ -12,7 +12,7 @@ import yaml
 OSM_HOST = "https://gui.172.30.18.32.nip.io:30843"
 OSM_USER = "admin"
 OSM_PASS = os.environ.get("OSM_PASSWORD", "admin")
-VIM_ACCOUNT_ID = "de67920d-4a6d-4617-8a06-c0ad8be42aff"  # dummyvim, confirmed stable
+VIM_ACCOUNT_ID = "b0481f03-f5eb-47a2-9a20-bd72430b3b13"  # dummyvim, set after full OSM rebuild
 
 _token_cache = {"token": None, "fetched_at": 0}
 _nsd_cache = {}  # nsd_name -> uuid

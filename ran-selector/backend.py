@@ -7,7 +7,7 @@ import osm_client
 app = Flask(__name__)
 REPO_PATH = os.path.expanduser("~/5g-kubernetes")
 CONFIG_FILE = f"{REPO_PATH}/ran-selector/active-ran.yaml"
-NS = "free5gc"
+NS = "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c"
 
 # --- Scenario registry ---------------------------------------------------
 # Each scenario declares the helm releases it owns and the pod-name fragments

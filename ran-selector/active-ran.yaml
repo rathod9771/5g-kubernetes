@@ -1,15 +1,12 @@
-active: vcran-srsran
-additive:
-- fran
+active: none
+additive: []
 oai:
   components:
     cu: false
     du: false
   enabled: false
   type: oran
-osm:
-  active_instance_id: 14d90d04-2b7b-44a9-919b-00459b91ce48
-  active_scenario: vcran-srsran
+osm: {}
 srsran:
-  enabled: true
+  enabled: false
   type: cran
