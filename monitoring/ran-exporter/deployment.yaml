@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ran-exporter
+  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  labels:
+    app: ran-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ran-exporter
+  template:
+    metadata:
+      labels:
+        app: ran-exporter
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: ran-exporter
+      containers:
+      - name: exporter
+        image: python:3.12-slim
+        command: ["bash", "-c", "pip install --no-cache-dir --break-system-packages kubernetes prometheus_client >/tmp/pip.log 2>&1 && python3 /app/ran_exporter.py"]
+        env:
+        - name: TARGET_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_LABEL_SELECTOR
+          value: "app=cloud-ran-oai-gnb"
+        ports:
+        - containerPort: 9091
+          name: metrics
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        volumeMounts:
+        - name: script
+          mountPath: /app
+      volumes:
+      - name: script
+        configMap:
+          name: ran-exporter-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ran-exporter
+  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  labels:
+    app: ran-exporter
+spec:
+  selector:
+    app: ran-exporter
+  ports:
+  - port: 9091
+    targetPort: 9091
+    name: metrics
