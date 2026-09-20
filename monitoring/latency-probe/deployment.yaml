@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: latency-probe
+  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  labels:
+    app: latency-probe
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: latency-probe
+  template:
+    metadata:
+      labels:
+        app: latency-probe
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+      - name: probe
+        image: python:3.12-slim
+        command: ["bash", "-c", "pip install --no-cache-dir --break-system-packages prometheus_client >/tmp/pip.log 2>&1 && python3 /app/latency_probe.py"]
+        env:
+        - name: TARGET_HOST
+          value: "open5gs-0004215456-amf-sbi"
+        - name: TARGET_PORT
+          value: "7777"
+        - name: TARGET_LABEL
+          value: "amf-sbi"
+        - name: INTERVAL_SECONDS
+          value: "2"
+        ports:
+        - containerPort: 9092
+          name: metrics
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+          limits:
+            cpu: "200m"
+            memory: "128Mi"
+        volumeMounts:
+        - name: script
+          mountPath: /app
+      volumes:
+      - name: script
+        configMap:
+          name: latency-probe-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: latency-probe
+  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  labels:
+    app: latency-probe
+spec:
+  selector:
+    app: latency-probe
+  ports:
+  - port: 9092
+    targetPort: 9092
+    name: metrics
