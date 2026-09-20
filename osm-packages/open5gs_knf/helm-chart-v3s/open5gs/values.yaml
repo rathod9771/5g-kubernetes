@@ -165,7 +165,7 @@ ausf:
             port: 7777
         client:
           nrf:
-            - uri: http://open5gs-nrf-sbi:7777
+            - uri: http://{{ .Release.Name }}-nrf-sbi:7777
 bsf:
   enabled: true
   config:
@@ -228,7 +228,7 @@ udm:
             port: 7777
         client:
           nrf:
-            - uri: http://open5gs-nrf-sbi:7777
+            - uri: http://{{ .Release.Name }}-nrf-sbi:7777
 udr:
   enabled: true
   customOpen5gsConfig:
@@ -249,7 +249,7 @@ udr:
             port: 7777
         client:
           nrf:
-            - uri: http://open5gs-nrf-sbi:7777
+            - uri: http://{{ .Release.Name }}-nrf-sbi:7777
   dbURI: "mongodb://open5gs-mongo-custom:27017/open5gs"
   mongodb:
     enabled: false
