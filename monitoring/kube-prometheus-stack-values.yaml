@@ -1,0 +1,17 @@
+grafana:
+  adminPassword: admin
+  livenessProbe:
+    initialDelaySeconds: 120
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClassName: longhorn
+  readinessProbe:
+    initialDelaySeconds: 90
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    scrapeClasses:
+    - default: true
+      fallbackScrapeProtocol: PrometheusText0.0.4
+      name: default

@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: open5gs-metrics
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchExpressions:
+    - key: app.kubernetes.io/name
+      operator: In
+      values: [amf, smf, upf, pcf]
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    fallbackScrapeProtocol: PrometheusText0.0.4
