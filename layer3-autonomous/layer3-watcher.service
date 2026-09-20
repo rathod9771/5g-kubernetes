@@ -1,0 +1,14 @@
+[Unit]
+Description=Layer 3 Autonomous Optimization Watcher
+After=network.target ran-selector.service
+
+[Service]
+Type=simple
+User=rclab
+WorkingDirectory=/home/rclab/5g-kubernetes/layer3-autonomous
+ExecStart=/usr/bin/python3 /home/rclab/5g-kubernetes/layer3-autonomous/watcher.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
