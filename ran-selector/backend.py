@@ -376,36 +376,83 @@ def hpa():
     return jsonify({"hpa": rows})
 
 
+PROM_URL = "http://localhost:30990"
+
+def _prom_query(promql):
+    import urllib.request, urllib.parse, json as _json
+    url = f"{PROM_URL}/api/v1/query?query={urllib.parse.quote(promql)}"
+    try:
+        with urllib.request.urlopen(url, timeout=4) as resp:
+            data = _json.loads(resp.read().decode())
+        result = data.get("data", {}).get("result", [])
+        if not result:
+            return None
+        return float(result[0]["value"][1])
+    except Exception:
+        return None
+
 @app.route("/api/latency")
 def latency():
-    """Live RTT through the 5G user plane (uesimtun0) - the real end-to-end latency"""
-    _, pod, _ = run(f"kubectl get pods -n {NS} -l component=ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
-    pod = pod.strip().strip("'")
-    if not pod:
-        return jsonify({"error": "UE pod not found", "rtt_ms": None})
-    _, out, _ = run(f"kubectl exec -n {NS} {pod} -- ping -I uesimtun0 -c 3 -W 2 8.8.8.8 2>&1")
-    import re as _re
-    m = _re.search(r"min/avg/max[^=]*= ([\d.]+)/([\d.]+)/([\d.]+)", out)
-    loss = _re.search(r"(\d+)% packet loss", out)
-    if m:
-        return jsonify({"rtt_min": float(m.group(1)), "rtt_ms": float(m.group(2)), "rtt_max": float(m.group(3)), "loss_pct": int(loss.group(1)) if loss else 0, "target": "8.8.8.8 via uesimtun0"})
-    return jsonify({"error": "no route through user plane", "rtt_ms": None, "loss_pct": 100, "raw": out[-200:]})
+    """Real control-plane (SBI) TCP round-trip latency from the latency-probe exporter.
+    Not UE data-plane latency: PDU session establishment is currently blocked by a
+    UPF-side PFCP issue (see layer3-autonomous/README.md for detail)."""
+    rtt = _prom_query("network_tcp_connect_latency_last_seconds")
+    if rtt is None:
+        return jsonify({"error": "no data from latency probe", "rtt_ms": None, "loss_pct": None})
+    return jsonify({"rtt_ms": rtt * 1000, "loss_pct": 0, "target": "amf-sbi (control-plane)"})
 
 @app.route("/api/ue-status")
 def ue_status():
-    """UE registration + PDU session state from live logs"""
-    _, pod, _ = run(f"kubectl get pods -n {NS} -l component=ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
+    """UE registration + radio link state from live OAI gNB/UE logs and Prometheus."""
+    _, pod, _ = run(f"kubectl get pods -n {NS} -l app=oai-nr-ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
     pod = pod.strip().strip("'")
-    if not pod:
-        return jsonify({"registered": False, "pdu_session": False, "detail": "UE pod not found"})
-    _, out, _ = run(f"kubectl logs -n {NS} {pod} --tail=100 2>&1")
-    registered = "Initial Registration is successful" in out
-    pdu = "PDU Session establishment is successful" in out
-    tun = ""
-    for line in out.split("\n"):
-        if "TUN interface" in line:
-            tun = line.split("TUN interface")[-1].strip("[]. ")
-    return jsonify({"registered": registered, "pdu_session": pdu, "tun": tun, "pod": pod})
+    registered = False
+    if pod:
+        _, out, _ = run(f"kubectl logs -n {NS} {pod} --tail=300 2>&1")
+        registered = "Registration complete" in out or "Received Registration Accept" in out
+    rsrp = _prom_query("max(oai_gnb_ue_rsrp_dbm)")
+    return jsonify({
+        "registered": registered,
+        "pdu_session": False,
+        "tun": "",
+        "pod": pod,
+        "radio_connected": rsrp is not None,
+        "rsrp_dbm": rsrp,
+    })
+
+@app.route("/api/layer2-metrics")
+def layer2_metrics():
+    """Live Layer 2 summary for the dashboard: BLER, throughput, resource use, QoS."""
+    return jsonify({
+        "bler_dl": _prom_query("max(oai_gnb_ue_dl_bler_ratio)"),
+        "bler_ul": _prom_query("max(oai_gnb_ue_ul_bler_ratio)"),
+        "harq_retx_dl": _prom_query("sum(oai_gnb_ue_dlsch_harq_round1_total + oai_gnb_ue_dlsch_harq_round2_total + oai_gnb_ue_dlsch_harq_round3_total)"),
+        "mac_tx_bytes": _prom_query("sum(oai_gnb_ue_mac_tx_bytes_total)"),
+        "mac_rx_bytes": _prom_query("sum(oai_gnb_ue_mac_rx_bytes_total)"),
+        "amf_registrations": _prom_query("sum(fivegs_amffunction_rm_reginitreq)"),
+        "pcf_active_sessions": _prom_query("sum(fivegs_pcffunction_pa_sessionnbr)"),
+        "control_plane_latency_ms": (lambda v: v * 1000 if v is not None else None)(_prom_query("network_tcp_connect_latency_last_seconds")),
+    })
+
+@app.route("/api/layer3-actions")
+def layer3_actions():
+    """Recent autonomous actions taken by the Layer 3 watcher."""
+    import json as _json
+    path = os.path.expanduser("~/5g-kubernetes/layer3-autonomous/actions.log")
+    actions = []
+    try:
+        with open(path) as f:
+            lines = f.readlines()[-20:]
+        for line in reversed(lines):
+            line = line.strip()
+            if line:
+                try:
+                    actions.append(_json.loads(line))
+                except ValueError:
+                    pass
+    except FileNotFoundError:
+        pass
+    return jsonify({"actions": actions})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8090, debug=False)

@@ -133,6 +133,8 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
     <span id="clean-badge" style="font-size:10px;padding:4px 10px;border-radius:6px;font-weight:600"></span>
     <button class="top-btn" onclick="window.open('https://172.30.18.32:8443/dashboard/','_blank')">🐄 Rancher ↗</button>
     <button class="top-btn" id="btn-osm" onclick="showExternalPanel(this,'osm')">📡 OSM</button>
+    <button class="top-btn" id="btn-layer2" onclick="showLayer2Panel(this)">📊 Layer 2</button>
+    <button class="top-btn purple" id="btn-layer3" onclick="showLayer3Panel(this)">🤖 Layer 3</button>
     <button class="top-btn" id="btn-docs" onclick="showDocsPanel(this)">📘 Documentation</button>
   </div>
 </div>
@@ -201,8 +203,23 @@ function blank(){
   clearTop();
   document.querySelectorAll(".ran-card").forEach(c=>c.classList.remove("deployed"));
   currentRAN=null;
+  localStorage.removeItem("activeTopPanel");
   document.getElementById("main").innerHTML='<div class="blank"><div class="blank-icon">📡</div><div class="blank-txt">Deploy a RAN or select a component from the top bar</div></div>';
 }
+
+// Restore Layer 2 / Layer 3 panel across page reloads
+(function restoreActiveTopPanel(){
+  const saved = localStorage.getItem("activeTopPanel");
+  if(saved === "layer2" || saved === "layer3"){
+    window.addEventListener("load", () => {
+      const btn = document.getElementById(saved === "layer2" ? "btn-layer2" : "btn-layer3");
+      if(btn){
+        if(saved === "layer2") showLayer2Panel(btn);
+        else showLayer3Panel(btn);
+      }
+    });
+  }
+})();
 
 function wfHTML(steps){
   const labels=["Selected","GitHub push","Helm deploy","Pod running","AMF connected"];
@@ -495,6 +512,104 @@ function showTopPanel(btn,type){
       </div>
     </div>`;
   }
+}
+
+async function showLayer2Panel(btn){
+  clearTop();
+  btn.classList.add("active");
+  localStorage.setItem("activeTopPanel","layer2");
+  const m=document.getElementById("main");
+  m.innerHTML=`<div class="content-area">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div><div class="panel-title">Layer 2 — Real-Time Network Intelligence</div><div class="panel-sub">Live from Prometheus · UE, throughput, packet loss, resource utilization, QoS, latency</div></div>
+        <button class="close-btn" onclick="blank()">✕</button>
+      </div>
+      <div class="status-grid" style="padding:14px" id="l2-grid">
+        <div class="stat-card"><div class="stat-val" id="l2-bler">...</div><div class="stat-lbl">DL BLER (packet loss)</div></div>
+        <div class="stat-card"><div class="stat-val" id="l2-latency">...</div><div class="stat-lbl">Control-plane latency</div></div>
+        <div class="stat-card"><div class="stat-val" id="l2-retx">...</div><div class="stat-lbl">HARQ retransmissions</div></div>
+        <div class="stat-card"><div class="stat-val" id="l2-tx">...</div><div class="stat-lbl">MAC TX bytes</div></div>
+        <div class="stat-card"><div class="stat-val" id="l2-rx">...</div><div class="stat-lbl">MAC RX bytes</div></div>
+        <div class="stat-card"><div class="stat-val" id="l2-reg">...</div><div class="stat-lbl">AMF registrations</div></div>
+      </div>
+      <div style="padding:0 14px 14px">
+        <div style="font-size:10px;color:#555;margin-bottom:8px">
+          Native open5gs (3GPP TS 28.552) + a custom RAN log exporter, scraped by Prometheus every 10-15s.
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#080810;border:1px solid #1a1a2a;border-radius:8px;padding:12px 16px">
+          <div>
+            <div style="font-size:12px;font-weight:700;color:#ccc">📊 Full Grafana Dashboards</div>
+            <div style="font-size:10px;color:#555;margin-top:2px">Grafana blocks embedding (X-Frame-Options) — same as Rancher, opens in a new tab</div>
+          </div>
+          <button class="top-btn" onclick="window.open('http://grafana-metrics.172.30.18.32.nip.io:31998','_blank')">Open Grafana ↗</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  refreshLayer2Panel();
+  window._l2interval && clearInterval(window._l2interval);
+  window._l2interval = setInterval(refreshLayer2Panel, 8000);
+}
+
+async function refreshLayer2Panel(){
+  const el = document.getElementById("l2-bler");
+  if(!el) { clearInterval(window._l2interval); return; }
+  try{
+    const d = await (await fetch("/api/layer2-metrics")).json();
+    const fmt = (v,suffix,digits) => (v===null||v===undefined) ? "—" : v.toFixed(digits!==undefined?digits:2)+(suffix||"");
+    document.getElementById("l2-bler").textContent = fmt(d.bler_dl!==null?d.bler_dl*100:null, "%", 3);
+    document.getElementById("l2-latency").textContent = fmt(d.control_plane_latency_ms, "ms", 2);
+    document.getElementById("l2-retx").textContent = fmt(d.harq_retx_dl, "", 0);
+    document.getElementById("l2-tx").textContent = fmt(d.mac_tx_bytes ? d.mac_tx_bytes/1024 : null, " KB", 1);
+    document.getElementById("l2-rx").textContent = fmt(d.mac_rx_bytes ? d.mac_rx_bytes/1024 : null, " KB", 1);
+    document.getElementById("l2-reg").textContent = fmt(d.amf_registrations, "", 0);
+  }catch(e){}
+}
+
+async function showLayer3Panel(btn){
+  clearTop();
+  btn.classList.add("active");
+  localStorage.setItem("activeTopPanel","layer3");
+  const m=document.getElementById("main");
+  m.innerHTML=`<div class="content-area">
+    <div class="panel">
+      <div class="panel-hdr">
+        <div><div class="panel-title" style="color:#a855f7">Layer 3 — Autonomous Optimization</div><div class="panel-sub">Watches Layer 2's BLER · auto fails-over to H-CRAN when SLA degrades</div></div>
+        <button class="close-btn" onclick="blank()">✕</button>
+      </div>
+      <div class="panel-body" style="max-height:400px" id="l3-body">
+        <div class="loading-txt">Loading autonomous action log...</div>
+      </div>
+    </div>
+  </div>`;
+  refreshLayer3Panel();
+  window._l3interval && clearInterval(window._l3interval);
+  window._l3interval = setInterval(refreshLayer3Panel, 10000);
+}
+
+async function refreshLayer3Panel(){
+  const body = document.getElementById("l3-body");
+  if(!body) { clearInterval(window._l3interval); return; }
+  try{
+    const d = await (await fetch("/api/layer3-actions")).json();
+    if(!d.actions || d.actions.length === 0){
+      body.innerHTML = '<div class="loading-txt">No autonomous actions yet — SLA has stayed within threshold.</div>';
+      return;
+    }
+    body.innerHTML = '<div class="process-list">' + d.actions.map(a => {
+      const ok = a.kind === "ran_failover";
+      const t = new Date(a.timestamp).toLocaleString();
+      return `<div class="proc-item">
+        <div class="proc-dot" style="background:${ok?'#00ff88':'#ff4444'}"></div>
+        <div>
+          <div class="proc-name">${ok?'Failover triggered':'Failover failed'} → ${a.target_scenario}</div>
+          <div class="proc-desc">${a.reason} · ${t}</div>
+        </div>
+        <div class="proc-badge pbg-run">${ok ? (a.dashboard_response?.status||'') : 'error'}</div>
+      </div>`;
+    }).join("") + '</div>';
+  }catch(e){}
 }
 
 loadPods();
