@@ -3,3 +3,4 @@ ran-selector/docs/*.pdf
 __pycache__/
 *.pyc
 layer3-autonomous/actions.log
+config/global.env
