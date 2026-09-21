@@ -1,4 +1,4 @@
-active: cloudran-oai
+active: cran-oai
 additive: []
 oai:
   components:
@@ -7,8 +7,8 @@ oai:
   enabled: false
   type: oran
 osm:
-  active_instance_id: a2369e54-03e0-4413-9379-702570c65769
-  active_scenario: cloudran-oai
+  active_instance_id: 7fc04b4d-61a4-4c9b-abb5-0bc1f8ea65fd
+  active_scenario: cran-oai
   core_instance_id: 31677cb6-887c-4ca1-9994-64cbb60a99c5
   core_scenario: open5gs
 srsran:
