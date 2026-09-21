@@ -101,15 +101,16 @@ if [ -n "$CORE_NS" ]; then
   if [ -n "$GNB_POD" ]; then
     GNB_RUNNING="$(k_ get pod "$GNB_POD" -n "$CORE_NS" -o jsonpath='{.status.phase}' 2>/dev/null)"
     if [ "$GNB_RUNNING" = "Running" ]; then
-      LAST_NGAP_EVENT="$(k_ logs -n "$CORE_NS" "$GNB_POD" 2>/dev/null | grep -E 'associated AMF|No AMF is associated' | tail -1)"
-      if grep -q "associated AMF 1\|associated AMF: 1" <<< "$LAST_NGAP_EVENT"; then
+      SCTP_STATE="$(k_ exec -n "$CORE_NS" "$GNB_POD" -- ss -a 2>/dev/null | grep ":38412" | head -1)"
+      if grep -q "ESTAB" <<< "$SCTP_STATE"; then
         RESULT[ran]="READY"
-      elif [ -n "$LAST_NGAP_EVENT" ]; then
+        evidence "Live SCTP association to AMF: ${SCTP_STATE}"
+      elif [ -n "$SCTP_STATE" ]; then
         RESULT[ran]="DEGRADED"
-        evidence "Most recent NGAP event: ${LAST_NGAP_EVENT} — known failure mode after a core redeploy (see docs/troubleshooting.md)"
+        evidence "SCTP socket to AMF exists but not ESTAB: ${SCTP_STATE}"
       else
         RESULT[ran]="DEGRADED"
-        evidence "No NGAP association event found in gNB logs at all"
+        evidence "No SCTP association to AMF (port 38412) found — known failure mode after a core redeploy (see docs/troubleshooting.md)"
       fi
     else
       RESULT[ran]="DOWN"

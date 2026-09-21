@@ -1,0 +1,132 @@
+# ==============================================================================
+# OAI standalone NR UE (nr-uesoftmodem) -- STATUS: PARTIALLY WORKING
+#
+#   Registration:  VERIFIED    -- real radio link, real NGAP, real NAS
+#                                 registration, confirmed against the live
+#                                 cluster via ./scripts/validate.sh
+#   PDU Session:   NOT WORKING -- UPF logs
+#                                 "cannot handle PFCP message type[50]" for
+#                                 every Session Establishment Request. Root
+#                                 cause not yet found. See
+#                                 docs/troubleshooting.md. Do NOT treat this
+#                                 UE as a fully working data-plane test --
+#                                 use the long-verified UERANSIM flow
+#                                 (helm/ueransim) for that.
+#
+# The gNB it connects to has no stable Service (H-CRAN runs two independent
+# gNB pods sharing one label, so a normal Service would randomly
+# load-balance a stateful RF-sim TCP connection between two different
+# physical cells and break it). Instead, an init container discovers the
+# currently-active gNB's pod IP fresh on every start via the Kubernetes
+# API -- see discover_gnb.py -- so this deployment never has a hardcoded,
+# inevitably-stale IP in it.
+#
+# Deploy (deploy.sh does all of this, in order):
+#   kubectl apply -f rbac.yaml
+#   kubectl create configmap oai-nr-ue-discovery-script \
+#     --from-file=discover_gnb.py -n <namespace> --dry-run=client -o yaml \
+#     | kubectl apply -f -
+#   kubectl apply -f deployment.yaml
+#     (after substituting PLACEHOLDER_* values)
+# ==============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oai-nr-ue-config
+  namespace: PLACEHOLDER_NAMESPACE
+data:
+  ue-init.sh: |
+    #!/bin/bash
+    set -e
+    GNB_IP="$(cat /shared/gnb-ip.txt)"
+    export POD_IP=$(awk 'END{print $1}' /etc/hosts)
+    echo "OAI NR-UE: POD_IP=${POD_IP} connecting to gNB rfsim server at ${GNB_IP} (discovered fresh this start)"
+    mkdir -p /tmp/conf
+    cp /opt/oai-nr-ue/etc/ue.conf /tmp/conf/ue.conf
+    exec /opt/oai-nr-ue/bin/nr-uesoftmodem -O /tmp/conf/ue.conf --rfsim -r 106 --numerology 1 --band 78 \
+      -C 3319680000 --rfsimulator.serveraddr "${GNB_IP}" \
+      --uicc0.imsi PLACEHOLDER_IMSI \
+      --uicc0.key PLACEHOLDER_KEY \
+      --uicc0.opc PLACEHOLDER_OPC \
+      --uicc0.dnn PLACEHOLDER_DNN \
+      --uicc0.nssai_sst PLACEHOLDER_SST \
+      --uicc0.nssai_sd 0xPLACEHOLDER_SD
+  ue.conf: |
+    uicc0 = {
+      imsi = "PLACEHOLDER_IMSI";
+      key  = "PLACEHOLDER_KEY";
+      opc  = "PLACEHOLDER_OPC";
+      dnn  = "PLACEHOLDER_DNN";
+      nssai_sst = PLACEHOLDER_SST;
+      nssai_sd = 0xPLACEHOLDER_SD;
+    };
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oai-nr-ue
+  namespace: PLACEHOLDER_NAMESPACE
+  labels:
+    app: oai-nr-ue
+    component: ue
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oai-nr-ue
+  template:
+    metadata:
+      labels:
+        app: oai-nr-ue
+        component: ue
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: oai-nr-ue
+      initContainers:
+      - name: discover-gnb
+        image: python:3.12-slim
+        command: ["bash", "-c", "pip install --no-cache-dir --break-system-packages kubernetes >/tmp/pip.log 2>&1 && python3 /discovery/discover_gnb.py"]
+        env:
+        - name: TARGET_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: OUTPUT_FILE
+          value: "/shared/gnb-ip.txt"
+        volumeMounts:
+        - name: discovery-script
+          mountPath: /discovery
+        - name: shared
+          mountPath: /shared
+      containers:
+      - name: nr-ue
+        image: oaisoftwarealliance/oai-nr-ue:2026.w13
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN"]
+        command: ["bash", "/opt/oai-nr-ue/etc/ue-init.sh"]
+        resources:
+          requests:
+            cpu: "1"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+        volumeMounts:
+        - name: ue-config
+          mountPath: /opt/oai-nr-ue/etc
+        - name: shared
+          mountPath: /shared
+      volumes:
+      - name: ue-config
+        configMap:
+          name: oai-nr-ue-config
+          defaultMode: 0755
+      - name: discovery-script
+        configMap:
+          name: oai-nr-ue-discovery-script
+      - name: shared
+        emptyDir: {}
