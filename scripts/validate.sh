@@ -101,15 +101,15 @@ if [ -n "$CORE_NS" ]; then
   if [ -n "$GNB_POD" ]; then
     GNB_RUNNING="$(k_ get pod "$GNB_POD" -n "$CORE_NS" -o jsonpath='{.status.phase}' 2>/dev/null)"
     if [ "$GNB_RUNNING" = "Running" ]; then
-      # Real check, not just pod status: did the gNB's own log report a
-      # successful NGSetupResponse, and no subsequent "No AMF is
-      # associated" (the known reconnect-after-redeploy failure mode)?
-      GNB_LOG="$(k_ logs -n "$CORE_NS" "$GNB_POD" --tail=200 2>/dev/null)"
-      if echo "$GNB_LOG" | grep -q "Received NGSetupResponse" && ! echo "$GNB_LOG" | tail -20 | grep -q "No AMF is associated"; then
+      LAST_NGAP_EVENT="$(k_ logs -n "$CORE_NS" "$GNB_POD" 2>/dev/null | grep -E 'associated AMF|No AMF is associated' | tail -1)"
+      if grep -q "associated AMF 1\|associated AMF: 1" <<< "$LAST_NGAP_EVENT"; then
         RESULT[ran]="READY"
+      elif [ -n "$LAST_NGAP_EVENT" ]; then
+        RESULT[ran]="DEGRADED"
+        evidence "Most recent NGAP event: ${LAST_NGAP_EVENT} — known failure mode after a core redeploy (see docs/troubleshooting.md)"
       else
         RESULT[ran]="DEGRADED"
-        evidence "gNB pod Running but NGAP/AMF association not confirmed in recent logs — known failure mode after a core redeploy (see docs/troubleshooting.md)"
+        evidence "No NGAP association event found in gNB logs at all"
       fi
     else
       RESULT[ran]="DOWN"
@@ -127,13 +127,14 @@ if [ -n "$CORE_NS" ]; then
   UE_POD="$(k_ get pods -n "$CORE_NS" -l app=oai-nr-ue --no-headers 2>/dev/null | awk '{print $1; exit}')"
   UERANSIM_POD="$(k_ get pods -n "$CORE_NS" -l component=ue --no-headers 2>/dev/null | awk '{print $1; exit}')"
   if [ -n "$UE_POD" ]; then
-    UE_LOG="$(k_ logs -n "$CORE_NS" "$UE_POD" --tail=300 2>/dev/null)"
-    if echo "$UE_LOG" | grep -qE "Registration complete|Received Registration Accept"; then
+    UE_FULL_LOG="$(k_ logs -n "$CORE_NS" "$UE_POD" 2>/dev/null)"
+    if grep -qE "Registration complete|Received Registration Accept" <<< "$UE_FULL_LOG"; then
       RESULT[ue_reg]="READY"
     else
       RESULT[ue_reg]="DOWN"
     fi
-    if echo "$UE_LOG" | grep -q "PDU Session establishment is successful" && ! echo "$UE_LOG" | grep -q "PDU Session Establishment reject"; then
+    LAST_PDU_EVENT="$(grep -E "PDU Session establishment is successful|PDU Session Establishment reject" <<< "$UE_FULL_LOG" | tail -1)"
+    if grep -q "successful" <<< "$LAST_PDU_EVENT"; then
       RESULT[ue_pdu]="READY"
     else
       RESULT[ue_pdu]="DOWN"
@@ -142,8 +143,8 @@ if [ -n "$CORE_NS" ]; then
     RESULT[ue_stack]="OAI standalone (oai-nr-ue)"
   elif [ -n "$UERANSIM_POD" ]; then
     UE_LOG="$(k_ logs -n "$CORE_NS" "$UERANSIM_POD" --tail=300 2>/dev/null)"
-    echo "$UE_LOG" | grep -q "Initial Registration is successful" && RESULT[ue_reg]="READY" || RESULT[ue_reg]="DOWN"
-    echo "$UE_LOG" | grep -q "PDU Session establishment is successful" && RESULT[ue_pdu]="READY" || RESULT[ue_pdu]="DOWN"
+    grep -q "Initial Registration is successful" <<< "$UE_LOG" && RESULT[ue_reg]="READY" || RESULT[ue_reg]="DOWN"
+    grep -q "PDU Session establishment is successful" <<< "$UE_LOG" && RESULT[ue_pdu]="READY" || RESULT[ue_pdu]="DOWN"
     RESULT[ue_stack]="UERANSIM"
   else
     RESULT[ue_reg]="NOT CONFIGURED"
