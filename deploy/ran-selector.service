@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=rclab
-WorkingDirectory=/home/rclab/5g-kubernetes/ran-selector
-Environment=KUBECONFIG=/home/rclab/.kube/config
-ExecStart=/usr/bin/python3 /home/rclab/5g-kubernetes/ran-selector/backend.py
+User=PLACEHOLDER_USER
+WorkingDirectory=PLACEHOLDER_REPO_ROOT/ran-selector
+Environment=KUBECONFIG=PLACEHOLDER_KUBECONFIG_PATH
+ExecStart=PLACEHOLDER_REPO_ROOT/ran-selector/venv/bin/python3 PLACEHOLDER_REPO_ROOT/ran-selector/backend.py
 Restart=always
 RestartSec=10
 

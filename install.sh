@@ -111,6 +111,55 @@ else
   log_ok "Prometheus NodePort exposed"
 fi
 
+# ---- 6. RAN Selector dashboard ----
+log_info "Checking the RAN Selector dashboard..."
+if systemd_service_active "ran-selector.service"; then
+  log_ok "ran-selector.service already running — reusing it (not touching venv or unit file)"
+else
+  log_info "Setting up the dashboard's Python environment..."
+  python3 -m venv "${REPO_ROOT}/ran-selector/venv" \
+    || fail "Failed to create venv" "Install python3-venv: sudo apt install python3-venv"
+  "${REPO_ROOT}/ran-selector/venv/bin/pip" install --quiet --upgrade pip
+  "${REPO_ROOT}/ran-selector/venv/bin/pip" install --quiet -r "${REPO_ROOT}/ran-selector/requirements.txt" \
+    || fail "Failed to install ran-selector's Python dependencies"
+  log_ok "Dashboard venv ready"
+
+  log_info "Installing ran-selector.service..."
+  sed \
+    -e "s#PLACEHOLDER_USER#$(id -un)#g" \
+    -e "s#PLACEHOLDER_REPO_ROOT#${REPO_ROOT}#g" \
+    -e "s#PLACEHOLDER_KUBECONFIG_PATH#${KUBECONFIG_PATH}#g" \
+    "${REPO_ROOT}/deploy/ran-selector.service" | sudo tee /etc/systemd/system/ran-selector.service >/dev/null
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now ran-selector.service \
+    || fail "Failed to start ran-selector.service" "Check: journalctl -u ran-selector -n 50"
+  log_ok "ran-selector.service installed and started"
+fi
+
+log_info "Checking the dashboard responds..."
+sleep 2
+if service_reachable "http://localhost:${DASHBOARD_PORT:-8090}/api/scenarios" 10; then
+  log_ok "Dashboard responding on port ${DASHBOARD_PORT:-8090}"
+else
+  log_warn "Dashboard not yet responding — it may still be starting. Check: journalctl -u ran-selector -n 50"
+fi
+
+# ---- 7. Layer 3 autonomous watcher ----
+log_info "Checking the Layer 3 watcher..."
+if systemd_service_active "layer3-watcher.service"; then
+  log_ok "layer3-watcher.service already running — reusing it"
+else
+  log_info "Installing layer3-watcher.service..."
+  sed \
+    -e "s#PLACEHOLDER_USER#$(id -un)#g" \
+    -e "s#PLACEHOLDER_REPO_ROOT#${REPO_ROOT}#g" \
+    "${REPO_ROOT}/layer3-autonomous/layer3-watcher.service" | sudo tee /etc/systemd/system/layer3-watcher.service >/dev/null
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now layer3-watcher.service \
+    || fail "Failed to start layer3-watcher.service" "Check: journalctl -u layer3-watcher -n 50"
+  log_ok "layer3-watcher.service installed and started"
+fi
+
 echo ""
 echo "=================================================="
 log_ok "Install complete."
