@@ -31,7 +31,7 @@ This repository is being actively converted from a manually-operated
 research platform into a reproducible one. Where it currently stands:
 
 - **Verified, live, on the reference machine:** every script below
-  (`preflight.sh`, `install.sh`, `orchestrator.sh`, `deploy.sh`, `status.sh`,
+  (`scripts/preflight.sh`, `install.sh`, `orchestrator.sh`, `deploy.sh`, `status.sh`,
   `scripts/validate.sh`, `uninstall.sh`), the dashboard, the Layer 3 watcher,
   and real OSM deployments triggered through all of the above.
 - **NOT yet verified:** a genuine clean-machine install, from `git clone`
@@ -151,6 +151,22 @@ else. What it verifies:
 ---
 
 ## Repository structure
+
+````
+5g-kubernetes/
+├── install.sh, deploy.sh, orchestrator.sh, status.sh, uninstall.sh   top-level entry points
+├── config/global.env.example, config/global.env (gitignored)         parameterized machine values
+├── scripts/preflight.sh, scripts/common.sh, scripts/validate.sh      read-only checks + shared helpers
+├── osm-packages/                  24 OSM VNF/NS packages (11 scenarios + core + IMS)
+├── helm/                          the underlying Helm charts each package wraps
+├── deploy/ran-selector.service, rancher-portforward.service, oai-nr-ue/
+├── ran-selector/                  dashboard: Flask backend + single-page UI
+├── monitoring/                    Layer 2: Prometheus stack values, RAN exporter, latency probe
+├── layer3-autonomous/             Layer 3: the SLA watcher + its systemd unit
+├── docs/                          troubleshooting, OSM install notes, reproducibility checklist
+└── usrp-gnb/                      bare-metal srsRAN for real USRP B210 hardware
+```
+
 
 ---
 
@@ -367,7 +383,7 @@ building and operating this platform: the open PDU-session PFCP bug, the
 gNB/AMF reconnect issue and its fix, two distinct log-reliability bugs found
 while building `validate.sh`, and two historical infrastructure issues
 (`k3s`/6443 port conflict, IPv6 breaking OSM's install) that
-`preflight.sh` checks for.
+`scripts/preflight.sh` checks for.
 
 ---
 
