@@ -134,8 +134,8 @@ if [ -n "$CORE_NS" ]; then
     else
       RESULT[ue_reg]="DOWN"
     fi
-    LAST_PDU_EVENT="$(grep -E "PDU Session establishment is successful|PDU Session Establishment reject" <<< "$UE_FULL_LOG" | tail -1)"
-    if grep -q "successful" <<< "$LAST_PDU_EVENT"; then
+    LAST_PDU_EVENT="$(grep -E "PDU Session establishment is successful|Received PDU Session Establishment Accept|PDU Session Establishment reject" <<< "$UE_FULL_LOG" | tail -1)"
+    if grep -qE "successful|Accept" <<< "$LAST_PDU_EVENT"; then
       RESULT[ue_pdu]="READY"
     else
       RESULT[ue_pdu]="DOWN"

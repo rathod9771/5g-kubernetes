@@ -407,14 +407,24 @@ def ue_status():
     _, pod, _ = run(f"kubectl get pods -n {NS} -l app=oai-nr-ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
     pod = pod.strip().strip("'")
     registered = False
+    pdu_session = False
+    tun_ip = ""
     if pod:
-        _, out, _ = run(f"kubectl logs -n {NS} {pod} --tail=300 2>&1")
+        _, out, _ = run(f"kubectl logs -n {NS} {pod} 2>&1")
         registered = "Registration complete" in out or "Received Registration Accept" in out
+        pdu_session = (
+            "Received PDU Session Establishment Accept" in out
+            or "PDU Session establishment is successful" in out
+        )
+        if pdu_session:
+            _, tun_out, _ = run(f"kubectl exec -n {NS} {pod} -- ip -4 -o addr show oaitun_ue1 2>/dev/null")
+            m = re.search(r"inet (\S+)/", tun_out)
+            tun_ip = m.group(1) if m else ""
     rsrp = _prom_query("max(oai_gnb_ue_rsrp_dbm)")
     return jsonify({
         "registered": registered,
-        "pdu_session": False,
-        "tun": "",
+        "pdu_session": pdu_session,
+        "tun": tun_ip,
         "pod": pod,
         "radio_connected": rsrp is not None,
         "rsrp_dbm": rsrp,

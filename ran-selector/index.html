@@ -1087,7 +1087,7 @@ async function refreshLiveBar(){
     document.getElementById("lb-ue").style.color = us.registered ? "#00ff88" : "#ff4455";
     document.getElementById("lb-pdu").textContent = "PDU: " + (us.pdu_session ? "ACTIVE" : "NONE");
     document.getElementById("lb-pdu").style.color = us.pdu_session ? "#00ff88" : "#ff4455";
-    document.getElementById("lb-tun").textContent = us.tun ? "tun: " + us.tun.split(",")[1]?.replace("] is up","").trim() : "";
+    document.getElementById("lb-tun").textContent = us.tun ? "tun: " + us.tun : "";
   }catch(e){}
   try{
     const lt = await (await fetch("/api/latency")).json();
