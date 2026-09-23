@@ -1,4 +1,4 @@
-active: hcran-oai
+active: cran-srsran
 additive: []
 oai:
   components:
@@ -7,8 +7,8 @@ oai:
   enabled: false
   type: oran
 osm:
-  active_instance_id: 1dc9f8e3-44b4-4656-ba51-6f7e94df29d3
-  active_scenario: hcran-oai
+  active_instance_id: 9c0eec96-5003-4f1f-84e4-2c9047fea058
+  active_scenario: cran-srsran
   core_instance_id: 31677cb6-887c-4ca1-9994-64cbb60a99c5
   core_scenario: open5gs
 srsran:
