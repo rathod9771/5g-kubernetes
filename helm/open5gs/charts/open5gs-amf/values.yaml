@@ -529,3 +529,6 @@ metrics:
     ## @param metrics.serviceScrape.additionalLabels Additional labels that can be used so VMServiceScrape resource(s) can be discovered by VictoriaMetrics
     ##
     additionalLabels: {}
+
+podLabels:
+  sidecar.istio.io/inject: "true"

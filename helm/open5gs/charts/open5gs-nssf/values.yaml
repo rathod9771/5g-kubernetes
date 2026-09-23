@@ -359,3 +359,6 @@ services:
     ##     timeoutSeconds: 300
     ##
     sessionAffinityConfig: {}
+
+podLabels:
+  sidecar.istio.io/inject: "true"

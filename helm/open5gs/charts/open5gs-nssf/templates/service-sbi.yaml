@@ -38,6 +38,7 @@ spec:
   {{- end }}
   ports:
     - name: sbi
+      appProtocol: http2
       port: {{ .Values.services.sbi.ports.sbi }}
       targetPort: sbi
       {{- if and (or (eq .Values.services.sbi.type "NodePort") (eq .Values.services.sbi.type "LoadBalancer")) (not (empty .Values.services.sbi.nodePorts.sbi)) }}

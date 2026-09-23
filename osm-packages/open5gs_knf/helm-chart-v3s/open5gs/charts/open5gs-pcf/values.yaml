@@ -462,3 +462,6 @@ dbURI: ""  # if empty default is mongodb://{{ mongodb fullname }}/open5gs
 mongodb:
   # mongodb.enabled -- should be deployed with udr
   enabled: false
+
+podLabels:
+  sidecar.istio.io/inject: "true"
