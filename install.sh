@@ -67,6 +67,40 @@ else
   log_ok "cert-manager installed"
 fi
 
+log_info "Checking Rancher..."
+if namespace_exists "cattle-system" && kubectl get deployment rancher -n cattle-system >/dev/null 2>&1 \
+   && [ "$(kubectl get deployment rancher -n cattle-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
+  log_ok "Rancher already running — reusing it"
+else
+  log_info "Installing Rancher..."
+  helm repo add rancher-latest https://releases.rancher.com/server-charts/latest >/dev/null 2>&1 || true
+  helm repo update rancher-latest >/dev/null 2>&1
+  kubectl create namespace cattle-system 2>/dev/null || true
+  helm upgrade --install rancher rancher-latest/rancher \
+    --namespace cattle-system \
+    --set hostname="rancher.${OSM_BASE_DOMAIN:-${HOST_IP}.nip.io}" \
+    --set bootstrapPassword="${RANCHER_BOOTSTRAP_PASSWORD:-admin123456}" \
+    --set replicas=1 \
+    || fail "Rancher install failed" "Check: kubectl get pods -n cattle-system" "Requires cert-manager, installed just above"
+  log_ok "Rancher installed — can take several minutes to fully initialize before rancher-portforward.service stops retrying"
+fi
+
+log_info "Checking Istio..."
+if namespace_exists "istio-system" && kubectl get deployment istiod -n istio-system >/dev/null 2>&1 \
+   && [ "$(kubectl get deployment istiod -n istio-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
+  log_ok "Istio already running — reusing it"
+else
+  log_info "Installing Istio (control plane only, no sidecar injection enabled anywhere)..."
+  helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/null 2>&1 || true
+  helm repo update istio >/dev/null 2>&1
+  kubectl create namespace istio-system 2>/dev/null || true
+  helm upgrade --install istio-base istio/base -n istio-system --set defaultRevision=default \
+    || fail "Istio base install failed" "Check network connectivity to istio-release.storage.googleapis.com"
+  helm upgrade --install istiod istio/istiod -n istio-system --wait \
+    || fail "istiod install failed" "Check: kubectl get pods -n istio-system"
+  log_ok "Istio installed (istio-system) -- 5G core namespace untouched, no sidecar injection enabled"
+fi
+
 log_info "Checking OSM..."
 if namespace_exists "osm" && pods_ready_in_namespace "osm"; then
   log_ok "OSM already running — reusing it"
@@ -153,6 +187,12 @@ else
   sed \
     -e "s#PLACEHOLDER_USER#$(id -un)#g" \
     -e "s#PLACEHOLDER_REPO_ROOT#${REPO_ROOT}#g" \
+    -e "s#PLACEHOLDER_PROMETHEUS_URL#http://localhost:${PROMETHEUS_NODEPORT:-30990}#g" \
+    -e "s#PLACEHOLDER_DASHBOARD_URL#http://localhost:${DASHBOARD_PORT:-8090}#g" \
+    -e "s#PLACEHOLDER_CHECK_INTERVAL_SECONDS#${LAYER3_CHECK_INTERVAL_SECONDS:-10}#g" \
+    -e "s#PLACEHOLDER_ACTION_COOLDOWN_SECONDS#${LAYER3_COOLDOWN_SECONDS:-120}#g" \
+    -e "s#PLACEHOLDER_BLER_THRESHOLD#${LAYER3_BLER_THRESHOLD:-0.05}#g" \
+    -e "s#PLACEHOLDER_FAILOVER_SCENARIO#${LAYER3_FAILOVER_SCENARIO:-hcran-oai}#g" \
     "${REPO_ROOT}/layer3-autonomous/layer3-watcher.service" | sudo tee /etc/systemd/system/layer3-watcher.service >/dev/null
   sudo systemctl daemon-reload
   sudo systemctl enable --now layer3-watcher.service \
