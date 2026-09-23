@@ -418,16 +418,19 @@ def ue_status():
     pdu_session = False
     tun_ip = ""
     if pod:
-        _, out, _ = run(f"kubectl logs -n {NS} {pod} 2>&1")
-        registered = "Registration complete" in out or "Received Registration Accept" in out
-        pdu_session = (
-            "Received PDU Session Establishment Accept" in out
-            or "PDU Session establishment is successful" in out
-        )
-        if pdu_session:
-            _, tun_out, _ = run(f"kubectl exec -n {NS} {pod} -- ip -4 -o addr show oaitun_ue1 2>/dev/null")
-            m = re.search(r"inet (\S+)/", tun_out)
-            tun_ip = m.group(1) if m else ""
+        _, tun_out, _ = run(f"kubectl exec -n {NS} {pod} -- ip -4 -o addr show oaitun_ue1 2>/dev/null")
+        m = re.search(r"inet (\S+)/", tun_out)
+        if m:
+            registered = True
+            pdu_session = True
+            tun_ip = m.group(1)
+        else:
+            _, out, _ = run(f"kubectl logs -n {NS} {pod} 2>&1")
+            registered = "Registration complete" in out or "Received Registration Accept" in out
+            pdu_session = (
+                "Received PDU Session Establishment Accept" in out
+                or "PDU Session establishment is successful" in out
+            )
     rsrp = _prom_query("max(oai_gnb_ue_rsrp_dbm)")
     return jsonify({
         "registered": registered,
@@ -436,6 +439,32 @@ def ue_status():
         "pod": pod,
         "radio_connected": rsrp is not None,
         "rsrp_dbm": rsrp,
+    })
+
+@app.route("/api/istio/status")
+def istio_status():
+    """Real Istio state -- control plane health and actual per-NF sidecar
+    injection, not a mockup. Checks whether each open5gs core NF's
+    running pod genuinely has an istio-proxy container, rather than
+    assuming injection happened just because Istio is installed."""
+    _, phase, _ = run("kubectl get deployment istiod -n istio-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null")
+    control_plane_ready = phase.strip().isdigit() and int(phase.strip()) >= 1
+
+    injected = {}
+    for nf, label in NF_LABELS.items():
+        _, containers, _ = run(
+            f"kubectl get pods -n {NS} -l app.kubernetes.io/name={label} "
+            "--no-headers 2>/dev/null | grep Running | head -1 | awk '{print $1}' | "
+            f"xargs -I{{}} kubectl get pod -n {NS} {{}} -o jsonpath='{{.spec.containers[*].name}}' 2>/dev/null"
+        )
+        injected[nf] = "istio-proxy" in containers
+
+    return jsonify({
+        "control_plane_ready": control_plane_ready,
+        "namespace": "istio-system",
+        "nfs_injected": injected,
+        "nfs_injected_count": sum(1 for v in injected.values() if v),
+        "nfs_total": len(injected),
     })
 
 @app.route("/api/layer2-metrics")

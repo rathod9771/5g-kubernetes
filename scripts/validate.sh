@@ -128,18 +128,25 @@ if [ -n "$CORE_NS" ]; then
   UE_POD="$(k_ get pods -n "$CORE_NS" -l app=oai-nr-ue --no-headers 2>/dev/null | awk '{print $1; exit}')"
   UERANSIM_POD="$(k_ get pods -n "$CORE_NS" -l component=ue --no-headers 2>/dev/null | awk '{print $1; exit}')"
   if [ -n "$UE_POD" ]; then
-    UE_FULL_LOG="$(k_ logs -n "$CORE_NS" "$UE_POD" 2>/dev/null)"
-    if grep -qE "Registration complete|Received Registration Accept" <<< "$UE_FULL_LOG"; then
+    UE_TUN="$(k_ exec -n "$CORE_NS" "$UE_POD" -- ip -4 -o addr show oaitun_ue1 2>/dev/null)"
+    if [ -n "$UE_TUN" ]; then
       RESULT[ue_reg]="READY"
-    else
-      RESULT[ue_reg]="DOWN"
-    fi
-    LAST_PDU_EVENT="$(grep -E "PDU Session establishment is successful|Received PDU Session Establishment Accept|PDU Session Establishment reject" <<< "$UE_FULL_LOG" | tail -1)"
-    if grep -qE "successful|Accept" <<< "$LAST_PDU_EVENT"; then
       RESULT[ue_pdu]="READY"
+      evidence "Live tunnel: ${UE_TUN}"
     else
-      RESULT[ue_pdu]="DOWN"
-      evidence "Known issue: UPF logs 'cannot handle PFCP message type[50]' for Session Establishment Request — see docs/troubleshooting.md. NOT claiming this as working."
+      UE_FULL_LOG="$(k_ logs -n "$CORE_NS" "$UE_POD" 2>/dev/null)"
+      if grep -qE "Registration complete|Received Registration Accept" <<< "$UE_FULL_LOG"; then
+        RESULT[ue_reg]="READY"
+      else
+        RESULT[ue_reg]="DOWN"
+      fi
+      LAST_PDU_EVENT="$(grep -E "PDU Session establishment is successful|Received PDU Session Establishment Accept|PDU Session Establishment reject" <<< "$UE_FULL_LOG" | tail -1)"
+      if grep -qE "successful|Accept" <<< "$LAST_PDU_EVENT"; then
+        RESULT[ue_pdu]="READY"
+      else
+        RESULT[ue_pdu]="DOWN"
+        evidence "Known issue: UPF logs 'cannot handle PFCP message type[50]' for Session Establishment Request — see docs/troubleshooting.md. NOT claiming this as working."
+      fi
     fi
     RESULT[ue_stack]="OAI standalone (oai-nr-ue)"
   elif [ -n "$UERANSIM_POD" ]; then
