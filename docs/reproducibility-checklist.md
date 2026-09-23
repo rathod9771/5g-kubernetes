@@ -32,6 +32,9 @@ assumed; if it isn't listed there, it hasn't been proven.
 - [x] `./deploy.sh <scenario>` — two real OSM terminate+instantiate operations performed live, both returned real `ns_instance_id` values
 - [x] `./orchestrator.sh` — walked interactively end to end, correctly built the scenario key, correctly handed off, resulting deployment succeeded
 - [x] `./status.sh` — correct quick-glance output, reusing `validate.sh`'s detection rather than duplicating it
+- [x] Istio: control plane (istio-base + istiod) installed via `install.sh`, isolated in istio-system, zero disruption to the 5G core
+- [x] Istio sidecar injection on the 5G core: staged live test (appProtocol: http2 fix first, then one low-risk NF, then remaining NFs, AMF/SMF last) -- 8/9 core NFs (all but UPF, deliberately excluded) carrying a genuine istio-proxy sidecar, confirmed via the dashboard's real /api/istio/status. The previously-documented SBI HTTP/2 mishandling did NOT recur. The real, working PDU session survived every injection stage -- confirmed via ./scripts/validate.sh after each one
+
 - [x] `./scripts/validate.sh --verbose` — every check does real functional verification (log greps for actual protocol events, live SCTP socket state, HTTP calls), not just "pod is Running"
 - [x] `./install.sh` — every single check (Kubernetes through Layer 3 watcher) correctly detected existing state and skipped, zero disruption to the already-running platform
 - [x] `./uninstall.sh --help` and a real, declined `--monitoring` confirmation prompt — the safety gate genuinely works, nothing was removed
@@ -49,6 +52,7 @@ assumed; if it isn't listed there, it hasn't been proven.
 - [ ] Any RAN scenario's *first-ever* instantiation on a machine with an empty OSM catalog (all 24 packages on the reference machine were already onboarded)
 - [ ] Multus — referenced in `docs/architecture.md`-style discussion of the RAN charts' networking, but the current model (see README's "Network Interface Diagram") explicitly uses no Multus / static IPs; not exercised as part of this reproducibility work
 - [ ] The full benchmark suite (`bench-all-ran.sh`) has not been re-run this session; its numbers in the README predate this work and are not re-verified here
+- [ ] A genuine fresh `helm install`/OSM redeploy of the open5gs charts with the new Istio appProtocol/podLabels changes baked in has not been re-run -- the live cluster only ever received these as ad-hoc kubectl patches, then had the equivalent changes added to the chart source afterward. The two are believed equivalent but not re-proven end to end.
 
 ## C. Known limitations (not gaps to close — permanent, documented facts)
 
