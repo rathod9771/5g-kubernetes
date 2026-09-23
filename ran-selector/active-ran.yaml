@@ -7,7 +7,7 @@ oai:
   enabled: false
   type: oran
 osm:
-  active_instance_id: 9c0eec96-5003-4f1f-84e4-2c9047fea058
+  active_instance_id: ec3fad08-8a42-4a44-a8c0-675613542a4e
   active_scenario: cran-srsran
   core_instance_id: 31677cb6-887c-4ca1-9994-64cbb60a99c5
   core_scenario: open5gs
