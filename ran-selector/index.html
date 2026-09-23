@@ -128,7 +128,7 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
     <button class="top-btn purple" id="btn-core" onclick="showCorePanel(this)">◎ 5G Core</button>
     <button class="top-btn" id="btn-ue" onclick="showTopPanel(this,'ue')">UE</button>
     <button class="top-btn" id="btn-slice" onclick="showTopPanel(this,'slice')">Slice / NW</button>
-    <button class="top-btn" id="btn-istio" onclick="showTopPanel(this,'istio')">Istio</button>
+    <button class="top-btn" id="btn-istio" onclick="showIstioPanel(this)">Istio</button>
     <button class="top-btn" id="btn-verify" onclick="manualVerifyClean()">Verify Clean</button>
     <span id="clean-badge" style="font-size:10px;padding:4px 10px;border-radius:6px;font-weight:600"></span>
     <button class="top-btn" onclick="window.open('https://172.30.18.32:8443/dashboard/','_blank')">🐄 Rancher ↗</button>
@@ -171,7 +171,6 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 </div>
 <script>
 const NF_LIST=["AMF","SMF","UPF","NRF","AUSF","UDM","UDR","PCF","NSSF"];
-const NF_PODS={AMF:"open5gs-amf",SMF:"open5gs-smf",UPF:"open5gs-upf",NRF:"open5gs-nrf",AUSF:"open5gs-ausf",UDM:"open5gs-udm",UDR:"open5gs-udr",PCF:"open5gs-pcf",NSSF:"open5gs-nssf"};
 const NF_COLOR={AMF:"#00d4ff",SMF:"#00aaff",UPF:"#ff6b35",NRF:"#00ff88",AUSF:"#a855f7",UDM:"#f59e0b",UDR:"#ec4899",PCF:"#06b6d4",NSSF:"#84cc16"};
 const NF_DESC={AMF:"Access & Mobility — registration, auth, mobility. N2 to gNB via NGAP/SCTP.",SMF:"Session Management — assigns UE IP, GTP tunnel via PFCP to UPF.",UPF:"User Plane — forwards packets via gtp5g kernel module. N3 N4 N6.",NRF:"Network Repository — service registry for all NFs. Port 8000.",AUSF:"Authentication Server — 5G-AKA with K/OPc keys.",UDM:"Unified Data Mgmt — subscriber profiles and auth vectors.",UDR:"Unified Data Repo — raw storage backend for UDM.",PCF:"Policy Control — QoS rules and PCC rules to SMF.",NSSF:"Slice Selection — routes UE to SST=1 SD=010203."};
 let podData={};
@@ -430,12 +429,12 @@ function openNF(nf){
       </div>
       <button class="close-btn" onclick="closeNF()">✕</button>
     </div>
-    ${tabsHTML(NF_PODS[nf]||nf.toLowerCase(),nf,"nf")}
+    ${tabsHTML(nf,nf,"nf")}
     <div class="panel-body" id="nfpbody">
       <div class="log-terminal" id="nflterm"><div class="loading-txt">Loading live logs...</div></div>
     </div>
   </div>`;
-  fetchLogs(NF_PODS[nf]||nf.toLowerCase(),"nflterm");
+  fetchLogs(nf,"nflterm");
 }
 
 function closeNF(){
@@ -470,30 +469,6 @@ function showTopPanel(btn,type){
       </div>
     </div>`;
     fetchLogs("ueransim-ue","lterm");
-  }else if(type==="istio"){
-    m.innerHTML=`<div class="content-area">
-      <div class="panel">
-        <div class="panel-hdr">
-          <div><div class="panel-title" style="color:#a855f7">Istio Service Mesh</div><div class="panel-sub">Kiali snapshot · 8 control plane NFs with Envoy sidecar</div></div>
-          <button class="close-btn" onclick="blank()">✕</button>
-        </div>
-        <div class="status-grid" style="padding:14px">
-          <div class="stat-card"><div class="stat-val ok">100%</div><div class="stat-lbl">SBI success</div></div>
-          <div class="stat-card"><div class="stat-val" style="color:#00aaff">12ms</div><div class="stat-lbl">p50 latency</div></div>
-          <div class="stat-card"><div class="stat-val" style="color:#ff4444">0.00%</div><div class="stat-lbl">error rate</div></div>
-          <div class="stat-card"><div class="stat-val" style="color:#a855f7">8</div><div class="stat-lbl">NFs injected</div></div>
-          <div class="stat-card"><div class="stat-val ok">0.32</div><div class="stat-lbl">req/s avg</div></div>
-          <div class="stat-card"><div class="stat-val blue">13</div><div class="stat-lbl">services</div></div>
-        </div>
-        <div style="padding:0 14px 14px">
-          <div style="font-size:10px;font-weight:700;color:#555;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Sidecar injection status</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">
-            ${["AMF","SMF","NRF","AUSF","UDM","UDR","PCF","NSSF"].map(n=>`<div style="padding:4px 10px;border-radius:6px;border:1px solid #00ff8844;background:#0a2a1a;font-size:10px;font-weight:700;color:#00ff88">✓ ${n}</div>`).join("")}
-            <div style="padding:4px 10px;border-radius:6px;border:1px solid #ff444444;background:#2a0a0a;font-size:10px;font-weight:700;color:#ff6b35">✕ UPF — data plane only</div>
-          </div>
-        </div>
-      </div>
-    </div>`;
   }else{
     m.innerHTML=`<div class="content-area">
       <div class="panel">
@@ -511,6 +486,38 @@ function showTopPanel(btn,type){
         </div>
       </div>
     </div>`;
+  }
+}
+
+async function showIstioPanel(btn){
+  clearTop();
+  btn.classList.add("active");
+  localStorage.setItem("activeTopPanel","istio");
+  const m=document.getElementById("main");
+  m.innerHTML=`<div class="content-area"><div class="panel">
+    <div class="panel-hdr">
+      <div><div class="panel-title" style="color:#a855f7">Istio Service Mesh</div><div class="panel-sub">Real status -- control plane health and actual per-NF sidecar injection</div></div>
+      <button class="close-btn" onclick="blank()">✕</button>
+    </div>
+    <div class="panel-body" id="istio-body"><div class="loading-txt">Loading real Istio status...</div></div>
+  </div></div>`;
+  try{
+    const s=await (await fetch("/api/istio/status")).json();
+    const rows=Object.entries(s.nfs_injected||{}).map(([nf,on])=>
+      `<div style="padding:4px 10px;border-radius:6px;border:1px solid ${on?"#00ff8844":"#66666644"};background:${on?"#0a2a1a":"#1a1a1a"};font-size:10px;font-weight:700;color:${on?"#00ff88":"#888"}">${on?"✓":"✕"} ${nf}</div>`
+    ).join("");
+    document.getElementById("istio-body").innerHTML=`
+      <div class="status-grid" style="padding:14px">
+        <div class="stat-card"><div class="stat-val ${s.control_plane_ready?"ok":""}" style="${s.control_plane_ready?"":"color:#ff4444"}">${s.control_plane_ready?"READY":"DOWN"}</div><div class="stat-lbl">control plane (${s.namespace})</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#a855f7">${s.nfs_injected_count}/${s.nfs_total}</div><div class="stat-lbl">NFs with sidecar</div></div>
+      </div>
+      <div style="padding:0 14px 14px">
+        <div style="font-size:10px;font-weight:700;color:#555;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Sidecar injection status (live)</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">${rows}</div>
+        ${s.nfs_injected_count===0?`<div style="margin-top:10px;font-size:11px;color:#888">Control plane is installed and healthy, but sidecar injection is not enabled on the 5G core namespace. This is deliberate -- Istio previously mishandled open5gs's SBI HTTP/2 traffic here (see docs/troubleshooting.md). Label a namespace with istio-injection=enabled and redeploy its workloads to actually inject sidecars.</div>`:``}
+      </div>`;
+  }catch(e){
+    document.getElementById("istio-body").innerHTML=`<div style="padding:14px;color:#ff6b35">Could not reach /api/istio/status</div>`;
   }
 }
 
