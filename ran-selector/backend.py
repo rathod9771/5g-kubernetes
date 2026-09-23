@@ -70,18 +70,14 @@ def _releases_of(keys):
     return out
 
 
+NF_LABELS = {
+  "AMF": "amf", "SMF": "smf", "UPF": "upf", "NRF": "nrf",
+  "AUSF": "ausf", "UDM": "udm", "UDR": "udr", "PCF": "pcf", "NSSF": "nssf",
+}
+
 POD_MAP = {
   "oai": "oai-cu",
   "OAI": "oai-cu",
-  "AMF": "open5gs-amf",
-  "SMF": "open5gs-smf",
-  "UPF": "open5gs-upf",
-  "NRF": "open5gs-nrf",
-  "AUSF": "open5gs-ausf",
-  "UDM": "open5gs-udm",
-  "UDR": "open5gs-udr",
-  "PCF": "open5gs-pcf",
-  "NSSF": "open5gs-nssf",
   "UE": "ueransim-ue",
   "GNB": "ueransim-gnb",
   "SRSRAN": "srsran-gnb",
@@ -135,12 +131,24 @@ def pods():
     except:
         return jsonify({"pods": [], "error": "parse error"})
 
+def get_pod_name_by_label(label_value):
+    _, out, _ = run(
+        f"kubectl get pods -n {NS} -l app.kubernetes.io/name={label_value} "
+        "--no-headers 2>/dev/null | grep Running | head -1 | awk '{print $1}'"
+    )
+    return out.strip()
+
 @app.route("/api/logs/<nf>")
 def logs(nf):
     container = request.args.get("container", "")
     lines = request.args.get("lines", "30")
-    label = POD_MAP.get(nf.upper(), nf.lower())
-    pod = get_pod_name(label)
+    nf_upper = nf.upper()
+    if nf_upper in NF_LABELS:
+        pod = get_pod_name_by_label(NF_LABELS[nf_upper])
+        label = nf_upper.lower()
+    else:
+        label = POD_MAP.get(nf_upper, nf.lower())
+        pod = get_pod_name(label)
     if not pod:
         return jsonify({"logs": f"No running pod found for {nf}", "pod": ""})
     # srsRAN split components log to files, not stdout
