@@ -1,4 +1,4 @@
-active: vcran-oai
+active: hcran-oai
 additive: []
 oai:
   components:
@@ -7,8 +7,8 @@ oai:
   enabled: false
   type: oran
 osm:
-  active_instance_id: 6af3db06-7ab3-4dd0-99b2-d593b1399432
-  active_scenario: vcran-oai
+  active_instance_id: a5515151-d202-44e1-806f-04bc312d835f
+  active_scenario: hcran-oai
   core_instance_id: 31677cb6-887c-4ca1-9994-64cbb60a99c5
   core_scenario: open5gs
 srsran:
