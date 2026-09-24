@@ -1,4 +1,4 @@
-active: cran-oai
+active: oran-oai
 additive: []
 oai:
   components:
@@ -7,8 +7,8 @@ oai:
   enabled: false
   type: oran
 osm:
-  active_instance_id: ca2d92d1-3cfe-4973-adb3-dc49127f67fb
-  active_scenario: cran-oai
+  active_instance_id: 3c3f7164-a720-493e-ab01-7b81c3d7b881
+  active_scenario: oran-oai
   core_instance_id: 31677cb6-887c-4ca1-9994-64cbb60a99c5
   core_scenario: open5gs
 srsran:
