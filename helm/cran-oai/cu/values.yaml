@@ -22,3 +22,10 @@ ran:
   component: cu
 
 configRevision: 1
+
+# Name the CU resolves at startup to find the Open5GS AMF's NGAP endpoint.
+# This is the stable Service the working srsRAN CU also uses; the
+# OSM-generated name (open5gs-<release-id>-amf-ngap) is not used because
+# the release id in the middle of it changes on every core redeploy.
+amf:
+  address: "amf-ngap-stable"
