@@ -1,6 +1,6 @@
 apiVersion: v2
-name: srsran
-description: srsRAN gNB - Centralized RAN (C-RAN) deployment on Kubernetes
+name: cran-oai-du
+description: OpenAirInterface DU - C-RAN 3GPP baseline Distributed Unit
 type: application
 version: 0.1.0
 appVersion: "latest"

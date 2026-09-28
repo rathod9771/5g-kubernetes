@@ -1,0 +1,8 @@
+apiVersion: v2
+name: cran-oai-cu
+description: OpenAirInterface CU - C-RAN 3GPP baseline Central Unit
+type: application
+version: 0.1.0
+appVersion: "latest"
+maintainers:
+  - name: Kumar

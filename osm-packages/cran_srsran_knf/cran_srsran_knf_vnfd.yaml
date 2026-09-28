@@ -1,5 +1,5 @@
 vnfd:
-  description: KNF with single KDU using a helm-chart for srsRAN gNB
+  description: KNF with two KDUs (CU + DU) for C-RAN 3GPP Rel-15 baseline srsRAN gNB
   df:
   - id: default-df
   ext-cpd:
@@ -10,8 +10,10 @@ vnfd:
     nets:
     - id: net1
   kdu:
-  - name: srsran
-    helm-chart: srsran
+  - name: cu
+    helm-chart: cu
+  - name: du
+    helm-chart: du
   mgmt-cp: mgmt-ext
   product-name: cran_srsran_knf
   provider: Amrita5G

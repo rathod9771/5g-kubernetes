@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cran-srsran-du
+description: srsRAN DU - C-RAN 3GPP baseline Distributed Unit
+type: application
+version: 0.1.0

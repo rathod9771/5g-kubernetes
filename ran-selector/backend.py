@@ -15,9 +15,10 @@ NS = "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c"
 #   releases: (release_name, chart_path, values_file_or_None)
 #   additive: scenario coexists with a RAN choice instead of replacing it
 SCENARIOS = {
-  "cran-srsran": {"name": "C-RAN + srsRAN",
-    "releases": [("srsran", "helm/srsran", None)],
-    "pods": ["srsran-gnb"]},
+  "cran-srsran": {"name": "C-RAN + srsRAN (3GPP Rel-15 CU/DU/F1)",
+    "releases": [("cran-srsran-cu", "helm/cran-srsran/cu", None),
+                 ("cran-srsran-du", "helm/cran-srsran/du", None)],
+    "selector": "ran-type=cran", "pods": ["cran-srsran-cu", "cran-srsran-du"]},
   "cran-oai": {"name": "C-RAN + OAI",
     "releases": [("oai-cran", "helm/oai-cran", None)],
     "pods": ["oai-cran-gnb"]},

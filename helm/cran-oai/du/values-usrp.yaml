@@ -1,0 +1,21 @@
+# UNVERIFIED against physical hardware. Replace the serial before use.
+#
+# NOTE on passing rf.usrp.args on the command line: Helm's --set treats a
+# comma as a key separator, so `--set rf.usrp.args=type=b200,serial=X`
+# silently drops everything after the first comma (the serial is lost and
+# no error is raised). If --set must be used, escape every comma as \,
+#     --set 'rf.usrp.args=type=b200\,serial=X'
+# Using this values file (-f values-usrp.yaml) is safer: the string is
+# quoted in YAML and needs no escaping.
+#
+# clockSource/timeSource accept: internal, external, gpsdo (per OAI's
+# radio/USRP/README.md). The B210 free-running internal oscillator is
+# the known cause of the ~90-140s session-drop limitation documented
+# elsewhere in this project; a real GPSDO/external reference is the
+# expected fix and would change these two values.
+rf:
+  mode: usrp
+  usrp:
+    args: "type=b200,serial=REPLACE_WITH_REAL_SERIAL"
+    clockSource: internal
+    timeSource: internal
