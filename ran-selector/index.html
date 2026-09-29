@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>5G Platform</title>
+<title>NovaThinkTech Intelli5G Dashboard</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:flex;flex-direction:column;overflow:hidden}
@@ -32,7 +32,7 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 .deploy-btn.deployed{border-color:#00ff88;color:#00ff88;background:#0a2a1a}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0.5}}
 .dot{width:6px;height:6px;border-radius:50%;background:#2a2a4a;flex-shrink:0}
-.dot.on{background:#00ff88}
+.dot.on{background:var(--success)}
 .dot.off{background:#2a2a4a}
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .blank{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px}
@@ -44,8 +44,8 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 .panel-title{font-size:14px;font-weight:700;color:#00d4ff}
 .panel-sub{font-size:10px;color:#555;margin-top:2px}
 .panel-status{font-size:10px;display:flex;align-items:center;gap:5px;margin-left:12px}
-.ok{color:#00ff88}
-.warn{color:#ffaa00}
+.ok{color:#15803c}
+.warn{color:#a15c00}
 .close-btn{width:24px;height:24px;border-radius:50%;border:1px solid #2a2a4a;background:transparent;color:#555;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;flex-shrink:0}
 .close-btn:hover{border-color:#ff4444;color:#ff4444}
 .wf-bar{display:flex;align-items:center;padding:8px 14px;background:#080810;border-bottom:1px solid #1e1e3a;overflow-x:auto;gap:0;flex-shrink:0}
@@ -61,20 +61,20 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 .tab{padding:5px 14px;border-radius:6px;border:1px solid transparent;background:transparent;color:#555;font-size:11px;cursor:pointer;font-weight:600;transition:all 0.15s}
 .tab:hover{color:#ccc}
 .tab.active{background:#001a2e;border-color:#00d4ff44;color:#00d4ff}
-.panel-body{padding:12px 14px;max-height:240px;overflow-y:auto}
-.log-terminal{background:#050508;border-radius:8px;padding:10px;font-family:monospace;font-size:10px;line-height:1.8;overflow-y:auto;max-height:200px}
-.log-ok{color:#00ff88}
-.log-err{color:#ff4444}
-.log-warn{color:#ffaa00}
-.log-info{color:#888}
+.panel-body{padding:12px 14px;min-height:0;overflow-y:auto}
+.log-terminal{background:#050508;border-radius:8px;padding:10px;font-family:monospace;font-size:10px;line-height:1.8;min-height:0;overflow-y:auto}
+.log-ok{color:#15803d;font-weight:600}
+.log-err{color:#dc2626;font-weight:600}
+.log-warn{color:#a15c00;font-weight:600}
+.log-info{color:#334155}
 .loading-txt{color:#333;font-style:italic;padding:10px;font-size:11px}
 .process-list{display:flex;flex-direction:column;gap:6px}
 .proc-item{display:flex;align-items:center;gap:10px;padding:8px 10px;background:#080810;border-radius:7px;border:1px solid #1a1a2a}
-.proc-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.proc-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px var(--success-soft)}
 .proc-name{font-size:11px;font-weight:700;color:#ccc}
 .proc-desc{font-size:10px;color:#555;margin-top:1px}
 .proc-badge{font-size:9px;padding:2px 7px;border-radius:10px;margin-left:auto;flex-shrink:0}
-.pbg-run{background:#0a2a1a;color:#00ff88;border:1px solid #00ff8844}
+.pbg-run{background:var(--success-soft);color:#166534;border:1px solid #9bd8b0;font-weight:700}
 .status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .stat-card{background:#080810;border-radius:8px;padding:10px;text-align:center;border:1px solid #1a1a2a}
 .stat-val{font-size:20px;font-weight:700}
@@ -90,7 +90,7 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 .info-card{background:#080810;border-radius:8px;padding:10px;border:1px solid #1a1a2a}
 .info-key{font-size:9px;color:#555;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.5px}
 .info-val{font-size:13px;font-weight:700;color:#ccc}
-.info-val.ok{color:#00ff88}
+.info-val.ok{color:#15803c}
 .info-val.blue{color:#00d4ff}
 .pulse{display:inline-block;width:6px;height:6px;border-radius:50%;background:#00ff88;animation:p 2s infinite;margin-right:4px}
 @keyframes p{0%,100%{opacity:1}50%{opacity:0.3}}
@@ -109,6 +109,376 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 .bdg-mini{font-size:8px;padding:1px 5px;border-radius:10px}
 .bdg-mini.live{background:#0a2a1a;color:#00ff88;border:1px solid #00ff8844}
 .bdg-mini.soon{background:#1a1a1a;color:#333;border:1px solid #222}
+
+/* =========================================================
+   5G PLATFORM DASHBOARD — FINAL LAYOUT / TYPOGRAPHY SYSTEM
+   ========================================================= */
+:root{
+  --bg:#080812;--surface:#0f0f1e;--surface-2:#13132a;--surface-3:#080810;
+  --border:#252542;--border-soft:#1a1a2a;--text:#e7e9f0;--muted:#8b90a3;
+  --dim:#62697d;--accent:#00d4ff;--success:#00ff88;--warning:#ffaa00;
+  --danger:#ff4444;--purple:#a855f7;--gap:12px;
+}
+html,body{width:100%;height:100%;min-height:100%}
+body{
+  min-height:100vh;font-size:14px;line-height:1.45;
+  background:radial-gradient(circle at 80% 0%,rgba(0,212,255,.045),transparent 32%),
+             radial-gradient(circle at 30% 100%,rgba(168,85,247,.035),transparent 30%),var(--bg);
+}
+.topbar{min-height:58px;padding:10px 18px;gap:14px}
+.topbar h1{font-size:16px;letter-spacing:1.1px;white-space:nowrap}
+.top-btns{gap:7px;overflow-x:auto;scrollbar-width:none;padding-bottom:1px}
+.top-btns::-webkit-scrollbar{display:none}
+.top-btn{flex:0 0 auto;min-height:34px;padding:7px 13px;font-size:12px;border-radius:7px}
+.layout{min-height:0}
+.sidebar{width:190px;padding:14px 10px}
+.sb-title{font-size:11px;margin-bottom:10px}
+.ran-card{padding:10px;margin-bottom:7px;border-radius:9px}
+.ran-name{font-size:13px}.ran-type{font-size:11px;margin-bottom:7px}
+.ran-badge{font-size:10px;padding:2px 6px}.deploy-btn{min-height:32px;font-size:12px;padding:6px 0}
+.main{min-width:0;min-height:0}
+.content-area{
+  flex:1 1 auto;min-width:0;min-height:0;padding:16px;gap:12px;overflow:auto;scrollbar-gutter:stable
+}
+.panel{min-width:0;min-height:0;border-radius:12px;border-color:var(--border)}
+.panel-hdr{min-height:58px;padding:11px 16px}
+.panel-title{font-size:18px}.panel-sub{font-size:12px;color:var(--muted)}.panel-status{font-size:12px}
+.close-btn{width:30px;height:30px;font-size:14px}
+.wf-bar{min-height:48px;padding:9px 16px}.wf-dot{width:24px;height:24px;font-size:11px}
+.wf-lbl{font-size:11px}.wf-arr{font-size:13px}
+.tab-row{gap:6px;padding:9px 16px}.tab{min-height:34px;padding:7px 15px;font-size:13px}
+.panel-body{padding:14px 16px;min-height:0;overflow:auto}
+.log-terminal{min-height:0;padding:12px 14px;font-size:12px;line-height:1.65;overflow:auto}
+.loading-txt{padding:14px;font-size:14px;color:#475569;line-height:1.6}
+.process-list{gap:8px}.proc-item{min-height:64px;padding:12px 14px}
+.proc-name{font-size:15px;font-weight:700;color:var(--text-strong)}.proc-desc{font-size:13px;color:var(--muted);margin-top:3px;line-height:1.45}.proc-badge{font-size:12px;padding:4px 9px}
+.status-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.stat-card{min-height:86px;padding:14px 10px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.stat-val{font-size:26px}.stat-lbl{font-size:12px;margin-top:5px;color:var(--muted)}
+.nf-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:16px}
+.nf-btn{min-height:70px;padding:14px 10px}.nf-btn-name{font-size:15px}.nf-btn-st{font-size:11px}
+.info-grid{gap:10px;padding:16px}.info-card{min-height:72px;padding:12px 14px}
+.info-key{font-size:11px;margin-bottom:5px}.info-val{font-size:15px}
+.arch-btn,.stack-btn{min-height:38px;padding:8px 12px;font-size:13px}.bdg-mini{font-size:10px;padding:2px 6px}
+.deploying-bar{padding:14px 16px;font-size:13px}
+
+/* Flexible-height panels */
+.fill-panel,.log-panel{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.fill-panel>.panel-body,.log-panel>.panel-body{flex:1 1 auto;min-height:0}
+.log-panel>.panel-body{display:flex;flex-direction:column;overflow:hidden}
+.log-panel>.panel-body>.log-terminal{flex:1 1 auto;min-height:0;overflow:auto}
+
+/* UE — structured top panel + bottom status cards */
+.content-area:has(.ue-panel){overflow:hidden}
+.content-area:has(.ue-panel)>.ue-panel{
+  flex:0 0 58%;
+  min-height:0;
+}
+.ue-panel .panel-body{
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+}
+.ue-panel .panel-body>.log-terminal{
+  flex:1 1 auto;
+  min-height:0;
+  overflow:auto;
+}
+.ue-panel+.info-grid{
+  flex:1 1 auto;
+  min-height:0;
+  max-height:none;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-auto-rows:minmax(0,1fr);
+  padding:0;
+  gap:10px;
+}
+.ue-panel+.info-grid .info-card{
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+
+/* Network Slice */
+.content-area:has(.slice-panel){overflow:hidden}
+.slice-panel .info-grid{flex:1 1 auto;min-height:0;grid-auto-rows:minmax(90px,1fr)}
+.slice-panel .info-card{display:flex;flex-direction:column;justify-content:center}
+
+/* 5G Core */
+.core-content{overflow:hidden}
+.core-overview-panel{flex:0 0 auto}
+.core-content #nf-area{flex:1 1 auto;min-height:0;display:flex}
+.core-content #nf-area .nf-detail-panel{flex:1 1 auto;min-height:0}
+.nf-detail-panel .panel-body{flex:1 1 auto}
+.nf-detail-panel .log-terminal{flex:1 1 auto;min-height:0}
+
+/* Layer 2 */
+.layer2-content{overflow:hidden}
+.layer2-panel{flex:1 1 auto}
+.layer2-panel #l2-grid{flex:0 0 auto}
+.layer2-panel>div:last-child{flex:1 1 auto;min-height:0;overflow:auto}
+.layer2-panel>div:last-child>div:last-child{min-height:110px}
+
+/* Layer 3 */
+.layer3-content{overflow:hidden}
+.layer3-panel{flex:1 1 auto}
+.layer3-body{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto}
+.layer3-body .process-list{min-height:100%}
+.layer3-body .proc-item{min-height:56px}
+
+/* Short information views still own the viewport */
+.content-area>.panel:not(.log-panel):not(.core-overview-panel){min-height:0}
+
+/* Intentional empty state */
+.blank{padding:32px}.blank-icon{font-size:64px}.blank-txt{font-size:14px;color:var(--dim)}
+::-webkit-scrollbar{width:7px;height:7px}
+::-webkit-scrollbar-track{background:#0a0a14}
+::-webkit-scrollbar-thumb{background:#30304c;border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:#444465}
+
+/* Responsive */
+@media (max-width:1100px){
+  .sidebar{width:170px}.topbar h1{font-size:14px}.top-btn{padding-inline:10px}
+  .nf-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:800px){
+  body{overflow:auto}.layout{min-height:calc(100vh - 58px)}.sidebar{width:145px}
+  .content-area{padding:10px}.status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .info-grid{grid-template-columns:1fr}.nf-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .panel-title{font-size:16px}.log-terminal{font-size:11px}
+}
+
+
+/* ============================================================
+   NOVATHINKTECH INTELLI5G — LIGHT ENTERPRISE DASHBOARD THEME
+   Neutral surfaces + blue primary accent + semantic status colors.
+   ============================================================ */
+:root{
+  --bg:#f5f7fb;
+  --surface:#ffffff;
+  --surface-2:#f8fafc;
+  --surface-3:#eef3f8;
+  --border:#d8e0ea;
+  --border-soft:#e7edf4;
+  --text:#172033;
+  --text-strong:#0b1730;
+  --muted:#526176;
+  --dim:#718096;
+  --accent:#155eef;
+  --accent-dark:#0b4fc4;
+  --accent-soft:#eaf2ff;
+  --success:#16803c;
+  --success-soft:#eaf8ef;
+  --warning:#a15c00;
+  --warning-soft:#fff5e6;
+  --danger:#c62828;
+  --danger-soft:#fff0f0;
+  --purple:#6941c6;
+  --purple-soft:#f2edff;
+  --shadow:0 2px 8px rgba(15,23,42,.06),0 1px 2px rgba(15,23,42,.04);
+}
+html,body{background:var(--bg);color:var(--text)}
+body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:15px;line-height:1.5}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 20px;min-height:62px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.topbar h1{font-size:20px;font-weight:750;color:var(--accent);letter-spacing:.15px}
+.top-btn{font-size:13px;color:var(--text);background:var(--surface-2);border-color:var(--border);min-height:36px}
+.top-btn:hover{color:var(--accent);border-color:#9dbcf5;background:var(--accent-soft)}
+.sidebar{width:205px;background:var(--surface);border-right:1px solid var(--border);padding:16px 11px;box-shadow:1px 0 3px rgba(15,23,42,.03)}
+.sidebar .nav-label,.sidebar small{color:var(--muted)}
+.nav-item{color:var(--text);font-size:14px;min-height:38px}
+.nav-item:hover{background:var(--accent-soft);color:var(--accent-dark)}
+.nav-item.active{background:var(--accent-soft);color:var(--accent-dark);border-left-color:var(--accent)}
+.main{background:var(--bg)}
+.content-area{padding:16px 18px;gap:14px}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow)}
+.panel-hdr{min-height:58px;padding:12px 17px;border-bottom:1px solid var(--border-soft);background:var(--surface)}
+.panel-title{font-size:18px;font-weight:700;color:var(--text-strong)}
+.panel-sub{font-size:13px;color:var(--muted)}
+.panel-body{padding:15px 17px}
+.tab-row{background:var(--surface-2);border-bottom:1px solid var(--border-soft);gap:6px;padding:9px 16px}
+.tab{min-height:36px;padding:7px 15px;font-size:13px;color:var(--muted)}
+.tab:hover{color:var(--accent-dark);background:var(--accent-soft)}
+.tab.active{background:var(--accent-soft);border-color:#b7cef7;color:var(--accent-dark)}
+.log-terminal{background:#f8fafc;color:#243247;border:1px solid var(--border-soft);border-radius:7px;padding:14px 16px;font-size:14px;line-height:1.8}
+.stat-card,.info-card{background:var(--surface);border:1px solid var(--border-soft);box-shadow:0 1px 3px rgba(15,23,42,.035)}
+.log-terminal .log-info:where(span){display:inline-block;max-width:100%;word-break:break-word}.log-terminal .log-err,.log-terminal .log-warn,.log-terminal .log-ok,.log-terminal .log-info{font-size:14px}.log-terminal .log-info{font-weight:500}.log-terminal .log-empty{display:block;padding:11px 13px;margin:2px 0;background:var(--accent-soft);border:1px solid #b7cef7;border-radius:7px;color:#334155;font-size:15px;font-weight:650;line-height:1.6}
+.stat-val{font-size:28px;color:var(--text-strong)}
+.stat-lbl{font-size:12px;color:var(--muted);font-weight:600}
+.info-key{font-size:12px;color:var(--muted);font-weight:650}
+.info-val{font-size:16px;color:var(--text-strong)}
+.info-val.blue{color:var(--accent)}
+.info-val.ok{color:var(--success)}
+.nf-btn{background:var(--surface);border-color:var(--border);min-height:74px;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+.nf-btn:hover{border-color:#9dbcf5;background:var(--accent-soft)}
+.nf-btn.sel{border-color:#7da8f4;background:var(--accent-soft);box-shadow:0 0 0 1px #b7cef7 inset}
+.nf-btn-name{font-size:15px;color:var(--text-strong)}
+.nf-btn.sel .nf-btn-name{color:var(--accent-dark)}
+.nf-btn-st{font-size:11px;color:var(--muted)}
+.process-list,.proc-item{color:var(--text)}
+.proc-item{border-color:var(--border-soft);background:var(--surface-2);padding:12px 14px;min-height:64px}
+.status-dot.ok{background:var(--success);box-shadow:0 0 0 3px var(--success-soft)}
+.status-dot.warn{background:var(--warning)}
+.status-dot.bad{background:var(--danger)}
+button,.btn{font-size:13px}
+input,select{font-size:14px;background:var(--surface);color:var(--text);border-color:var(--border)}
+code,pre{font-size:13px}
+
+/* Semantic accents: status meaning stays distinct from the blue brand accent. */
+.badge-ok,.status-ok{color:var(--success);font-weight:700}
+.badge-warn,.status-warn{color:var(--warning)}
+.badge-bad,.status-bad{color:var(--danger)}
+
+@media (max-width:1100px){
+  .sidebar{width:185px}
+  .topbar h1{font-size:18px}
+}
+@media (max-width:800px){
+  .topbar h1{font-size:16px}
+  .content-area{padding:12px}
+  .panel-title{font-size:17px}
+  .log-terminal{font-size:12px}
+}
+
+
+/* ============================================================
+   NOVATHINKTECH INTELLI5G — POLISHED DESIGN SYSTEM + THEME SWITCH
+   Light is the default. Dark mode is user-selectable and persisted.
+   ============================================================ */
+.theme-toggle{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-width:104px}
+.theme-toggle .theme-icon{font-size:15px;line-height:1}
+.theme-toggle .theme-label{font-size:12px;font-weight:700}
+
+/* Shared polish */
+.topbar{position:relative;z-index:10}
+.topbar h1{display:flex;align-items:center;gap:9px}
+.topbar h1::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);flex:0 0 auto}
+.top-btn{box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.top-btn.active{box-shadow:0 0 0 1px rgba(21,94,239,.10) inset}
+.sidebar{position:relative}
+.sidebar::after{content:"";position:absolute;right:-1px;top:0;bottom:0;width:1px;background:var(--border)}
+.ran-card{box-shadow:0 1px 2px rgba(15,23,42,.025)}
+.ran-card:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+.panel{box-shadow:var(--shadow)}
+.panel-hdr{position:relative}
+.panel-hdr::after{content:"";position:absolute;left:0;bottom:-1px;width:72px;height:2px;background:var(--accent);opacity:.75}
+.tab.active{font-weight:700}
+.info-card,.stat-card,.nf-btn,.proc-item{transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease,background .15s ease}
+.info-card:hover,.stat-card:hover,.nf-btn:hover,.proc-item:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+
+/* Dark theme */
+body.theme-dark{
+  --bg:#070b14;
+  --surface:#0d1422;
+  --surface-2:#111a2b;
+  --surface-3:#172238;
+  --border:#24324a;
+  --border-soft:#1d2a40;
+  --text:#e7edf7;
+  --text-strong:#f5f8ff;
+  --muted:#9aa9bd;
+  --dim:#718199;
+  --accent:#4ea1ff;
+  --accent-dark:#79b7ff;
+  --accent-soft:#102846;
+  --success:#39d98a;
+  --success-soft:#0e2a20;
+  --warning:#ffb547;
+  --warning-soft:#342710;
+  --danger:#ff6b6b;
+  --danger-soft:#351619;
+  --purple:#a78bfa;
+  --purple-soft:#241b3d;
+  --shadow:0 8px 24px rgba(0,0,0,.18),0 1px 3px rgba(0,0,0,.20);
+  color-scheme:dark;
+}
+body.theme-dark .topbar,
+body.theme-dark .sidebar,
+body.theme-dark .panel,
+body.theme-dark .panel-hdr{background:var(--surface);color:var(--text)}
+body.theme-dark .topbar{border-bottom-color:var(--border)}
+body.theme-dark .sidebar{border-right-color:var(--border)}
+body.theme-dark .top-btn{background:var(--surface-2);border-color:var(--border);color:var(--text)}
+body.theme-dark .top-btn:hover{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+body.theme-dark .top-btn.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+body.theme-dark .ran-card{background:var(--surface-2);border-color:var(--border)}
+body.theme-dark .ran-name,.theme-dark .proc-name,.theme-dark .nf-btn-name{color:var(--text-strong)}
+body.theme-dark .ran-type,.theme-dark .proc-desc,.theme-dark .nf-btn-st{color:var(--muted)}
+body.theme-dark .arch-btn,body.theme-dark .stack-btn{background:var(--surface-2);border-color:var(--border);color:var(--text)}
+body.theme-dark .arch-btn.sel{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+body.theme-dark .stack-btn.sel{background:var(--purple-soft);border-color:var(--purple);color:var(--purple)}
+body.theme-dark .deploy-btn{background:transparent;border-color:var(--border);color:var(--muted)}
+body.theme-dark .panel-sub,body.theme-dark .info-key,body.theme-dark .stat-lbl{color:var(--muted)}
+body.theme-dark .tab-row{background:var(--surface-2);border-bottom-color:var(--border-soft)}
+body.theme-dark .tab{color:var(--muted)}
+body.theme-dark .tab:hover,body.theme-dark .tab.active{background:var(--accent-soft);color:var(--accent-dark);border-color:#315d8f}
+body.theme-dark .log-terminal{background:#080d17;color:#d9e2ef;border-color:var(--border-soft)}
+body.theme-dark .log-info{color:#c2cede}
+body.theme-dark .log-ok{color:var(--success)}
+body.theme-dark .log-warn{color:var(--warning)}
+body.theme-dark .log-err{color:var(--danger)}
+body.theme-dark .log-terminal .log-empty{background:var(--accent-soft);border-color:#315d8f;color:#dbeafe}
+body.theme-dark .stat-card,body.theme-dark .info-card,body.theme-dark .nf-btn,body.theme-dark .proc-item{background:var(--surface-2);border-color:var(--border-soft)}
+body.theme-dark .nf-btn.sel{background:var(--purple-soft);border-color:#6d57ad}
+body.theme-dark .nf-btn.sel .nf-btn-name{color:var(--purple)}
+body.theme-dark .info-val,body.theme-dark .stat-val{color:var(--text-strong)}
+body.theme-dark .info-val.blue{color:var(--accent)}
+body.theme-dark .info-val.ok{color:var(--success)}
+body.theme-dark .wf-bar{background:#090f1a;border-bottom-color:var(--border)}
+body.theme-dark .wf-dot{background:var(--surface-2);border-color:var(--border);color:var(--muted)}
+body.theme-dark .wf-dot.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+body.theme-dark .wf-lbl{color:var(--muted)}
+body.theme-dark .blank-txt{color:var(--dim)}
+body.theme-dark input,body.theme-dark select{background:var(--surface-2);color:var(--text);border-color:var(--border)}
+body.theme-dark .close-btn{border-color:var(--border);color:var(--muted)}
+body.theme-dark #liveBar{background:#090f1a!important;border-bottom-color:var(--border)!important}
+body.theme-dark #lb-updated{color:#718199!important}
+body.theme-dark ::-webkit-scrollbar-track{background:#080d17}
+body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
+
+/* Live bar follows the selected theme without changing its live status colors. */
+#liveBar{background:var(--surface-3)!important;border-bottom:1px solid var(--border)!important;color:var(--muted)}
+#liveBar span:first-child{color:var(--muted)!important;font-weight:800;letter-spacing:.4px}
+
+/* Responsive desktop/tablet/mobile behavior */
+@media (max-width:1100px){
+  .topbar{align-items:flex-start}
+  .topbar h1{font-size:18px}
+  .top-btns{max-width:72vw}
+}
+@media (max-width:800px){
+  body{overflow:auto}
+  .topbar{flex-wrap:wrap;padding:10px 12px}
+  .topbar h1{width:100%;font-size:17px}
+  .top-btns{width:100%;max-width:none;overflow-x:auto;padding-bottom:3px}
+  .layout{flex-direction:column;overflow:auto;min-height:calc(100vh - 118px)}
+  .sidebar{width:100%;max-height:235px;border-right:0;border-bottom:1px solid var(--border);padding:10px}
+  .sidebar::after{display:none}
+  #arch-list{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px!important}
+  #stack-list{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px!important}
+  .main{min-height:620px}
+  .content-area{padding:10px}
+  .content-area:has(.ue-panel){overflow:auto}
+  .content-area:has(.ue-panel)>.ue-panel{flex:0 0 auto;min-height:390px}
+  .ue-panel+.info-grid{flex:0 0 auto;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:minmax(84px,auto)}
+  .status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .nf-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .info-grid{grid-template-columns:1fr}
+  .panel-title{font-size:17px}
+  .log-terminal{font-size:12px}
+}
+@media (max-width:520px){
+  .topbar h1{font-size:16px}
+  .theme-toggle{min-width:92px}
+  .theme-toggle .theme-label{font-size:11px}
+  .top-btn{padding-inline:10px}
+  #arch-list,#stack-list{grid-template-columns:1fr!important}
+  .sidebar{max-height:310px}
+  .main{min-height:700px}
+  .status-grid,.ue-panel+.info-grid{grid-template-columns:1fr}
+  .nf-grid{grid-template-columns:1fr}
+}
+
 </style>
 </head>
 <body>
@@ -123,7 +493,7 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 </div>
 
 <div class="topbar">
-  <h1>⚡ 5G PLATFORM DASHBOARD</h1>
+  <h1>NovaThinkTech Intelli5G Dashboard</h1>
   <div class="top-btns">
     <button class="top-btn purple" id="btn-core" onclick="showCorePanel(this)">◎ 5G Core</button>
     <button class="top-btn" id="btn-ue" onclick="showTopPanel(this,'ue')">UE</button>
@@ -135,6 +505,7 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
     <button class="top-btn" id="btn-osm" onclick="showExternalPanel(this,'osm')">📡 OSM</button>
     <button class="top-btn" id="btn-layer2" onclick="showLayer2Panel(this)">📊 Layer 2</button>
     <button class="top-btn purple" id="btn-layer3" onclick="showLayer3Panel(this)">🤖 Layer 3</button>
+    <button class="top-btn theme-toggle" id="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Toggle dashboard theme"><span class="theme-icon" id="theme-icon">☀</span><span class="theme-label" id="theme-label">Light</span></button>
     <button class="top-btn" id="btn-docs" onclick="showDocsPanel(this)">📘 Documentation</button>
   </div>
 </div>
@@ -171,7 +542,7 @@ body{font-family:sans-serif;background:#080812;color:#fff;height:100vh;display:f
 </div>
 <script>
 const NF_LIST=["AMF","SMF","UPF","NRF","AUSF","UDM","UDR","PCF","NSSF"];
-const NF_COLOR={AMF:"#00d4ff",SMF:"#00aaff",UPF:"#ff6b35",NRF:"#00ff88",AUSF:"#a855f7",UDM:"#f59e0b",UDR:"#ec4899",PCF:"#06b6d4",NSSF:"#84cc16"};
+const NF_COLOR={AMF:"#00d4ff",SMF:"#00aaff",UPF:"#ff6b35",NRF:"#15803c",AUSF:"#a855f7",UDM:"#f59e0b",UDR:"#ec4899",PCF:"#06b6d4",NSSF:"#84cc16"};
 const NF_DESC={AMF:"Access & Mobility — registration, auth, mobility. N2 to gNB via NGAP/SCTP.",SMF:"Session Management — assigns UE IP, GTP tunnel via PFCP to UPF.",UPF:"User Plane — forwards packets via gtp5g kernel module. N3 N4 N6.",NRF:"Network Repository — service registry for all NFs. Port 8000.",AUSF:"Authentication Server — 5G-AKA with K/OPc keys.",UDM:"Unified Data Mgmt — subscriber profiles and auth vectors.",UDR:"Unified Data Repo — raw storage backend for UDM.",PCF:"Policy Control — QoS rules and PCC rules to SMF.",NSSF:"Slice Selection — routes UE to SST=1 SD=010203."};
 let podData={};
 let currentRAN=null;
@@ -249,7 +620,7 @@ async function fetchLogs(podLabel,tid){
       const isErr=/error|ERRO|fail|panic/i.test(line);
       const isOk=/success|200|OK|accept|established|started|running|done/i.test(line);
       const isWarn=/warn/i.test(line);
-      const cls=isErr?"log-err":isOk?"log-ok":isWarn?"log-warn":"log-info";
+      const cls=isErr?"log-err":isOk?"log-ok":isWarn?"log-warn":/no running pod found/i.test(line)?"log-empty":"log-info";
       div.innerHTML=`<span class="${cls}">${line.replace(/</g,"&lt;")}</span>`;
       el.appendChild(div);
     });
@@ -273,18 +644,18 @@ function buildProcess(key){
     UE:[["UE Main","UERANSIM simulated phone process"],["NAS","Non-Access Stratum — MM/SM"],["RRC client","Radio Resource Control"],["PDU Session","uesimtun0 tunnel active"]],
   };
   const list=map[key]||[[key+" Main","Main process running"],["Istio Envoy","Service mesh sidecar"]];
-  return '<div class="process-list">'+list.map(([n,d])=>`<div class="proc-item"><div class="proc-dot" style="background:#00ff88"></div><div><div class="proc-name">${n}</div><div class="proc-desc">${d}</div></div><span class="proc-badge pbg-run">running</span></div>`).join("")+"</div>";
+  return '<div class="process-list">'+list.map(([n,d])=>`<div class="proc-item"><div class="proc-dot" style="background:#15803c"></div><div><div class="proc-name">${n}</div><div class="proc-desc">${d}</div></div><span class="proc-badge pbg-run">running</span></div>`).join("")+"</div>";
 }
 
 function buildStatus(key){
   const p=podData[key]||{};
   return '<div class="status-grid">'+[
     {v:p.ready||"—",l:"containers",c:"#00d4ff"},
-    {v:String(p.restarts||0),l:"restarts",c:Number(p.restarts)>0?"#ffaa00":"#00ff88"},
-    {v:p.phase||"Running",l:"phase",c:"#00ff88"},
+    {v:String(p.restarts||0),l:"restarts",c:Number(p.restarts)>0?"#a15c00":"#15803c"},
+    {v:p.phase||"Running",l:"phase",c:"#15803c"},
     {v:key==="UPF"?"no (data plane)":"2/2 injected",l:"Istio",c:key==="UPF"?"#ff6b35":"#a855f7"},
     {v:"12ms",l:"p50 latency",c:"#00aaff"},
-    {v:"100%",l:"SBI success",c:"#00ff88"}
+    {v:"100%",l:"SBI success",c:"#15803c"}
   ].map(s=>`<div class="stat-card"><div class="stat-val" style="color:${s.c}">${s.v}</div><div class="stat-lbl">${s.l}</div></div>`).join("")+"</div>";
 }
 
@@ -320,7 +691,7 @@ async function deployRAN(key,name,sub){
 
   const m=document.getElementById("main");
   m.innerHTML=`<div class="content-area">
-    <div class="panel" id="ran-panel-main">
+    <div class="panel log-panel ran-log-panel" id="ran-panel-main">
       <div class="panel-hdr">
         <div style="display:flex;align-items:center">
           <div><div class="panel-title">${name}</div><div class="panel-sub">${sub}</div></div>
@@ -393,8 +764,8 @@ function showDeployedPanel(key,name,sub){
 function showCorePanel(btn){
   clearTop();
   btn.classList.add("active");
-  document.getElementById("main").innerHTML=`<div class="content-area">
-    <div class="panel">
+  document.getElementById("main").innerHTML=`<div class="content-area core-content">
+    <div class="panel core-overview-panel">
       <div class="panel-hdr">
         <div style="display:flex;align-items:center;gap:10px">
           <div class="panel-title" style="color:#a855f7">5G Core Network</div>
@@ -421,7 +792,7 @@ function openNF(nf){
   if(b)b.classList.add("sel");
   const p=podData[nf]||{};
   document.getElementById("nf-area").innerHTML=`
-  <div class="panel" id="nfwrap">
+  <div class="panel log-panel nf-detail-panel" id="nfwrap">
     <div class="panel-hdr">
       <div style="display:flex;align-items:center">
         <div><div class="panel-title" style="color:${NF_COLOR[nf]}">${nf}</div><div class="panel-sub">${NF_DESC[nf]}</div></div>
@@ -448,7 +819,7 @@ function showTopPanel(btn,type){
   const m=document.getElementById("main");
   if(type==="ue"){
     m.innerHTML=`<div class="content-area">
-      <div class="panel">
+      <div class="panel fill-panel ue-panel">
         <div class="panel-hdr">
           <div style="display:flex;align-items:center">
             <div><div class="panel-title">UE — UERANSIM</div><div class="panel-sub">Simulated phone · IMSI 208930000000003</div></div>
@@ -471,7 +842,7 @@ function showTopPanel(btn,type){
     fetchLogs("ueransim-ue","lterm");
   }else{
     m.innerHTML=`<div class="content-area">
-      <div class="panel">
+      <div class="panel fill-panel slice-panel">
         <div class="panel-hdr">
           <div><div class="panel-title" style="color:#f59e0b">Network Slice</div><div class="panel-sub">S-NSSAI · SST=1 SD=010203 · eMBB</div></div>
           <button class="close-btn" onclick="blank()">✕</button>
@@ -526,8 +897,8 @@ async function showLayer2Panel(btn){
   btn.classList.add("active");
   localStorage.setItem("activeTopPanel","layer2");
   const m=document.getElementById("main");
-  m.innerHTML=`<div class="content-area">
-    <div class="panel">
+  m.innerHTML=`<div class="content-area layer2-content">
+    <div class="panel fill-panel layer2-panel">
       <div class="panel-hdr">
         <div><div class="panel-title">Layer 2 — Real-Time Network Intelligence</div><div class="panel-sub">Live from Prometheus · UE, throughput, packet loss, resource utilization, QoS, latency</div></div>
         <button class="close-btn" onclick="blank()">✕</button>
@@ -542,12 +913,12 @@ async function showLayer2Panel(btn){
       </div>
       <div style="padding:0 14px 14px">
         <div style="font-size:10px;color:#555;margin-bottom:8px">
-          Native open5gs (3GPP TS 28.552) + a custom RAN log exporter, scraped by Prometheus every 10-15s.
+          Native open5gs + a custom RAN log exporter, scraped by Prometheus every 10-15s.
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;background:#080810;border:1px solid #1a1a2a;border-radius:8px;padding:12px 16px">
           <div>
-            <div style="font-size:12px;font-weight:700;color:#ccc">📊 Full Grafana Dashboards</div>
-            <div style="font-size:10px;color:#555;margin-top:2px">Grafana blocks embedding (X-Frame-Options) — same as Rancher, opens in a new tab</div>
+            <div style="font-size:16px;font-weight:700;color:#1d4ed8">📊 Full Grafana Dashboards</div>
+            
           </div>
           <button class="top-btn" onclick="window.open('http://grafana-metrics.172.30.18.32.nip.io:31998','_blank')">Open Grafana ↗</button>
         </div>
@@ -579,13 +950,13 @@ async function showLayer3Panel(btn){
   btn.classList.add("active");
   localStorage.setItem("activeTopPanel","layer3");
   const m=document.getElementById("main");
-  m.innerHTML=`<div class="content-area">
-    <div class="panel">
+  m.innerHTML=`<div class="content-area layer3-content">
+    <div class="panel fill-panel layer3-panel">
       <div class="panel-hdr">
         <div><div class="panel-title" style="color:#a855f7">Layer 3 — Autonomous Optimization</div><div class="panel-sub">Watches Layer 2's BLER · auto fails-over to H-CRAN when SLA degrades</div></div>
         <button class="close-btn" onclick="blank()">✕</button>
       </div>
-      <div class="panel-body" style="max-height:400px" id="l3-body">
+      <div class="panel-body layer3-body" id="l3-body">
         <div class="loading-txt">Loading autonomous action log...</div>
       </div>
     </div>
@@ -608,7 +979,7 @@ async function refreshLayer3Panel(){
       const ok = a.kind === "ran_failover";
       const t = new Date(a.timestamp).toLocaleString();
       return `<div class="proc-item">
-        <div class="proc-dot" style="background:${ok?'#00ff88':'#ff4444'}"></div>
+        <div class="proc-dot" style="background:${ok?'#15803c':'#dc2626'}"></div>
         <div>
           <div class="proc-name">${ok?'Failover triggered':'Failover failed'} → ${a.target_scenario}</div>
           <div class="proc-desc">${a.reason} · ${t}</div>
@@ -1149,5 +1520,31 @@ async function restoreDeployedState(){
 window.addEventListener("load", restoreDeployedState);
 </script>
 
+
+<script>
+(function(){
+  const KEY="novathinktech-dashboard-theme";
+  function applyTheme(theme){
+    const dark=theme==="dark";
+    document.body.classList.toggle("theme-dark",dark);
+    document.documentElement.style.colorScheme=dark?"dark":"light";
+    const icon=document.getElementById("theme-icon");
+    const label=document.getElementById("theme-label");
+    if(icon) icon.textContent=dark?"☀":"☾";
+    if(label) label.textContent=dark?"Light":"Dark";
+    const btn=document.getElementById("theme-toggle");
+    if(btn){btn.setAttribute("aria-label",dark?"Switch to light theme":"Switch to dark theme");btn.title=dark?"Switch to light theme":"Switch to dark theme";}
+    try{localStorage.setItem(KEY,theme)}catch(e){}
+  }
+  window.toggleTheme=function(){
+    applyTheme(document.body.classList.contains("theme-dark")?"light":"dark");
+  };
+  let saved="light";
+  try{saved=localStorage.getItem(KEY)||"light"}catch(e){}
+  if(saved!=="dark") saved="light";
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",()=>applyTheme(saved));
+  else applyTheme(saved);
+})();
+</script>
 </body>
 </html>
