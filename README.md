@@ -389,10 +389,29 @@ while building `validate.sh`, and two historical infrastructure issues
 
 ## Known limitations
 
-- **OAI standalone UE PDU session does not work.** Registration is real and
-  verified; PDU session establishment fails on a UPF-side PFCP bug not yet
-  root-caused to a fix. See Reproducibility status above and
-  `docs/troubleshooting.md`.
+- ~~**OAI standalone UE PDU session does not work.**~~ **RESOLVED.** Root
+  cause was a UPF stuck state after an SMF restart (not the PFCP bug
+  previously suspected). Confirmed working: OAI standalone UE registration,
+  PDU session establishment, tunnel assignment, and user-plane traffic
+  (ping through `oaitun_ue1`, 0% packet loss) — proven against the OAI
+  C-RAN CU/DU-split DU (RFSIM mode).
+- **srsRAN C-RAN: UE end-to-end not proven; CU/DU/F1/NGAP/cell operation is.**
+  The srsRAN CU/DU split is implemented and operational: F1 Setup succeeds,
+  NGAP connectivity to Open5GS is established, and cell activation is
+  confirmed (band 78, TDD, 30 kHz SCS — the platform's standard cell
+  profile). No UE attach or user-plane traffic has been proven for this
+  profile, because the srsRAN gNB image (`ghcr.io/herlesupreeth/docker_srsran`)
+  contains no srsUE binary — confirmed by direct inspection (`/usr/local/bin`
+  holds only `gnb`, `srscu`, `srscucp`, `srscuup`, `srsdu`, `srsdu_low`).
+  srsRAN Project's own shipped reference config
+  (`gnb_rf_b210_fdd_srsUE.yml`) confirms srsUE requires a different cell
+  profile entirely — band 3, FDD, 15 kHz SCS, PLMN `00101` — to match its
+  capabilities. Proving srsUE against this platform would require a separate
+  compatibility cell profile, not a fix to the standard profile, and was not
+  built. **Do not represent srsRAN C-RAN as UE-to-core end-to-end proven** —
+  it is CU/DU/F1/NGAP/cell-operation proven only. Contrast with OAI C-RAN,
+  where full UE attach, registration, PDU session, and user-plane traffic
+  (0% packet loss) are proven end to end in RFSIM mode.
 - **Fresh-machine reproduction is not yet verified.** Every script and
   component has been proven live against this project's own long-running
   machine, which already has every dependency installed — not against a
