@@ -1,0 +1,6 @@
+apiVersion: v2
+name: oran-oai-du
+description: OpenAirInterface DU - O-RAN Distributed Unit (rf.mode=rfsim|usrp, E2-capable)
+type: application
+version: 0.1.0
+appVersion: "latest"

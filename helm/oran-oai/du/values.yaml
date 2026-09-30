@@ -1,0 +1,31 @@
+image:
+  repository: oaisoftwarealliance/oai-gnb
+  tag: 2026.w25
+  pullPolicy: IfNotPresent
+
+du:
+  mcc: "208"
+  mnc: "93"
+  tac: 1
+  plmn: "20893"
+  cu:
+    address: "oran-oai-cu"
+    port: 38472
+
+network:
+  masterIf: enp3s0
+
+ran:
+  type: oran
+  component: du
+
+rf:
+  mode: rfsim
+  usrp:
+    args: "type=b200,serial=XXXXXXXX"
+    clockSource: internal
+    timeSource: internal
+
+e2:
+  enabled: false
+  ricAddress: "REPLACE_WITH_FLEXRIC_SERVICE_IP"

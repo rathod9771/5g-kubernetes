@@ -1,0 +1,10 @@
+# UNVERIFIED against physical hardware. Replace the serial before use.
+# NOTE: if passing rf.usrp.args via --set, escape commas as \, (Helm's
+# --set splits on comma). Using this values file is safer -- see
+# cran-oai's values-usrp.yaml for the full explanation of this gotcha.
+rf:
+  mode: usrp
+  usrp:
+    args: "type=b200,serial=REPLACE_WITH_REAL_SERIAL"
+    clockSource: internal
+    timeSource: internal

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: oran-oai-cu
+description: OpenAirInterface CU - O-RAN Central Unit (rf-mode-agnostic, E2-capable)
+type: application
+version: 0.1.0
+appVersion: "latest"

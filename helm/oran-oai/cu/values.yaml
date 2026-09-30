@@ -1,0 +1,37 @@
+image:
+  repository: oaisoftwarealliance/oai-gnb
+  tag: 2026.w13
+  pullPolicy: IfNotPresent
+
+cu:
+  mcc: "208"
+  mnc: "93"
+  tac: 1
+  plmn: "20893"
+  amf:
+    address: "10.100.50.249"
+    port: 38412
+  f1:
+    port: 38472
+
+network:
+  masterIf: enp3s0
+
+ran:
+  type: oran
+  component: cu
+
+# Real AMF address the CU resolves at startup (same reasoning as cran-oai's
+# values.yaml: the OSM-generated open5gs-<release-id>-amf-ngap name changes
+# on every core redeploy, so this stable Service name is used instead).
+amf:
+  address: "amf-ngap-stable"
+
+# E2 agent. Disabled by default so Phase A (CU/DU/F1 baseline) can be tested
+# without depending on a RIC that does not exist yet. Phase B sets this true
+# once FlexRIC is deployed and its Service address is known.
+e2:
+  enabled: false
+  ricAddress: "REPLACE_WITH_FLEXRIC_SERVICE_IP"
+
+configRevision: 1
