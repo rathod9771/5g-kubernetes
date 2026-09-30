@@ -479,6 +479,31 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
   .nf-grid{grid-template-columns:1fr}
 }
 
+
+/* Client-facing RAN operational summary */
+.ran-client-panel{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+.ran-client-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;padding:12px 16px}
+.ran-health{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 13px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2)}
+.ran-health-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.45px;color:var(--muted)}
+.ran-health-state{font-size:15px;font-weight:900;letter-spacing:.3px}
+.ran-status-card{min-height:66px;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);display:flex;align-items:center;gap:9px}
+.ran-status-dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+.ran-status-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.35px}
+.ran-status-value{font-size:13px;font-weight:800;color:var(--text-strong);margin-top:3px}
+.ran-client-tabs{display:flex;gap:7px;padding:8px 16px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--surface)}
+.ran-client-tab{border:1px solid var(--border);background:var(--surface-2);color:var(--muted);border-radius:7px;padding:7px 12px;font-size:12px;font-weight:800;cursor:pointer}
+.ran-client-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.ran-client-body{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 16px}
+.ran-event-list{display:flex;flex-direction:column;gap:7px}
+.ran-event{display:grid;grid-template-columns:20px 155px minmax(0,1fr);align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)}
+.ran-event-icon{font-size:13px;font-weight:900;text-align:center}
+.ran-event-label{font-size:12px;font-weight:800;color:var(--text-strong)}
+.ran-event-detail{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ran-event-time{font-size:10px;color:var(--muted);grid-column:2/-1}
+.ran-client-body .log-terminal{min-height:240px}
+.ran-empty{padding:20px;text-align:center;border:1px dashed var(--border);border-radius:9px;color:var(--muted);font-size:13px;line-height:1.6}
+@media(max-width:900px){.ran-client-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.ran-event{grid-template-columns:20px 1fr}.ran-event-detail{grid-column:2}.ran-event-time{grid-column:2}}
+@media(max-width:520px){.ran-client-summary{grid-template-columns:1fr}.ran-client-tabs{overflow-x:auto}.ran-client-tab{white-space:nowrap}.ran-health{align-items:flex-start;flex-direction:column}.ran-event{grid-template-columns:18px 1fr}}
 </style>
 </head>
 <body>
@@ -597,81 +622,116 @@ function wfHTML(steps){
 }
 
 function tabsHTML(podLabel,key,pfx){
-  return `<div class="tab-row">
+  if(pfx !== "ran") return `<div class="tab-row">
     <button class="tab active" onclick="doTab(this,'logs','${podLabel}','${key}','${pfx}')">Logs</button>
     <button class="tab" onclick="doTab(this,'process','${podLabel}','${key}','${pfx}')">Process</button>
     <button class="tab" onclick="doTab(this,'status','${podLabel}','${key}','${pfx}')">Status</button>
   </div>`;
+  return `<div class="ran-client-tabs" id="ran-client-tabs">
+    <button class="ran-client-tab active" onclick="doTab(this,'events','${podLabel}','${key}','ran')">Recent Events</button>
+    <button class="ran-client-tab" onclick="doTab(this,'logs','${podLabel}','${key}','ran')">Technical Logs</button>
+    <button class="ran-client-tab" onclick="doTab(this,'process','${podLabel}','${key}','ran')">Processes</button>
+    <button class="ran-client-tab" onclick="doTab(this,'status','${podLabel}','${key}','ran')">Runtime</button>
+  </div>`;
 }
 
 async function fetchLogs(podLabel,tid){
-  const el=document.getElementById(tid);
-  if(!el)return;
-  el.innerHTML='<div class="loading-txt">Fetching live logs from kubectl...</div>';
+  const el=document.getElementById(tid); if(!el)return;
   try{
-    const r=await fetch("/api/logs/"+podLabel);
+    const r=await fetch("/api/logs/"+encodeURIComponent(podLabel)+"?lines=100",{cache:"no-store"});
     const d=await r.json();
-    if(!d.logs||!d.logs.trim()){el.innerHTML='<div class="loading-txt">No logs yet</div>';return;}
-    const lines=d.logs.trim().split("\n").slice(-50);
-    el.innerHTML="";
+    if(!d.logs||!d.logs.trim()){
+      el.innerHTML='<div class="ran-empty">'+(d.pod?'No technical logs available yet.':'No running pod found.')+'</div>'; return;
+    }
+    const lines=d.logs.trim().split("\n").slice(-100); el.innerHTML="";
     lines.forEach(line=>{
       if(!line.trim())return;
       const div=document.createElement("div");
-      const isErr=/error|ERRO|fail|panic/i.test(line);
-      const isOk=/success|200|OK|accept|established|started|running|done/i.test(line);
+      const isErr=/error|ERRO|fail|panic|fatal/i.test(line);
+      const isOk=/success|established|started|running|complete|finalized|activated/i.test(line);
       const isWarn=/warn/i.test(line);
-      const cls=isErr?"log-err":isOk?"log-ok":isWarn?"log-warn":/no running pod found/i.test(line)?"log-empty":"log-info";
-      div.innerHTML=`<span class="${cls}">${line.replace(/</g,"&lt;")}</span>`;
-      el.appendChild(div);
+      const cls=isErr?"log-err":isOk?"log-ok":isWarn?"log-warn":"log-info";
+      div.innerHTML=`<span class="${cls}">${escHtml(line)}</span>`; el.appendChild(div);
     });
     el.scrollTop=el.scrollHeight;
-  }catch(e){
-    const el2=document.getElementById(tid);
-    if(el2)el2.innerHTML='<div class="loading-txt">Error: '+e.message+'</div>';
-  }
+  }catch(e){el.innerHTML='<div class="ran-empty">Live technical-log error: '+escHtml(e.message)+'</div>';}
 }
 
-function buildProcess(key){
-  const map={
-    cran:[["srsRAN gNB","Centralized gNB process — ZMQ simulation radio"],["NGAP/SCTP","N2 interface to AMF on 10.100.50.249:38412"],["RRC","Radio Resource Control — UE connection"],["GTP-U","User plane tunnel to UPF via N3"]],
-    oran:[["OAI CU","Central Unit — PDCP/RRC connected to AMF"],["OAI DU","Distributed Unit — PHY/MAC/RLC layer"],["F1 interface","F1AP control between CU and DU"],["NGAP/SCTP","N2 from CU to AMF port 38412"]],
-    AMF:[["AMF Main","Core process — registration and mobility"],["NGAP listener","SCTP on 10.100.50.249:38412"],["GMM","UE state machine — registration/deregistration"],["Istio Envoy","Service mesh sidecar proxy"]],
-    SMF:[["SMF Main","Session management process"],["PFCP agent","Session rules pushed to UPF port 8805"],["SBI client","HTTP/2 to NRF/UDM/PCF"],["Istio Envoy","Service mesh sidecar proxy"]],
-    UPF:[["UPF Main","User plane forwarder process"],["gtp5g module","Kernel GTP tunnel — v0.8.10"],["PFCP agent","Receives session rules from SMF"],["NAT iptables","MASQUERADE UE traffic → internet"]],
-    NRF:[["NRF Main","Service registry — all NFs register here"],["HTTP/2 SBI","Port 8000 — Hello World response"],["MongoDB","Subscriber data connection"],["Istio Envoy","Service mesh sidecar proxy"]],
-    AUSF:[["AUSF Main","Authentication process"],["5G-AKA","Auth with K/OPc keys"],["UDM client","Gets auth vectors from UDM"],["Istio Envoy","Service mesh sidecar proxy"]],
-    UDM:[["UDM Main","Subscriber data management"],["Auth vectors","Generates 5G-AKA vectors"],["UDR client","Reads raw data from UDR"],["Istio Envoy","Service mesh sidecar proxy"]],
-    UE:[["UE Main","UERANSIM simulated phone process"],["NAS","Non-Access Stratum — MM/SM"],["RRC client","Radio Resource Control"],["PDU Session","uesimtun0 tunnel active"]],
-  };
-  const list=map[key]||[[key+" Main","Main process running"],["Istio Envoy","Service mesh sidecar"]];
-  return '<div class="process-list">'+list.map(([n,d])=>`<div class="proc-item"><div class="proc-dot" style="background:#15803c"></div><div><div class="proc-name">${n}</div><div class="proc-desc">${d}</div></div><span class="proc-badge pbg-run">running</span></div>`).join("")+"</div>";
+function stopLiveTimer(pfx){
+  if(window._liveTimers&&window._liveTimers[pfx]){clearInterval(window._liveTimers[pfx]);delete window._liveTimers[pfx];}
 }
-
-function buildStatus(key){
-  const p=podData[key]||{};
-  return '<div class="status-grid">'+[
-    {v:p.ready||"—",l:"containers",c:"#00d4ff"},
-    {v:String(p.restarts||0),l:"restarts",c:Number(p.restarts)>0?"#a15c00":"#15803c"},
-    {v:p.phase||"Running",l:"phase",c:"#15803c"},
-    {v:key==="UPF"?"no (data plane)":"2/2 injected",l:"Istio",c:key==="UPF"?"#ff6b35":"#a855f7"},
-    {v:"12ms",l:"p50 latency",c:"#00aaff"},
-    {v:"100%",l:"SBI success",c:"#15803c"}
-  ].map(s=>`<div class="stat-card"><div class="stat-val" style="color:${s.c}">${s.v}</div><div class="stat-lbl">${s.l}</div></div>`).join("")+"</div>";
+function startLiveLogs(podLabel,tid,pfx){
+  stopLiveTimer(pfx); fetchLogs(podLabel,tid); window._liveTimers=window._liveTimers||{};
+  window._liveTimers[pfx]=setInterval(()=>{if(!document.getElementById(tid)){stopLiveTimer(pfx);return;}fetchLogs(podLabel,tid);},3000);
 }
+function escHtml(v){return String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 
+function renderProcess(d){
+  if(!d.found)return '<div class="ran-empty">No running Kubernetes pod found.</div>';
+  if(!d.processes||!d.processes.length)return '<div class="ran-empty">No process information available from the running containers.</div>';
+  return '<div class="process-list">'+d.processes.map(p=>`<div class="proc-item"><div class="proc-dot" style="background:#15803c"></div><div style="min-width:0"><div class="proc-name">${escHtml(p.name)}</div><div class="proc-desc">${escHtml(p.container)} · PID ${escHtml(p.pid)} · ${escHtml(p.command)}</div></div><span class="proc-badge pbg-run">running</span></div>`).join("")+'</div>';
+}
+function renderStatus(d){
+  if(!d.found)return '<div class="ran-empty">No running Kubernetes pod found.</div>';
+  const pods=d.pods||[], ready=pods.reduce((n,p)=>n+(p.ready_count||0),0), total=pods.reduce((n,p)=>n+(p.container_count||0),0), restarts=pods.reduce((n,p)=>n+(p.restarts||0),0);
+  const phases=[...new Set(pods.map(p=>p.phase))].join(", ");
+  const latency=d.latency_ms, success=d.sbi_success_pct;
+  const cards=[{v:`${ready}/${total}`,l:"containers ready",c:"#15803c"},{v:String(restarts),l:"container restarts",c:restarts>0?"#a15c00":"#15803c"},{v:phases||"Unknown",l:"pod phase",c:phases==="Running"?"#15803c":"#a15c00"},{v:latency==null?"—":latency.toFixed(2)+"ms",l:"live SBI TCP latency",c:"#00aaff"},{v:success==null?"—":success.toFixed(1)+"%",l:"live SBI success (5m)",c:success!=null&&success>=99?"#15803c":"#a15c00"}];
+  return '<div class="status-grid">'+cards.map(s=>`<div class="stat-card"><div class="stat-val" style="color:${s.c}">${escHtml(s.v)}</div><div class="stat-lbl">${escHtml(s.l)}</div></div>`).join("")+`<div style="grid-column:1/-1;font-size:11px;opacity:.7;padding:4px 2px">Live pods: ${pods.map(p=>escHtml(p.name)).join(" · ")}</div></div>`;
+}
+function eventColor(state){return state==="OPERATIONAL"||state==="Connected"||state==="Completed"||state==="Established"||state==="Active"?"#15803c":state==="DEGRADED"?"#dc2626":"#a15c00";}
+function renderClientEvents(d){
+  if(!d.found)return '<div class="ran-empty">No running RAN pods found. Events will appear automatically when the RAN is running.</div>';
+  const c=eventColor(d.overall); let html=`<div class="ran-health"><div><div class="ran-health-title">RAN Operational Status</div><div class="ran-health-state" style="color:${c}">${escHtml(d.overall)}</div></div><div style="font-size:11px;color:var(--muted)">${escHtml(d.overall_detail||"")}</div></div>`;
+  html+='<div class="ran-client-summary">'+(d.statuses||[]).map(x=>{const col=eventColor(x.state);return `<div class="ran-status-card"><span class="ran-status-dot" style="background:${col}"></span><div><div class="ran-status-label">${escHtml(x.label)}</div><div class="ran-status-value" style="color:${col}">${escHtml(x.state)}</div></div></div>`}).join("")+'</div>';
+  if(!(d.statuses||[]).length) html+='<div class="ran-empty">No client-readable connection events detected in the current live log window yet. Open Technical Logs for raw evidence.</div>';
+  html+='<div class="ran-event-list">'+(d.events||[]).map(e=>`<div class="ran-event"><div class="ran-event-icon" style="color:${e.severity==="error"?"#dc2626":"#15803c"}">${e.severity==="error"?"⚠":"✓"}</div><div class="ran-event-label">${escHtml(e.label)}</div><div class="ran-event-detail">${escHtml(e.detail||"")}</div>${e.timestamp?`<div class="ran-event-time">${escHtml(e.timestamp)}</div>`:""}</div>`).join("")+'</div>';
+  return html;
+}
+async function fetchClientEvents(key,bodyId){
+  const body=document.getElementById(bodyId); if(!body)return;
+  try{const r=await fetch("/api/events/"+encodeURIComponent(key),{cache:"no-store"}); const d=await r.json(); body.innerHTML=renderClientEvents(d); updateRANHealth(d);}catch(e){body.innerHTML='<div class="ran-empty">Live event error: '+escHtml(e.message)+'</div>';}
+}
+function updateRANHealth(d){
+  const el=document.getElementById("ran-health-inline"); if(!el)return;
+  const col=eventColor(d.overall); el.innerHTML=`<span class="pulse" style="background:${col}"></span>${escHtml(d.overall)}`; el.style.color=col;
+}
+async function fetchRuntime(key,bodyId,view){
+  const body=document.getElementById(bodyId); if(!body)return;
+  try{const r=await fetch("/api/runtime/"+encodeURIComponent(key),{cache:"no-store"}); const d=await r.json(); body.innerHTML=view==="process"?renderProcess(d):renderStatus(d);}catch(e){body.innerHTML='<div class="ran-empty">Live runtime error: '+escHtml(e.message)+'</div>';}
+}
 function doTab(btn,view,podLabel,key,pfx){
-  const scope=pfx?document.getElementById(pfx+"wrap"):document;
-  scope.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
-  btn.classList.add("active");
-  const body=document.getElementById(pfx+"pbody");
-  if(!body)return;
-  if(view==="logs"){
-    body.innerHTML=`<div class="log-terminal" id="${pfx}lterm"><div class="loading-txt">Loading...</div></div>`;
-    fetchLogs(podLabel,pfx+"lterm");
+  if(pfx !== "ran"){
+    const scope=document.getElementById(pfx+"wrap")||document;
+    scope.querySelectorAll(".tab").forEach(t=>t.classList.remove("active")); btn.classList.add("active");
+    const body=document.getElementById(pfx+"pbody"); if(!body)return; stopLiveTimer(pfx);
+    if(view==="logs"){
+      body.innerHTML=`<div class="log-terminal" id="${pfx}lterm"><div class="loading-txt">Fetching live logs...</div></div>`;
+      startLiveLogs(podLabel,pfx+"lterm",pfx);
+    }else if(view==="process"){
+      body.innerHTML='<div class="loading-txt">Reading live processes from Kubernetes...</div>';
+      fetchRuntime(key,pfx+"pbody","process"); window._liveTimers=window._liveTimers||{}; window._liveTimers[pfx]=setInterval(()=>fetchRuntime(key,pfx+"pbody","process"),5000);
+    }else{
+      body.innerHTML='<div class="loading-txt">Reading live Kubernetes status...</div>';
+      fetchRuntime(key,pfx+"pbody","status"); window._liveTimers=window._liveTimers||{}; window._liveTimers[pfx]=setInterval(()=>fetchRuntime(key,pfx+"pbody","status"),5000);
+    }
+    return;
+  }
+  const scope=document.getElementById("ran-client-tabs")?.parentElement||document;
+  scope.querySelectorAll(".ran-client-tab").forEach(t=>t.classList.remove("active")); btn.classList.add("active");
+  const body=document.getElementById("ranpbody"); if(!body)return; stopLiveTimer("ran");
+  if(view==="events"){
+    body.innerHTML='<div class="ran-client-body" id="raneventbody"><div class="loading-txt">Reading live RAN events...</div></div>';
+    fetchClientEvents(key,"raneventbody"); window._liveTimers=window._liveTimers||{}; window._liveTimers.ran=setInterval(()=>fetchClientEvents(key,"raneventbody"),5000);
+  }else if(view==="logs"){
+    body.innerHTML='<div class="ran-client-body"><div class="log-terminal" id="ranlterm"><div class="loading-txt">Fetching live technical logs...</div></div></div>';
+    startLiveLogs(podLabel,"ranlterm","ran");
   }else if(view==="process"){
-    body.innerHTML=buildProcess(key);
+    body.innerHTML='<div class="ran-client-body" id="ranruntimebody"><div class="loading-txt">Reading live processes...</div></div>';
+    fetchRuntime(key,"ranruntimebody","process"); window._liveTimers=window._liveTimers||{}; window._liveTimers.ran=setInterval(()=>fetchRuntime(key,"ranruntimebody","process"),5000);
   }else{
-    body.innerHTML=buildStatus(key);
+    body.innerHTML='<div class="ran-client-body" id="ranruntimebody"><div class="loading-txt">Reading live runtime status...</div></div>';
+    fetchRuntime(key,"ranruntimebody","status"); window._liveTimers=window._liveTimers||{}; window._liveTimers.ran=setInterval(()=>fetchRuntime(key,"ranruntimebody","status"),5000);
   }
 }
 
@@ -727,38 +787,25 @@ async function deployRAN(key,name,sub){
 }
 
 function showDeployedPanel(key,name,sub){
-  const COMBO_PODS={
-    "cran-srsran":"srsran-gnb",
-    "cran-oai":"oai-cran-gnb",
-    "oran-srsran":"srsran-cu",
-    "oran-oai":"oai-cu",
-    "cloudran-srsran":"cloud-ran-gnb",
-    "cloudran-oai":"cloud-ran-oai-gnb",
-    "hcran-srsran":"hcran-macro",
-    "hcran-oai":"hcran-oai-macro",
-    "vcran-srsran":"srsran-cu",
-    "vcran-oai":"oai-cu",
-    "fran":"fran-edge-app"
-  };
-  const podLabel=COMBO_PODS[lastDeployedCombo] || (key==="cran"?"srsran-gnb":"oai-cu");
+  const podLabel=lastDeployedCombo || key;
   const m=document.getElementById("main");
   m.innerHTML=`<div class="content-area">
-    <div class="panel">
+    <div class="panel ran-client-panel" id="ran-client-panel">
       <div class="panel-hdr">
-        <div style="display:flex;align-items:center">
-          <div><div class="panel-title">${name}</div><div class="panel-sub">${sub}</div></div>
-          <div class="panel-status ok"><span class="pulse"></span>Running on Kubernetes</div>
+        <div style="display:flex;align-items:center;min-width:0">
+          <div><div class="panel-title">${escHtml(name)}</div><div class="panel-sub">${escHtml(sub)} · live operational view</div></div>
+          <div class="panel-status" id="ran-health-inline"><span class="pulse"></span>Checking…</div>
         </div>
         <button class="close-btn" onclick="blank()">✕</button>
       </div>
-      ${wfHTML(["done","done","done","done","done"])}
-      ${tabsHTML(podLabel,key,"")}
-      <div class="panel-body" id="pbody">
-        <div class="log-terminal" id="lterm"><div class="loading-txt">Loading live logs...</div></div>
-      </div>
+      ${tabsHTML(podLabel,key,"ran")}
+      <div class="ran-client-body" id="ranpbody"><div class="loading-txt">Reading live RAN events...</div></div>
     </div>
   </div>`;
-  fetchLogs(podLabel,"lterm");
+  fetchClientEvents(key,"ranpbody");
+  window._liveTimers=window._liveTimers||{};
+  stopLiveTimer("ran");
+  window._liveTimers.ran=setInterval(()=>fetchClientEvents(key,"ranpbody"),5000);
 }
 
 function showCorePanel(btn){
@@ -805,7 +852,7 @@ function openNF(nf){
       <div class="log-terminal" id="nflterm"><div class="loading-txt">Loading live logs...</div></div>
     </div>
   </div>`;
-  fetchLogs(nf,"nflterm");
+  startLiveLogs(nf,"nflterm","nf");
 }
 
 function closeNF(){
@@ -822,24 +869,27 @@ function showTopPanel(btn,type){
       <div class="panel fill-panel ue-panel">
         <div class="panel-hdr">
           <div style="display:flex;align-items:center">
-            <div><div class="panel-title">UE — UERANSIM</div><div class="panel-sub">Simulated phone · IMSI 208930000000003</div></div>
-            <div class="panel-status ok"><span class="pulse"></span>MM-REGISTERED</div>
+            <div><div class="panel-title">UE — live Kubernetes state</div><div class="panel-sub" id="ue-panel-sub">Reading actual UE pod…</div></div>
+            <div class="panel-status" id="ue-panel-status"><span class="pulse"></span>Checking…</div>
           </div>
           <button class="close-btn" onclick="blank()">✕</button>
         </div>
-        ${tabsHTML("ueransim-ue","UE","")}
-        <div class="panel-body" id="pbody"><div class="log-terminal" id="lterm"><div class="loading-txt">Loading UE logs...</div></div></div>
+        ${tabsHTML("UE","UE","")}
+        <div class="panel-body" id="pbody"><div class="log-terminal" id="lterm"><div class="loading-txt">Loading live UE logs...</div></div></div>
       </div>
-      <div class="info-grid">
-        <div class="info-card"><div class="info-key">IMSI</div><div class="info-val blue">208930000000003</div></div>
-        <div class="info-card"><div class="info-key">State</div><div class="info-val ok">MM-REGISTERED/NORMAL-SERVICE</div></div>
-        <div class="info-card"><div class="info-key">PDU Session</div><div class="info-val ok">PSI[1] active</div></div>
-        <div class="info-card"><div class="info-key">Tunnel</div><div class="info-val blue">uesimtun0 — 10.1.0.4</div></div>
-        <div class="info-card"><div class="info-key">Ping 8.8.8.8</div><div class="info-val ok">✓ 12ms — 0% packet loss</div></div>
+      <div class="info-grid" id="ue-info-grid">
+        <div class="info-card"><div class="info-key">UE pod</div><div class="info-val blue" id="uei-pod">—</div></div>
+        <div class="info-card"><div class="info-key">Registration</div><div class="info-val" id="uei-reg">—</div></div>
+        <div class="info-card"><div class="info-key">PDU Session</div><div class="info-val" id="uei-pdu">—</div></div>
+        <div class="info-card"><div class="info-key">TUN</div><div class="info-val blue" id="uei-tun">—</div></div>
+        <div class="info-card"><div class="info-key">RSRP</div><div class="info-val" id="uei-rsrp">—</div></div>
         <div class="info-card"><div class="info-key">PLMN / Slice</div><div class="info-val">208/93 · SST=1 SD=010203</div></div>
       </div>
     </div>`;
-    fetchLogs("ueransim-ue","lterm");
+    startLiveLogs("UE","lterm","ue");
+    refreshUEPanel();
+    window._uePanelTimer&&clearInterval(window._uePanelTimer);
+    window._uePanelTimer=setInterval(refreshUEPanel,5000);
   }else{
     m.innerHTML=`<div class="content-area">
       <div class="panel fill-panel slice-panel">
@@ -1422,20 +1472,7 @@ async function runDeployCombo(comboKey,name,sub){
 }
 
 function showComboDeployedPanel(comboKey,name,sub,stackKey){
-  const COMBO_PODS_DEPLOYED={
-    "cran-srsran":"srsran-gnb",
-    "cran-oai":"oai-cran-gnb",
-    "oran-srsran":"srsran-cu",
-    "oran-oai":"oai-cu",
-    "cloudran-srsran":"cloud-ran-gnb",
-    "cloudran-oai":"cloud-ran-oai-gnb",
-    "hcran-srsran":"hcran-macro",
-    "hcran-oai":"hcran-oai-macro",
-    "vcran-srsran":"srsran-cu",
-    "vcran-oai":"oai-cu",
-    "fran":"fran-edge-app"
-  };
-  const podLabel=COMBO_PODS_DEPLOYED[comboKey] || (stackKey==="srsran"?"ueransim-gnb":"oai");
+  const podLabel=comboKey;
   const m=document.getElementById("main");
   m.innerHTML=`<div class="content-area">
     <div class="panel">
@@ -1453,11 +1490,31 @@ function showComboDeployedPanel(comboKey,name,sub,stackKey){
       </div>
     </div>
   </div>`;
-  fetchLogs(podLabel,"lterm");
+  startLiveLogs(podLabel,"lterm","ran");
 }
 </script>
 
 <script>
+async function refreshUEPanel(){
+  try{
+    const d=await (await fetch("/api/ue-status",{cache:"no-store"})).json();
+    const sub=document.getElementById("ue-panel-sub");
+    const st=document.getElementById("ue-panel-status");
+    if(sub)sub.textContent=d.pod ? d.pod : "No running UE pod";
+    if(st){
+      const ok=!!d.registered;
+      st.className="panel-status "+(ok?"ok":"");
+      st.innerHTML=`<span class="pulse"></span>${ok?"REGISTERED":"NOT REGISTERED"}`;
+    }
+    const set=(id,v,cls)=>{const e=document.getElementById(id);if(e){e.textContent=v;e.className="info-val "+(cls||"");}};
+    set("uei-pod",d.pod||"—","blue");
+    set("uei-reg",d.registered?"REGISTERED":"NOT REGISTERED",d.registered?"ok":"");
+    set("uei-pdu",d.pdu_session?"ACTIVE":"NONE",d.pdu_session?"ok":"");
+    set("uei-tun",d.tun||"—","blue");
+    set("uei-rsrp",d.rsrp_dbm==null?"—":d.rsrp_dbm.toFixed(1)+" dBm",d.rsrp_dbm!=null?"ok":"");
+  }catch(e){}
+}
+
 async function refreshLiveBar(){
   try{
     const us = await (await fetch("/api/ue-status")).json();
@@ -1477,7 +1534,7 @@ async function refreshLiveBar(){
     } else {
       document.getElementById("lb-rtt").textContent = "RTT: no user plane";
       document.getElementById("lb-rtt").style.color = "#ff4455";
-      document.getElementById("lb-loss").textContent = "Loss: 100%";
+      document.getElementById("lb-loss").textContent = "Loss: no data";
       document.getElementById("lb-loss").style.color = "#ff4455";
     }
   }catch(e){}

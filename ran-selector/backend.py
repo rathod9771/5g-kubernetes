@@ -139,46 +139,464 @@ def get_pod_name_by_label(label_value):
     )
     return out.strip()
 
+
+def _kubectl_json(args):
+    """Run kubectl and return parsed JSON, or None on failure."""
+    try:
+        p = subprocess.run(["kubectl", *args], capture_output=True, text=True, timeout=8)
+        if p.returncode != 0:
+            return None
+        return json.loads(p.stdout)
+    except Exception:
+        return None
+
+
+def _scenario_pods(key):
+    """Resolve the CURRENT running pods for a scenario from Kubernetes state."""
+    key = ALIASES.get(key, key)
+    scen = SCENARIOS.get(key)
+    if not scen:
+        return []
+
+    data = _kubectl_json(["get", "pods", "-n", NS, "-o", "json"])
+    if not data:
+        return []
+
+    selector = scen.get("selector")
+    required_labels = {}
+    if selector and "=" in selector:
+        k, v = selector.split("=", 1)
+        required_labels[k] = v
+
+    matches = []
+    for p in data.get("items", []):
+        if p.get("status", {}).get("phase") != "Running":
+            continue
+        labels = p.get("metadata", {}).get("labels", {})
+        if required_labels and any(labels.get(k) != v for k, v in required_labels.items()):
+            continue
+        name = p.get("metadata", {}).get("name", "")
+        if any(frag in name for frag in scen.get("pods", [])):
+            matches.append(p)
+    return matches
+
+
+def _nf_pod(nf):
+    nf_upper = nf.upper()
+    if nf_upper == "UE":
+        data = _kubectl_json(["get", "pods", "-n", NS, "-o", "json"])
+        if not data:
+            return None
+        for p in data.get("items", []):
+            if "oai-nr-ue" in p.get("metadata", {}).get("name", "") and p.get("status", {}).get("phase") == "Running":
+                return p
+        for p in data.get("items", []):
+            if "ueransim-ue" in p.get("metadata", {}).get("name", "") and p.get("status", {}).get("phase") == "Running":
+                return p
+        return None
+    if nf_upper in NF_LABELS:
+        data = _kubectl_json(["get", "pods", "-n", NS, "-l",
+                              f"app.kubernetes.io/name={NF_LABELS[nf_upper]}", "-o", "json"])
+        if data:
+            for p in data.get("items", []):
+                if p.get("status", {}).get("phase") == "Running":
+                    return p
+        return None
+
+    # Legacy/component names: resolve by the existing fragment map.
+    label = POD_MAP.get(nf_upper, nf.lower())
+    pod_name = get_pod_name(label)
+    if not pod_name:
+        return None
+    data = _kubectl_json(["get", "pod", "-n", NS, pod_name, "-o", "json"])
+    return data
+
+
+def _runtime_targets(key):
+    """Return live Kubernetes pods for a scenario/core/UE/component key."""
+    key = ALIASES.get(key, key)
+    if key in SCENARIOS and key != "none":
+        return _scenario_pods(key)
+    p = _nf_pod(key)
+    return [p] if p else []
+
+
+def _pod_runtime(p):
+    """Convert a Kubernetes Pod object into live dashboard state."""
+    if not p:
+        return None
+    cs = p.get("status", {}).get("containerStatuses", [])
+    ready = sum(1 for c in cs if c.get("ready"))
+    total = len(cs)
+    restarts = sum(int(c.get("restartCount", 0) or 0) for c in cs)
+    names = [c.get("name", "") for c in cs]
+    return {
+        "name": p.get("metadata", {}).get("name", ""),
+        "phase": p.get("status", {}).get("phase", "Unknown"),
+        "ready": f"{ready}/{total}",
+        "ready_count": ready,
+        "container_count": total,
+        "restarts": restarts,
+        "containers": names,
+        "istio_injected": "istio-proxy" in names,
+        "node": p.get("spec", {}).get("nodeName", ""),
+        "start_time": p.get("status", {}).get("startTime", ""),
+    }
+
+
+def _live_processes(p):
+    """Read actual processes from each running container; never invent process names."""
+    if not p:
+        return []
+    pod = p.get("metadata", {}).get("name", "")
+    result = []
+    for c in p.get("status", {}).get("containerStatuses", []):
+        cname = c.get("name", "")
+        if not cname:
+            continue
+        # ps is present in the OAI/srsRAN images; fallback to /proc if it is not.
+        cmd = (
+            "ps -eo pid=,comm=,args= 2>/dev/null || "
+            "for x in /proc/[0-9]*; do "
+            "  pid=${x##*/}; "
+            "  comm=$(cat $x/comm 2>/dev/null); "
+            "  args=$(tr '\\\\0' ' ' < $x/cmdline 2>/dev/null); "
+            "  [ -n \"$comm\" ] && echo \"$pid $comm $args\"; "
+            "done"
+        )
+        try:
+            q = subprocess.run(
+                ["kubectl", "exec", "-n", NS, pod, "-c", cname, "--", "sh", "-c", cmd],
+                capture_output=True, text=True, timeout=8
+            )
+            if q.returncode != 0:
+                continue
+            for line in q.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(None, 2)
+                if len(parts) < 2:
+                    continue
+                pid, comm = parts[0], parts[1]
+                args = parts[2] if len(parts) > 2 else comm
+                if pid == "1" or comm not in ("sh", "bash", "ps"):
+                    result.append({
+                        "container": cname, "pid": pid, "name": comm,
+                        "command": args[:240], "state": "running"
+                    })
+        except Exception:
+            continue
+    return result
+
+
+@app.route("/api/runtime/<key>")
+def runtime(key):
+    """Single live source for logs/process/status panels."""
+    targets = _runtime_targets(key)
+    pods = [_pod_runtime(p) for p in targets if p]
+    processes = []
+    for p in targets:
+        processes.extend(_live_processes(p))
+
+    latency = _prom_query("network_tcp_connect_latency_last_seconds")
+    success = _prom_query(
+        '100 * sum(rate(network_tcp_connect_success_total[5m])) / '
+        'clamp_min(sum(rate(network_tcp_connect_latency_seconds_count[5m])), 0.000001)'
+    )
+    return jsonify({
+        "key": ALIASES.get(key, key),
+        "found": bool(pods),
+        "pods": pods,
+        "processes": processes,
+        "latency_ms": latency * 1000 if latency is not None else None,
+        "sbi_success_pct": success,
+        "updated": time.time(),
+    })
+
+
+def _log_text_for_pod(pod, lines=60):
+    """Get actual stdout logs for one pod, with live file logs for split srsRAN CU/DU."""
+    name = pod.get("metadata", {}).get("name", "")
+    cs = pod.get("status", {}).get("containerStatuses", [])
+    chunks = []
+
+    for c in cs:
+        cname = c.get("name", "")
+        if not cname:
+            continue
+
+        # srsRAN split CU/DU images write their useful application log to /tmp.
+        logfile = None
+        if cname == "cu":
+            logfile = "/tmp/cu.log"
+        elif cname == "du":
+            logfile = "/tmp/du.log"
+
+        if logfile:
+            try:
+                q = subprocess.run(
+                    ["kubectl", "exec", "-n", NS, name, "-c", cname, "--",
+                     "sh", "-c", f"tail -n {int(lines)} {logfile} 2>/dev/null"],
+                    capture_output=True, text=True, timeout=8
+                )
+                if q.stdout.strip():
+                    chunks.append(f"=== {name}/{cname} ===\n{q.stdout.strip()}")
+                    continue
+            except Exception:
+                pass
+
+        try:
+            q = subprocess.run(
+                ["kubectl", "logs", "-n", NS, name, "-c", cname, f"--tail={int(lines)}"],
+                capture_output=True, text=True, timeout=8
+            )
+            out = (q.stdout or q.stderr).strip()
+            if out:
+                chunks.append(f"=== {name}/{cname} ===\n{out}")
+        except Exception:
+            pass
+
+    # Add live SCTP association evidence where available.
+    for c in cs:
+        cname = c.get("name", "")
+        if cname not in ("cu", "du", "gnb", "oai-gnb"):
+            continue
+        try:
+            q = subprocess.run(
+                ["kubectl", "exec", "-n", NS, name, "-c", cname, "--",
+                 "sh", "-c", "cat /proc/net/sctp/assocs 2>/dev/null | tail -n +2"],
+                capture_output=True, text=True, timeout=5
+            )
+            assoc = q.stdout.strip()
+            if assoc:
+                chunks.append("=== Live SCTP associations ===\n" + assoc)
+        except Exception:
+            pass
+
+    return "\n\n".join(chunks)
+
+
+
+
+def _client_events(key):
+    """Build a client-readable RAN view from live Kubernetes evidence.
+
+    Evidence sources, in order of usefulness:
+      - current pod/container readiness
+      - actual RAN log messages
+      - live SCTP associations exposed by /proc/net/sctp/assocs
+      - the existing live UE/PDU status endpoint for UE-related state
+
+    No connection state is declared from a static scenario definition alone.
+    """
+    targets = _runtime_targets(key)
+    if not targets:
+        return {"found": False, "overall": "DOWN",
+                "overall_detail": "No running Kubernetes pod found",
+                "statuses": [], "events": [], "updated": time.time()}
+
+    combined = []
+    sctp_lines = []
+    for pod in targets:
+        txt = _log_text_for_pod(pod, 180)
+        for raw in txt.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("==="):
+                continue
+            # /proc/net/sctp/assocs records are machine-formatted and often
+            # begin with a hexadecimal kernel pointer. Keep them separately.
+            if re.search(r'\b(?:38412|38462|38472)\b', line):
+                sctp_lines.append(line)
+            if not line.startswith("ffff"):
+                combined.append(line)
+
+    def latest_match(rx):
+        return next((line for line in reversed(combined) if rx.search(line)), None)
+
+    def add_status(statuses, ident, label, state):
+        statuses.append({"id": ident, "label": label, "state": state})
+
+    def add_event(events, label, detail, severity="ok", timestamp=""):
+        events.append({"label": label, "timestamp": timestamp,
+                       "detail": detail[:180], "severity": severity})
+
+    statuses = []
+    events = []
+
+    # Container/process state is live Kubernetes state.
+    live_names = {c.get("name", "")
+                  for pod in targets
+                  for c in pod.get("status", {}).get("containerStatuses", [])}
+    if "cu" in live_names:
+        add_status(statuses, "cu", "CU", "Running")
+    if "du" in live_names:
+        add_status(statuses, "du", "DU", "Running")
+
+    # Human-readable log evidence.
+    rules = [
+        ("amf", "AMF Connection", "Connected",
+         re.compile(r"Connected to AMF|N2:\s*Connection to AMF.*established|NG.?SetupResponse", re.I),
+         "AMF connection is established"),
+        ("ng", "NG Setup", "Completed",
+         re.compile(r"NG.?SetupResponse|NG Setup.*(?:complete|success)|Connected to AMF", re.I),
+         "NG setup completed"),
+        ("e1", "E1 Connection", "Connected",
+         re.compile(r"E1SetupResponse|E1.*Setup.*(?:finalized|complete|success)|CU-UP started successfully", re.I),
+         "E1 connection/setup is established"),
+        ("f1", "F1 Connection", "Connected",
+         re.compile(r"F1SetupResponse|F1.*Setup.*(?:finalized|complete|success)|Added TNL connection to DU", re.I),
+         "F1 connection/setup is established"),
+        ("cell", "Cell", "Active",
+         re.compile(r"cell.*(?:activated|active)|Cell.*(?:activated|active)", re.I),
+         "Cell is active"),
+        ("ue", "UE", "Connected",
+         re.compile(r"UE.*(?:connected|registered)|RRC.*(?:connected|setup complete)|registration.*accept", re.I),
+         "UE connection is established"),
+        ("pdu", "PDU Session", "Established",
+         re.compile(r"PDU.?session.*(?:established|active)|PDU SESSION ESTABLISHMENT ACCEPT", re.I),
+         "PDU session is established"),
+    ]
+
+    matched = {}
+    for ident, label, state, rx, event_detail in rules:
+        match = latest_match(rx)
+        if match:
+            matched[ident] = True
+            m = re.match(r"(\d{4}-\d{2}-\d{2}T?[^ ]*)\s+(.*)", match)
+            ts = m.group(1) if m else ""
+            detail = m.group(2) if m else match
+            add_status(statuses, ident, label, state)
+            add_event(events, label + " " + state.lower(), event_detail,
+                      timestamp=ts)
+        else:
+            matched[ident] = False
+            add_status(statuses, ident, label, "No live evidence")
+
+    # Important: some deployments (including the current srsRAN C-RAN
+    # wrapper) expose the connection only through /proc/net/sctp/assocs and
+    # do not print the successful setup exchange in the retained log.
+    sctp_evidence = {"amf": None, "f1": None, "e1": None}
+    for line in sctp_lines:
+        if re.search(r'\b38412\b', line):
+            sctp_evidence["amf"] = line
+        if re.search(r'\b38472\b', line):
+            sctp_evidence["f1"] = line
+        if re.search(r'\b38462\b', line):
+            sctp_evidence["e1"] = line
+
+    def replace_status(ident, label, state):
+        for item in statuses:
+            if item["id"] == ident:
+                item["state"] = state
+                return
+
+    if not matched["amf"] and sctp_evidence["amf"]:
+        replace_status("amf", "AMF Connection", "Connected")
+        add_event(events, "AMF connection detected",
+                  "Live SCTP association on NG/SCTP port 38412 confirms the AMF connection.")
+    if not matched["ng"] and sctp_evidence["amf"]:
+        replace_status("ng", "NG Setup", "Connected")
+        add_event(events, "NG connection detected",
+                  "Live SCTP association on port 38412 confirms the NG transport connection.")
+    if not matched["f1"] and sctp_evidence["f1"]:
+        replace_status("f1", "F1 Connection", "Connected")
+        add_event(events, "F1 connection detected",
+                  "Live SCTP association on F1 port 38472 confirms the CU-DU transport connection.")
+    if not matched["e1"] and sctp_evidence["e1"]:
+        replace_status("e1", "E1 Connection", "Connected")
+        add_event(events, "E1 connection detected",
+                  "Live SCTP association on E1 port 38462 confirms the CU-CU-UP transport connection.")
+
+    # Add a useful live summary when a CU/DU pair is running even if the
+    # application does not print a friendly startup line.
+    if "cu" in live_names and "du" in live_names:
+        if not latest_match(re.compile(r"CU.*started|starting CU", re.I)):
+            add_event(events, "CU/DU running",
+                      "Both CU and DU containers are currently running and ready.")
+
+    # Reuse the existing real UE/PDU state endpoint when the selected RAN is
+    # the active one. This is deliberately best-effort; a different RAN may
+    # be running while another scenario is being inspected.
+    try:
+        ue = _ue_status_payload()
+        if ue.get("found") or ue.get("pod"):
+            if ue.get("radio_connected"):
+                replace_status("ue", "UE", "Connected")
+                add_event(events, "UE connected", "Live UE status reports radio connectivity.")
+            if ue.get("pdu_session"):
+                replace_status("pdu", "PDU Session", "Established")
+                add_event(events, "PDU session established", "Live UE status reports an established PDU session.")
+    except Exception:
+        pass
+
+    # Surface the newest actual warning/error, but do not classify routine
+    # words such as "failed" in a historical log unless they are current.
+    bad = next((line for line in reversed(combined)
+                if re.search(r"\b(ERROR|FATAL|panic|assert|failed|failure)\b", line, re.I)), None)
+    if bad:
+        m = re.match(r"(\d{4}-\d{2}-\d{2}T?[^ ]*)\s+(.*)", bad)
+        add_event(events, "Attention required", m.group(2) if m else bad,
+                  severity="error", timestamp=m.group(1) if m else "")
+
+    # De-duplicate by event label while keeping the newest occurrence.
+    unique = {}
+    for event in events:
+        unique[event["label"]] = event
+    events = list(unique.values())[:12]
+
+    pod_states = [_pod_runtime(p) for p in targets]
+    all_ready = all((p and p["phase"] == "Running" and
+                     p["ready_count"] == p["container_count"])
+                    for p in pod_states)
+
+    # Determine operational state from live evidence rather than readiness
+    # alone. UE/PDU are intentionally not required for RAN infrastructure to
+    # be operational because a RAN can be healthy while no UE is attached.
+    infra_ids = {s["id"] for s in statuses if s["id"] in {"cu", "du", "amf", "ng", "f1"}}
+    infra_ok = all(s["state"] in {"Running", "Connected", "Completed"}
+                   for s in statuses if s["id"] in infra_ids)
+    if bad:
+        overall, detail = "DEGRADED", "A recent error was detected in the live RAN logs"
+    elif all_ready and infra_ok:
+        overall, detail = "OPERATIONAL", "RAN containers and required live control-plane connections are healthy"
+    elif all_ready:
+        overall, detail = "PARTIAL", "RAN containers are ready, but one or more live control-plane connections have no evidence yet"
+    else:
+        overall, detail = "STARTING", "RAN containers are not all ready yet"
+
+    return {"found": True, "overall": overall, "overall_detail": detail,
+            "statuses": statuses, "events": events,
+            "pods": [p["name"] for p in pod_states if p],
+            "updated": time.time()}
+
+@app.route("/api/events/<key>")
+def client_events(key):
+    return jsonify(_client_events(ALIASES.get(key, key)))
+
 @app.route("/api/logs/<nf>")
 def logs(nf):
-    container = request.args.get("container", "")
-    lines = request.args.get("lines", "30")
-    nf_upper = nf.upper()
-    if nf_upper in NF_LABELS:
-        pod = get_pod_name_by_label(NF_LABELS[nf_upper])
-        label = nf_upper.lower()
-    else:
-        label = POD_MAP.get(nf_upper, nf.lower())
-        pod = get_pod_name(label)
-    if not pod:
-        return jsonify({"logs": f"No running pod found for {nf}", "pod": ""})
-    # srsRAN split components log to files, not stdout
-    file_log_map = {"srsran-cu": ("cu", "/tmp/cu.log"), "srsran-du": ("du", "/tmp/du.log")}
-    if label in file_log_map:
-        cont, logfile = file_log_map[label]
-        _, out, err = run(f"kubectl exec -n {NS} {pod} -c {cont} -- sh -c \"grep -iv 'zmq\\|Waiting' {logfile} | tail -{lines}\" 2>&1")
-        # Enrich with live SCTP association status - the real connection proof
-        _, sctp, _ = run(f"kubectl exec -n {NS} {pod} -c {cont} -- sh -c \"cat /proc/net/sctp/assocs 2>/dev/null | tail -n +2\" 2>&1")
-        sctp_summary = ""
-        for line in sctp.strip().split("\n"):
-            if "<->" in line:
-                parts = line.split()
-                try:
-                    arrow = parts.index("<->")
-                    lport, rport = parts[11], parts[12]
-                    laddr = parts[arrow-1]
-                    raddr = parts[arrow+1].lstrip("*")
-                    port_name = {"38412":"NGAP/AMF","38472":"F1-C","2152":"GTP-U"}.get(rport, rport)
-                    sctp_summary += f"[SCTP ESTABLISHED] {laddr}:{lport} <-> {raddr}:{rport} ({port_name})\n"
-                except (ValueError, IndexError):
-                    pass
-        if sctp.strip():
-            sctp_summary = "=== Live SCTP Associations (F1/NGAP) ===\n" + sctp_summary + "=== Log file ===\n"
-        out = sctp_summary + (out if out.strip() else f"[{label}] process running - startup complete, event logs quiet at current log level")
-        return jsonify({"logs": strip_ansi(out), "pod": pod})
-    c_flag = f"-c {container}" if container else ""
-    _, out, err = run(f"kubectl logs -n {NS} {pod} {c_flag} --tail={lines} 2>&1")
-    return jsonify({"logs": strip_ansi(out or err), "pod": pod})
+    """Always resolve the requested component/scenario to the current Kubernetes pod."""
+    lines = max(1, min(int(request.args.get("lines", "60")), 500))
+    key = ALIASES.get(nf, nf)
+    targets = _runtime_targets(key)
+
+    if not targets:
+        return jsonify({"logs": f"No running pod found for {key}", "pod": "", "pods": []})
+
+    chunks = []
+    for p in targets:
+        out = _log_text_for_pod(p, lines)
+        if out:
+            chunks.append(out)
+
+    return jsonify({
+        "logs": strip_ansi("\n\n".join(chunks)),
+        "pod": targets[0].get("metadata", {}).get("name", ""),
+        "pods": [p.get("metadata", {}).get("name", "") for p in targets],
+        "updated": time.time()
+    })
+
 
 @app.route("/api/status")
 def status():
@@ -258,6 +676,7 @@ def scenarios():
     """Everything the UI needs to render the selector - derived from the registry."""
     return jsonify({"scenarios": [
         {"key": k, "name": v["name"],
+
          "additive": v.get("additive", False),
          "releases": [r[0] for r in v["releases"]]}
         for k, v in SCENARIOS.items() if k != "none"]})
@@ -403,16 +822,14 @@ def _prom_query(promql):
 @app.route("/api/latency")
 def latency():
     """Real control-plane (SBI) TCP round-trip latency from the latency-probe exporter.
-    Not UE data-plane latency: PDU session establishment is currently blocked by a
-    UPF-side PFCP issue (see layer3-autonomous/README.md for detail)."""
+    Control-plane TCP connect latency exported by the live latency probe."""
     rtt = _prom_query("network_tcp_connect_latency_last_seconds")
     if rtt is None:
         return jsonify({"error": "no data from latency probe", "rtt_ms": None, "loss_pct": None})
     return jsonify({"rtt_ms": rtt * 1000, "loss_pct": 0, "target": "amf-sbi (control-plane)"})
 
-@app.route("/api/ue-status")
-def ue_status():
-    """UE registration + radio link state from live OAI gNB/UE logs and Prometheus."""
+def _ue_status_payload():
+    """Return the same live UE state used by /api/ue-status, without HTTP."""
     _, pod, _ = run(f"kubectl get pods -n {NS} -l app=oai-nr-ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
     pod = pod.strip().strip("'")
     registered = False
@@ -433,14 +850,19 @@ def ue_status():
                 or "PDU Session establishment is successful" in out
             )
     rsrp = _prom_query("max(oai_gnb_ue_rsrp_dbm)")
-    return jsonify({
+    return {
         "registered": registered,
         "pdu_session": pdu_session,
         "tun": tun_ip,
         "pod": pod,
         "radio_connected": rsrp is not None,
         "rsrp_dbm": rsrp,
-    })
+    }
+
+@app.route("/api/ue-status")
+def ue_status():
+    """UE registration + radio link state from live OAI gNB/UE logs and Prometheus."""
+    return jsonify(_ue_status_payload())
 
 @app.route("/api/istio/status")
 def istio_status():
