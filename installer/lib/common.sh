@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE="$ROOT/installer/state"
 LOGS="$ROOT/installer/logs"
 mkdir -p "$STATE" "$LOGS"
 source "$ROOT/scripts/common.sh"
 load_config
-export KUBECONFIG="\${KUBECONFIG_PATH:-$HOME/.kube/config}"
+export KUBECONFIG="${KUBECONFIG_PATH:-$HOME/.kube/config}"
 log(){ printf '[%(%H:%M:%S)T] %s\n' -1 "$*"; }
 ok(){ log "[OK]   $*"; }
 info(){ log "[INFO] $*"; }
