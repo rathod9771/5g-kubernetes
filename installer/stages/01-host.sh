@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/installer/lib/common.sh"
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg git jq python3 python3-pip python3-venv build-essential conntrack socat ebtables ethtool iproute2 iptables net-tools open-iscsi nfs-common chrony rsync unzip tar wget
