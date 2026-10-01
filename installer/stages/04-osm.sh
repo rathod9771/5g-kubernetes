@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-ROOT="$(cd "$(dirname "\${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/installer/lib/common.sh"
 export OSM_HOME_DIR="$HOME/.osm"
 export CREDENTIALS_DIR="$OSM_HOME_DIR/.credentials"
@@ -31,11 +31,11 @@ fi
 # The reference installation requires OSM's own Prometheus/Grafana to be disabled.
 if grep -q 'OSM_HELM_OPTS=""' "$OSM/installers/40-deploy-osm.sh"; then
   grep -q 'prometheus.enabled=false' "$OSM/installers/40-deploy-osm.sh" || \
-    sed -i '/OSM_HELM_OPTS=""/a OSM_HELM_OPTS="\${OSM_HELM_OPTS} --set prometheus.enabled=false --set grafana.enabled=false"' "$OSM/installers/40-deploy-osm.sh"
+    sed -i '/OSM_HELM_OPTS=""/a OSM_HELM_OPTS="${OSM_HELM_OPTS} --set prometheus.enabled=false --set grafana.enabled=false"' "$OSM/installers/40-deploy-osm.sh"
 fi
 if [ -f "$OSM/installers/40-deploy-osm.sh" ]; then
   grep -q 'OSM_BASE_DOMAIN="$OSM_BASE_DOMAIN"' "$OSM/installers/40-deploy-osm.sh" || \
-    sed -i '/OSM_HELM_OPTS="\${OSM_HELM_OPTS}/a OSM_BASE_DOMAIN="$OSM_BASE_DOMAIN"' "$OSM/installers/40-deploy-osm.sh"
+    sed -i '/OSM_HELM_OPTS="${OSM_HELM_OPTS}/a OSM_BASE_DOMAIN="$OSM_BASE_DOMAIN"' "$OSM/installers/40-deploy-osm.sh"
 fi
 export OSM_BASE_DOMAIN
 export GIT_BASE_HTTP_URL="http://gitea-http.gitea.svc.cluster.local:8080"
@@ -59,7 +59,7 @@ export GIT_BASE_USERNAME="osm-developer"
 export FLEET_REPO_HTTP_URL="http://gitea-http.gitea.svc.cluster.local:8080/osm-developer/fleet-osm.git"
 export SW_CATALOGS_REPO_HTTP_URL="http://gitea-http.gitea.svc.cluster.local:8080/osm-developer/sw-catalogs-osm.git"
 export FLEET_REPO_GIT_USERNAME="osm-developer"
-export FLEET_REPO_GIT_USER_PASS="\${GIT_TOKEN:-}"
+export FLEET_REPO_GIT_USER_PASS="${GIT_TOKEN:-}"
 ./40-deploy-osm.sh
 kubectl -n osm create secret generic grafana --from-literal=admin-user=admin --from-literal=admin-password=admin --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n flux-system patch gitrepository flux-system --type=merge -p '{"spec":{"url":"http://gitea-http.gitea.svc.cluster.local:8080/osm-developer/fleet-osm.git"}}' 2>/dev/null || true
