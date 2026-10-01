@@ -190,28 +190,40 @@ clone, just without your machine's specific overrides.
 
 ## Installation
 
+### Fresh machine — one command
+
+The repository now includes a dedicated reproducible installer under
+`installer/`. It keeps installation/bootstrap logic separate from the actual
+5G application source code.
+
+On a clean Ubuntu 24.04 machine:
+
 ```bash
-./scripts/preflight.sh    # checks this machine can run the platform; read-only
-./install.sh              # idempotent: installs what's missing, reuses what's already there
+git clone https://github.com/rathod9771/5g-kubernetes.git
+cd 5g-kubernetes
+./install.sh
 ```
 
-`install.sh` checks, in order, and only installs what's actually missing:
-Kubernetes (kubeadm), Longhorn, cert-manager, the monitoring stack
-(kube-prometheus-stack + exporters), the dashboard (Python venv + systemd
-service), and the Layer 3 watcher (systemd service).
+The installer automatically prepares the host, containerd, kubeadm Kubernetes,
+Flannel, Multus, Longhorn, cert-manager, ingress-nginx, Rancher, Istio, OSM
+Release 19 + Flux/Gitea, Prometheus/Grafana, the RAN Selector dashboard and
+the Layer 3 watcher, then runs validation and prints the access URLs.
 
-**OSM itself is the one deliberate exception.** This project's OSM install
-is a multi-step process with environment-specific patches (see
-[`docs/OSM19_INSTALL.md`](docs/OSM19_INSTALL.md)) that hasn't been
-re-verified as a one-shot script on a fresh machine. Rather than automate
-something unproven, `install.sh` checks for OSM and, if it's missing, stops
-with clear instructions pointing at that doc — "user action required," not
-silently skipped.
+Installation is staged and resumable. Logs are stored under
+`installer/logs/`; completed stages are recorded under `installer/state/`.
+Machine-specific values are generated in the gitignored
+`config/global.env`.
 
-Safe to run more than once: every step detects existing state first. Run
-against this project's own already-fully-installed machine, every single
-check correctly detects and reuses what's there — nothing gets reinstalled
-or restarted unnecessarily.
+### Reproducibility status
+
+The new one-command path is implemented on the `reproducible-installer`
+branch and is **not yet claimed as clean-machine verified**. The first
+validation target is a genuinely fresh Ubuntu 24.04 machine. Until that test
+passes, the branch should be treated as the reproducibility work-in-progress;
+the existing `main` branch remains the reference working platform.
+
+For troubleshooting and the exact historical OSM environment adjustments,
+see [`docs/OSM19_INSTALL.md`](docs/OSM19_INSTALL.md).
 
 ---
 
