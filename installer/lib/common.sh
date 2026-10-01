@@ -4,6 +4,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE="$ROOT/installer/state"
 LOGS="$ROOT/installer/logs"
 mkdir -p "$STATE" "$LOGS"
+# scripts/common.sh is the existing project helper and expects REPO_ROOT.
+export REPO_ROOT="$ROOT"
 source "$ROOT/scripts/common.sh"
 load_config
 export KUBECONFIG="${KUBECONFIG_PATH:-$HOME/.kube/config}"
