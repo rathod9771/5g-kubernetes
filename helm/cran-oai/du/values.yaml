@@ -31,3 +31,10 @@ rf:
     args: "type=b200,serial=XXXXXXXX"
     clockSource: internal
     timeSource: internal
+
+# Deployment identity. Defaults preserve exact current C-RAN behavior.
+# cuFullname must match the CU's own fullname so this DU's F1-C getent
+# lookup resolves the correct Service.
+fullname: cran-oai-du
+cuFullname: cran-oai-cu
+ranType: cran

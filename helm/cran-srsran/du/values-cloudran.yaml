@@ -1,0 +1,10 @@
+fullname: cloud-ran-srsran-du
+cuFullname: cloud-ran-srsran-cu
+ranType: cloud-ran
+resources:
+  requests:
+    cpu: "1"
+    memory: "1Gi"
+  limits:
+    cpu: "2"
+    memory: "2Gi"

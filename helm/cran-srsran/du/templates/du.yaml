@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cran-srsran-du-config
+  name: {{ .Values.fullname }}-config
 data:
   du-init.sh: |
     #!/bin/bash
     export POD_IP=$(awk 'END{print $1}' /etc/hosts)
-    export CU_IP=$(getent hosts cran-srsran-cu | awk '{print $1}')
+    export CU_IP=$(getent hosts {{ .Values.cuFullname }} | awk '{print $1}')
     echo "C-RAN DU starting: POD_IP=${POD_IP} CU_IP=${CU_IP}"
     mkdir -p /etc/srsran
     sed -e "s|CU_IP|${CU_IP}|g" -e "s|POD_IP|${POD_IP}|g" /mnt/srsran/du.yml > /etc/srsran/du.yml
@@ -39,21 +39,21 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cran-srsran-du
+  name: {{ .Values.fullname }}
   labels:
-    app: cran-srsran-du
-    ran-type: cran
+    app: {{ .Values.fullname }}
+    ran-type: {{ .Values.ranType | default "cran" }}
     component: du
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: cran-srsran-du
+      app: {{ .Values.fullname }}
   template:
     metadata:
       labels:
-        app: cran-srsran-du
-        ran-type: cran
+        app: {{ .Values.fullname }}
+        ran-type: {{ .Values.ranType | default "cran" }}
         component: du
       annotations:
         sidecar.istio.io/inject: "false"
@@ -64,6 +64,10 @@ spec:
         imagePullPolicy: IfNotPresent
         securityContext:
           privileged: true
+        {{- with .Values.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         command: ["bash", "/mnt/srsran/du-init.sh"]
         volumeMounts:
         - name: du-config
@@ -71,16 +75,16 @@ spec:
       volumes:
       - name: du-config
         configMap:
-          name: cran-srsran-du-config
+          name: {{ .Values.fullname }}-config
           defaultMode: 0755
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: cran-srsran-du
+  name: {{ .Values.fullname }}
 spec:
   selector:
-    app: cran-srsran-du
+    app: {{ .Values.fullname }}
   ports:
   - name: f1c
     port: 38472

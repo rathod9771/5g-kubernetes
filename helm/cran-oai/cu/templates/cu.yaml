@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cran-oai-cu-config
+  name: {{ .Values.fullname }}-config
 data:
   cu-init.sh: |
     #!/bin/bash
@@ -71,21 +71,21 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cran-oai-cu
+  name: {{ .Values.fullname }}
   labels:
-    app: cran-oai-cu
-    ran-type: cran
+    app: {{ .Values.fullname }}
+    ran-type: {{ .Values.ranType | default "cran" }}
     component: cu
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: cran-oai-cu
+      app: {{ .Values.fullname }}
   template:
     metadata:
       labels:
-        app: cran-oai-cu
-        ran-type: cran
+        app: {{ .Values.fullname }}
+        ran-type: {{ .Values.ranType | default "cran" }}
         component: cu
       annotations:
         sidecar.istio.io/inject: "false"
@@ -97,6 +97,10 @@ spec:
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         securityContext:
           privileged: true
+        {{- with .Values.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         command: ["bash", "/opt/oai-gnb/etc/cu-init.sh"]
         volumeMounts:
         - name: cu-config
@@ -104,16 +108,16 @@ spec:
       volumes:
       - name: cu-config
         configMap:
-          name: cran-oai-cu-config
+          name: {{ .Values.fullname }}-config
           defaultMode: 0755
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: cran-oai-cu
+  name: {{ .Values.fullname }}
 spec:
   selector:
-    app: cran-oai-cu
+    app: {{ .Values.fullname }}
   ports:
   - name: ngap
     port: 38412

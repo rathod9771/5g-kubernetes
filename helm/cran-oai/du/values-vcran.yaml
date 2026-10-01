@@ -1,0 +1,14 @@
+fullname: vcran-oai-du
+cuFullname: vcran-oai-cu
+ranType: vcran
+# Same 2x-the-CU resource ratio already established by the Cloud-RAN
+# profile (the DU carries the heavier PHY/RF workload), scaled down from
+# the vCRAN CU's tighter ceiling. No autoscaling, for the same reasons as
+# the CU profile: no metrics-server, and the DU holds per-pod F1/RF state.
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"

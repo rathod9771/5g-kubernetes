@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cran-srsran-cu-config
+  name: {{ .Values.fullname }}-config
 data:
   cu-init.sh: |
     #!/bin/bash
     export POD_IP=$(awk 'END{print $1}' /etc/hosts)
-    export AMF_IP=$(getent hosts open5gs-amf-ngap | awk '{print $1}')
+    export AMF_IP=$(getent hosts {{ .Values.amf.address }} | awk '{print $1}')
     echo "C-RAN CU starting: POD_IP=${POD_IP} AMF_IP=${AMF_IP}"
     mkdir -p /etc/srsran
     sed -e "s|AMF_IP|${AMF_IP}|g" -e "s|POD_IP|${POD_IP}|g" /mnt/srsran/cu.yml > /etc/srsran/cu.yml
@@ -32,21 +32,21 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cran-srsran-cu
+  name: {{ .Values.fullname }}
   labels:
-    app: cran-srsran-cu
-    ran-type: cran
+    app: {{ .Values.fullname }}
+    ran-type: {{ .Values.ranType | default "cran" }}
     component: cu
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: cran-srsran-cu
+      app: {{ .Values.fullname }}
   template:
     metadata:
       labels:
-        app: cran-srsran-cu
-        ran-type: cran
+        app: {{ .Values.fullname }}
+        ran-type: {{ .Values.ranType | default "cran" }}
         component: cu
       annotations:
         sidecar.istio.io/inject: "false"
@@ -57,6 +57,10 @@ spec:
         imagePullPolicy: IfNotPresent
         securityContext:
           privileged: true
+        {{- with .Values.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         command: ["bash", "/mnt/srsran/cu-init.sh"]
         volumeMounts:
         - name: cu-config
@@ -64,16 +68,16 @@ spec:
       volumes:
       - name: cu-config
         configMap:
-          name: cran-srsran-cu-config
+          name: {{ .Values.fullname }}-config
           defaultMode: 0755
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: cran-srsran-cu
+  name: {{ .Values.fullname }}
 spec:
   selector:
-    app: cran-srsran-cu
+    app: {{ .Values.fullname }}
   ports:
   - name: ngap
     port: 38412

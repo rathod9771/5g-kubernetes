@@ -1,0 +1,16 @@
+fullname: vcran-oai-cu
+ranType: vcran
+# Tighter, more constrained resource ceiling than Cloud-RAN, reflecting a
+# virtualized/containerized, resource-isolated deployment characteristic.
+# No autoscaling: metrics-server is not installed in this cluster (CPU-based
+# HPA would be inert), and the CU holds stateful F1/NGAP associations in
+# memory per-pod, so scaling replicas beyond 1 would split that state across
+# uncoordinated pods behind the same ClusterIP Service rather than adding
+# real capacity. Not added here for either reason.
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"

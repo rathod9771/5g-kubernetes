@@ -1,0 +1,12 @@
+# Real AMF address the CU resolves at startup. The OSM-generated name
+# (open5gs-<release-id>-amf-ngap) is not used because the release id
+# in the middle of it changes on every core redeploy.
+amf:
+  address: "amf-ngap-stable"
+
+# Deployment identity. Defaults preserve exact current C-RAN behavior;
+# a profile values file (e.g. values-cloudran.yaml) overrides these to
+# produce a differently-named deployment from this SAME chart, per the
+# "same CU/DU implementation, different deployment profile" principle.
+fullname: cran-srsran-cu
+ranType: cran
