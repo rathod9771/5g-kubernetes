@@ -13,7 +13,7 @@ du:
     port: 38472
 
 network:
-  masterIf: enp3s0
+  masterIf: "" # Unused by hostNetwork/RFSIM; external Multus must supply an interface.
 
 ran:
   type: cran

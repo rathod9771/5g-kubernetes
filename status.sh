@@ -2,7 +2,10 @@
 set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-RAW="$("${REPO_ROOT}/scripts/validate.sh" --kv 2>/dev/null)"
+source "${REPO_ROOT}/scripts/common.sh"
+load_config
+
+RAW="$("${REPO_ROOT}/scripts/validate.sh" --kv)" || exit $?
 
 kv() {
   echo "$RAW" | grep "^STATUS_KV:$1=" | head -1 | cut -d= -f2-
@@ -10,16 +13,8 @@ kv() {
 
 ACTIVE_RAN="none"
 ACTIVE_STACK="—"
-if [ -f "${REPO_ROOT}/ran-selector/active-ran.yaml" ]; then
-  ACTIVE_SCENARIO="$(python3 -c "
-import yaml
-try:
-    with open('${REPO_ROOT}/ran-selector/active-ran.yaml') as f:
-        d = yaml.safe_load(f) or {}
-    print(d.get('active') or 'none')
-except Exception:
-    print('none')
-" 2>/dev/null)"
+if [ -f "$ACTIVE_STATE_PATH" ]; then
+  ACTIVE_SCENARIO="$(python3 "${REPO_ROOT}/scripts/runtime_state.py" active)" || exit 1
   ACTIVE_RAN="${ACTIVE_SCENARIO:-none}"
   case "$ACTIVE_RAN" in
     *oai*) ACTIVE_STACK="OAI" ;;

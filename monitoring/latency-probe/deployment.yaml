@@ -1,8 +1,9 @@
+# Runtime template: render with scripts/runtime_render.py manifest before applying.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: latency-probe
-  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  namespace: PLACEHOLDER_NAMESPACE
   labels:
     app: latency-probe
 spec:
@@ -52,7 +53,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: latency-probe
-  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  namespace: PLACEHOLDER_NAMESPACE
   labels:
     app: latency-probe
 spec:

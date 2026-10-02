@@ -4,7 +4,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${REPO_ROOT}/scripts/common.sh"
 load_config
 
-DASHBOARD_URL="http://localhost:${DASHBOARD_PORT:-8090}"
+# DASHBOARD_URL comes from the shared contract.
 
 usage() {
   cat << USAGE
@@ -58,7 +58,7 @@ log_ok "Dashboard reachable"
 log_info "Deploying scenario '${SCENARIO}' -- this is a real OSM terminate+instantiate, typically 1-3 minutes..."
 RESPONSE="$(curl -sk --max-time 200 -X POST "${DASHBOARD_URL}/api/deploy" \
   -H "Content-Type: application/json" \
-  -d "{\"ran\": \"${SCENARIO}\"}")"
+  --data-binary "$(python3 -c 'import json,sys; print(json.dumps({"ran":sys.argv[1]}))' "$SCENARIO")")"
 
 if [ -z "$RESPONSE" ]; then
   fail "No response from the dashboard's /api/deploy" \

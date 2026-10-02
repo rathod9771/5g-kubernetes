@@ -2,7 +2,16 @@
 set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${REPO_ROOT}/scripts/common.sh"
-load_config
+load_config --network --require install --require watcher
+for service_spec in 'dashboard:ran-selector' 'watcher:layer3-watcher'; do
+  service_kind="${service_spec%%:*}"
+  service_name="${service_spec#*:}"
+  if systemd_service_active "${service_name}.service"; then
+    python3 "${REPO_ROOT}/scripts/runtime_render.py" "$service_kind" "/etc/systemd/system/${service_name}.service" --check-installed \
+      || fail "Existing service settings differ; explicit reconciliation is required before installation"
+  fi
+done
+python3 -c 'import yaml' || fail "python3-yaml is required by runtime rendering before installation starts"
 
 echo "=================================================="
 echo "  5G Kubernetes Orchestrator — Install"
@@ -10,7 +19,7 @@ echo "=================================================="
 echo ""
 
 log_info "Checking Kubernetes..."
-if kubectl_available && kubectl cluster-info >/dev/null 2>&1; then
+if kubectl_available && p_kubectl cluster-info >/dev/null 2>&1; then
   log_ok "Kubernetes already running — reusing it"
 else
   log_info "No cluster reachable — bootstrapping with kubeadm"
@@ -24,20 +33,20 @@ Environment=\"KUBELET_EXTRA_ARGS=--max-pods=${KUBELET_MAX_PODS:-200}\"" | sudo t
   sudo systemctl daemon-reload
 
   log_info "Running kubeadm init (this can take a few minutes)..."
-  sudo kubeadm init --pod-network-cidr=10.244.0.0/16 || fail "kubeadm init failed" \
-    "Check 'sudo kubeadm init --pod-network-cidr=10.244.0.0/16' output above for the specific error" \
+  sudo kubeadm init --pod-network-cidr="$POD_CIDR" --service-cidr="$SERVICE_CIDR" || fail "kubeadm init failed" \
+    "Check the kubeadm output above for the specific error" \
     "Common causes: swap not disabled, port 6443 already in use, insufficient resources"
 
-  mkdir -p "$HOME/.kube"
-  sudo cp -f /etc/kubernetes/admin.conf "$HOME/.kube/config"
-  sudo chown "$(id -u):$(id -g)" "$HOME/.kube/config"
+  mkdir -p "$(dirname "$KUBECONFIG_PATH")"
+  sudo cp -f /etc/kubernetes/admin.conf "$KUBECONFIG_PATH"
+  sudo chown "$(id -u):$(id -g)" "$KUBECONFIG_PATH"
 
   log_info "Installing Flannel CNI..."
-  kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml \
+  p_kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml \
     || fail "Flannel install failed" "Check network connectivity to raw.githubusercontent.com" "If IPv6 is enabled, it has broken this download before on this project's reference machine -- try: sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1"
 
   log_info "Untainting control-plane node (single-node cluster)..."
-  kubectl taint nodes --all node-role.kubernetes.io/control-plane- 2>/dev/null || true
+  p_kubectl taint nodes --all node-role.kubernetes.io/control-plane- 2>/dev/null || true
 
   log_ok "Kubernetes bootstrapped"
 fi
@@ -48,12 +57,12 @@ if namespace_exists "longhorn-system" && pods_ready_in_namespace "longhorn-syste
 else
   log_info "Installing Longhorn..."
   command_exists helm || fail "helm not found" "Install Helm 3 first: https://helm.sh/docs/intro/install/"
-  helm repo add longhorn https://charts.longhorn.io >/dev/null 2>&1 || true
-  helm repo update >/dev/null 2>&1
-  helm upgrade --install longhorn longhorn/longhorn \
+  p_helm repo add longhorn https://charts.longhorn.io >/dev/null 2>&1 || true
+  p_helm repo update >/dev/null 2>&1
+  p_helm upgrade --install longhorn longhorn/longhorn \
     --namespace longhorn-system --create-namespace \
     --set persistence.defaultClassReplicaCount=1 \
-    || fail "Longhorn install failed" "Check: kubectl get pods -n longhorn-system" "Requires open-iscsi on the host: sudo apt install open-iscsi"
+    || fail "Longhorn install failed" "Check: p_kubectl get pods -n longhorn-system" "Requires open-iscsi on the host: sudo apt install open-iscsi"
   log_ok "Longhorn installed"
 fi
 
@@ -62,47 +71,48 @@ if crd_exists "certificates.cert-manager.io"; then
   log_ok "cert-manager already installed — reusing it"
 else
   log_info "Installing cert-manager..."
-  kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.5/cert-manager.yaml \
+  p_kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.5/cert-manager.yaml \
     || fail "cert-manager install failed" "Check network connectivity" "OSM's chart requires cert-manager.io/v1 CRDs, so this must succeed before OSM can be installed"
   log_ok "cert-manager installed"
 fi
 
 log_info "Checking Rancher..."
-if namespace_exists "cattle-system" && kubectl get deployment rancher -n cattle-system >/dev/null 2>&1 \
-   && [ "$(kubectl get deployment rancher -n cattle-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
+if namespace_exists "cattle-system" && p_kubectl get deployment rancher -n cattle-system >/dev/null 2>&1 \
+   && [ "$(p_kubectl get deployment rancher -n cattle-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
   log_ok "Rancher already running — reusing it"
 else
   log_info "Installing Rancher..."
-  helm repo add rancher-latest https://releases.rancher.com/server-charts/latest >/dev/null 2>&1 || true
-  helm repo update rancher-latest >/dev/null 2>&1
-  kubectl create namespace cattle-system 2>/dev/null || true
-  helm upgrade --install rancher rancher-latest/rancher \
+  p_helm repo add rancher-latest https://releases.rancher.com/server-charts/latest >/dev/null 2>&1 || true
+  p_helm repo update rancher-latest >/dev/null 2>&1
+  p_kubectl create namespace cattle-system 2>/dev/null || true
+  RANCHER_PRIVATE_VALUES="$(python3 "${REPO_ROOT}/scripts/runtime_render.py" rancher)" || fail "Cannot prepare private Rancher values"
+  p_helm upgrade --install rancher rancher-latest/rancher \
     --namespace cattle-system \
-    --set hostname="rancher.${OSM_BASE_DOMAIN:-${HOST_IP}.nip.io}" \
-    --set bootstrapPassword="${RANCHER_BOOTSTRAP_PASSWORD:-admin123456}" \
+    --set hostname="rancher.${OSM_BASE_DOMAIN}" \
+    -f "$RANCHER_PRIVATE_VALUES" \
     --set replicas=1 \
-    || fail "Rancher install failed" "Check: kubectl get pods -n cattle-system" "Requires cert-manager, installed just above"
+    || fail "Rancher install failed" "Check: p_kubectl get pods -n cattle-system" "Requires cert-manager, installed just above"
   log_ok "Rancher installed — can take several minutes to fully initialize before rancher-portforward.service stops retrying"
 fi
 
 log_info "Checking Istio..."
-if namespace_exists "istio-system" && kubectl get deployment istiod -n istio-system >/dev/null 2>&1 \
-   && [ "$(kubectl get deployment istiod -n istio-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
+if namespace_exists "istio-system" && p_kubectl get deployment istiod -n istio-system >/dev/null 2>&1 \
+   && [ "$(p_kubectl get deployment istiod -n istio-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
   log_ok "Istio already running — reusing it"
 else
   log_info "Installing Istio (control plane only, no sidecar injection enabled anywhere)..."
-  helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/null 2>&1 || true
-  helm repo update istio >/dev/null 2>&1
-  kubectl create namespace istio-system 2>/dev/null || true
-  helm upgrade --install istio-base istio/base -n istio-system --set defaultRevision=default \
+  p_helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/null 2>&1 || true
+  p_helm repo update istio >/dev/null 2>&1
+  p_kubectl create namespace istio-system 2>/dev/null || true
+  p_helm upgrade --install istio-base istio/base -n istio-system --set defaultRevision=default \
     || fail "Istio base install failed" "Check network connectivity to istio-release.storage.googleapis.com"
-  helm upgrade --install istiod istio/istiod -n istio-system --wait \
-    || fail "istiod install failed" "Check: kubectl get pods -n istio-system"
+  p_helm upgrade --install istiod istio/istiod -n istio-system --wait \
+    || fail "istiod install failed" "Check: p_kubectl get pods -n istio-system"
   log_ok "Istio installed (istio-system) -- 5G core namespace untouched, no sidecar injection enabled"
 fi
 
 log_info "Checking OSM..."
-if namespace_exists "osm" && pods_ready_in_namespace "osm"; then
+if namespace_exists "$OSM_NAMESPACE" && pods_ready_in_namespace "$OSM_NAMESPACE"; then
   log_ok "OSM already running — reusing it"
 else
   echo ""
@@ -127,20 +137,21 @@ if helm_release_exists "kube-prometheus-stack" "monitoring"; then
   log_ok "kube-prometheus-stack already installed — reusing it"
 else
   log_info "Installing kube-prometheus-stack..."
-  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
-  helm repo update >/dev/null 2>&1
-  helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  p_helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+  p_helm repo update >/dev/null 2>&1
+  GRAFANA_PRIVATE_VALUES="$(python3 "${REPO_ROOT}/scripts/runtime_render.py" grafana)" || fail "Cannot prepare private Grafana values"
+  p_helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
     -n monitoring --create-namespace --version 91.4.1 \
-    -f "${REPO_ROOT}/monitoring/kube-prometheus-stack-values.yaml" \
-    || fail "kube-prometheus-stack install failed" "Check: kubectl get pods -n monitoring"
+    -f "${REPO_ROOT}/monitoring/kube-prometheus-stack-values.yaml" -f "$GRAFANA_PRIVATE_VALUES" \
+    || fail "kube-prometheus-stack install failed" "Check: p_kubectl get pods -n monitoring"
   log_ok "kube-prometheus-stack installed"
 fi
 
 log_info "Checking the Prometheus NodePort..."
-if kubectl get svc kube-prometheus-stack-prometheus-nodeport -n monitoring >/dev/null 2>&1; then
+if p_kubectl get svc kube-prometheus-stack-prometheus-nodeport -n monitoring >/dev/null 2>&1; then
   log_ok "Prometheus NodePort already exposed"
 else
-  kubectl apply -f "${REPO_ROOT}/monitoring/prometheus-nodeport.yaml" \
+  python3 "${REPO_ROOT}/scripts/runtime_render.py" manifest "${REPO_ROOT}/monitoring/prometheus-nodeport.yaml" | p_kubectl apply -f - \
     || fail "Failed to apply monitoring/prometheus-nodeport.yaml"
   log_ok "Prometheus NodePort exposed"
 fi
@@ -159,11 +170,9 @@ else
   log_ok "Dashboard venv ready"
 
   log_info "Installing ran-selector.service..."
-  sed \
-    -e "s#PLACEHOLDER_USER#$(id -un)#g" \
-    -e "s#PLACEHOLDER_REPO_ROOT#${REPO_ROOT}#g" \
-    -e "s#PLACEHOLDER_KUBECONFIG_PATH#${KUBECONFIG_PATH}#g" \
-    "${REPO_ROOT}/deploy/ran-selector.service" | sudo tee /etc/systemd/system/ran-selector.service >/dev/null
+  python3 "${REPO_ROOT}/scripts/runtime_render.py" dashboard | sudo tee /etc/systemd/system/ran-selector.service >/dev/null \
+    || fail "Cannot render dashboard service"
+
   sudo systemctl daemon-reload
   sudo systemctl enable --now ran-selector.service \
     || fail "Failed to start ran-selector.service" "Check: journalctl -u ran-selector -n 50"
@@ -172,7 +181,7 @@ fi
 
 log_info "Checking the dashboard responds..."
 sleep 2
-if service_reachable "http://localhost:${DASHBOARD_PORT:-8090}/api/scenarios" 10; then
+if service_reachable "${DASHBOARD_URL}/api/scenarios" 10; then
   log_ok "Dashboard responding on port ${DASHBOARD_PORT:-8090}"
 else
   log_warn "Dashboard not yet responding — it may still be starting. Check: journalctl -u ran-selector -n 50"
@@ -184,16 +193,9 @@ if systemd_service_active "layer3-watcher.service"; then
   log_ok "layer3-watcher.service already running — reusing it"
 else
   log_info "Installing layer3-watcher.service..."
-  sed \
-    -e "s#PLACEHOLDER_USER#$(id -un)#g" \
-    -e "s#PLACEHOLDER_REPO_ROOT#${REPO_ROOT}#g" \
-    -e "s#PLACEHOLDER_PROMETHEUS_URL#http://localhost:${PROMETHEUS_NODEPORT:-30990}#g" \
-    -e "s#PLACEHOLDER_DASHBOARD_URL#http://localhost:${DASHBOARD_PORT:-8090}#g" \
-    -e "s#PLACEHOLDER_CHECK_INTERVAL_SECONDS#${LAYER3_CHECK_INTERVAL_SECONDS:-10}#g" \
-    -e "s#PLACEHOLDER_ACTION_COOLDOWN_SECONDS#${LAYER3_COOLDOWN_SECONDS:-120}#g" \
-    -e "s#PLACEHOLDER_BLER_THRESHOLD#${LAYER3_BLER_THRESHOLD:-0.05}#g" \
-    -e "s#PLACEHOLDER_FAILOVER_SCENARIO#${LAYER3_FAILOVER_SCENARIO:-hcran-oai}#g" \
-    "${REPO_ROOT}/layer3-autonomous/layer3-watcher.service" | sudo tee /etc/systemd/system/layer3-watcher.service >/dev/null
+  python3 "${REPO_ROOT}/scripts/runtime_render.py" watcher | sudo tee /etc/systemd/system/layer3-watcher.service >/dev/null \
+    || fail "Cannot render watcher service"
+
   sudo systemctl daemon-reload
   sudo systemctl enable --now layer3-watcher.service \
     || fail "Failed to start layer3-watcher.service" "Check: journalctl -u layer3-watcher -n 50"

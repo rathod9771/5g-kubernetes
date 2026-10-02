@@ -1,5 +1,5 @@
 grafana:
-  adminPassword: admin
+  # adminPassword is supplied through a private runtime values file.
   livenessProbe:
     initialDelaySeconds: 120
   persistence:

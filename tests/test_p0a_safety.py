@@ -209,7 +209,8 @@ class BackendSafetyTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.state = Path(temporary.name) / 'active.yaml'
-        self.state.write_text('osm:\n  active_instance_id: old-instance\n  active_scenario: cran-srsran\n')
+        self.context = {'project_id': '22222222-2222-2222-2222-222222222222', 'vim_id': '33333333-3333-3333-3333-333333333333', 'namespace': 'fixture', 'cluster_uid': '44444444-4444-4444-4444-444444444444', 'namespace_uid': '55555555-5555-5555-5555-555555555555', 'repo_root': str(ROOT), 'workload_kubeconfig': '/synthetic/workload', 'deployment_profile': 'rfsim', 'osm_host': 'https://osm.invalid'}
+        self.state.write_text(packages.yaml.safe_dump({'active': 'cran-srsran', 'osm': {'active_instance_id': 'old-instance', 'active_scenario': 'cran-srsran'}, 'context': self.context}))
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
         b = self.backend
@@ -217,6 +218,8 @@ class BackendSafetyTests(unittest.TestCase):
         self.stack.enter_context(mock.patch.object(b, 'validated_snapshot', return_value={}))
         self.stack.enter_context(mock.patch.object(b.osm_client, 'get_token', return_value='synthetic'))
         self.catalog = self.stack.enter_context(mock.patch.object(b, 'Catalog'))
+        self.stack.enter_context(mock.patch.object(b, 'runtime_preflight', return_value=({'DEPLOYMENT_PROFILE': 'rfsim'}, self.context, self.catalog.return_value)))
+        self.stack.enter_context(mock.patch.object(b, '_namespace', return_value='fixture'))
         self.catalog.return_value.verify.return_value = {'ns': '11111111-1111-1111-1111-111111111111'}
         self.terminate = self.stack.enter_context(mock.patch.object(b.osm_client, 'terminate_ns', return_value='terminate-op'))
         self.wait = self.stack.enter_context(mock.patch.object(b.osm_client, 'wait_for_op', return_value='COMPLETED'))
@@ -384,7 +387,7 @@ class ClientTransportTests(unittest.TestCase):
         response.__enter__.return_value.read.return_value = b'id: synthetic-token\n'
         with mock.patch.object(osm_catalog.urllib.request, 'build_opener') as build_opener:
             build_opener.return_value.open.return_value = response
-            catalog.authenticate('admin', password)
+            catalog.authenticate('admin', password, 'fixture-project')
         request = build_opener.return_value.open.call_args.args[0]
         self.assertEqual(packages.yaml.safe_load(request.data)['password'], password)
         self.assertEqual(build_opener.call_args.args[0]._context.verify_mode, ssl.CERT_REQUIRED)
@@ -407,7 +410,7 @@ class ClientTransportTests(unittest.TestCase):
     def test_client_refreshes_expired_auth_once_without_shell(self):
         import osm_client
         from osm_catalog import AuthorizationError
-        with mock.patch.object(osm_client, 'get_token', side_effect=['old', 'new']) as token, mock.patch.object(osm_client, 'Catalog') as factory:
+        with mock.patch.object(osm_client, 'runtime_config', return_value={'OSM_HOST': 'https://example.invalid'}), mock.patch.object(osm_client, 'get_token', side_effect=['old', 'new']) as token, mock.patch.object(osm_client, 'Catalog') as factory:
             factory.return_value.request.side_effect = [AuthorizationError('expired'), b'valid']
             self.assertEqual(osm_client._request('GET', '/test'), b'valid')
             self.assertEqual(token.call_args_list, [mock.call(), mock.call(force=True)])
@@ -415,8 +418,9 @@ class ClientTransportTests(unittest.TestCase):
 
     def test_missing_default_credentials_fail_before_network(self):
         import osm_client
-        with mock.patch.object(osm_client, 'OSM_PASS', None), mock.patch.dict(osm_client._token_cache, {'token': None}), mock.patch.object(osm_client, 'Catalog') as factory:
-            with self.assertRaises(CatalogError):
+        from runtime_config import ConfigError
+        with mock.patch.object(osm_client, 'runtime_config', side_effect=ConfigError('Missing required OSM_PASSWORD')), mock.patch.dict(osm_client._token_cache, {'token': None}), mock.patch.object(osm_client, 'Catalog') as factory:
+            with self.assertRaises(ConfigError):
                 osm_client.get_token()
             factory.assert_not_called()
 

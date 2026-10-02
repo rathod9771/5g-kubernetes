@@ -526,7 +526,7 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
     <button class="top-btn" id="btn-istio" onclick="showIstioPanel(this)">Istio</button>
     <button class="top-btn" id="btn-verify" onclick="manualVerifyClean()">Verify Clean</button>
     <span id="clean-badge" style="font-size:10px;padding:4px 10px;border-radius:6px;font-weight:600"></span>
-    <button class="top-btn" onclick="window.open('https://172.30.18.32:8443/dashboard/','_blank')">🐄 Rancher ↗</button>
+    <button class="top-btn" onclick="openRuntimeLink('rancher')">🐄 Rancher ↗</button>
     <button class="top-btn" id="btn-osm" onclick="showExternalPanel(this,'osm')">📡 OSM</button>
     <button class="top-btn" id="btn-layer2" onclick="showLayer2Panel(this)">📊 Layer 2</button>
     <button class="top-btn purple" id="btn-layer3" onclick="showLayer3Panel(this)">🤖 Layer 3</button>
@@ -970,7 +970,7 @@ async function showLayer2Panel(btn){
             <div style="font-size:16px;font-weight:700;color:#1d4ed8">📊 Full Grafana Dashboards</div>
             
           </div>
-          <button class="top-btn" onclick="window.open('http://grafana-metrics.172.30.18.32.nip.io:31998','_blank')">Open Grafana ↗</button>
+          <button class="top-btn" onclick="openRuntimeLink('grafana')">Open Grafana ↗</button>
         </div>
       </div>
     </div>
@@ -1127,11 +1127,24 @@ async function verifyClean(silent){
 function manualVerifyClean(){ verifyClean(false); }
 
 const EXTERNAL_PANELS = {
-  rancher: { url: "https://172.30.18.32:8091/dashboard/", label: "Rancher" },
-  osm:     { url: "https://gui.172.30.18.32.nip.io:30843/", label: "OSM 19 (Open Source MANO)" }
+  rancher: { url: "", label: "Rancher" },
+  osm:     { url: "", label: "OSM 19 (Open Source MANO)" }
 };
 
-function showExternalPanel(btn, key){
+async function runtimeLinks(){
+  const response = await fetch('/api/config');
+  if(!response.ok) throw new Error('Runtime endpoints are not configured');
+  return await response.json();
+}
+async function openRuntimeLink(key){
+  try { const links = await runtimeLinks(); if(links[key]) window.open(links[key], '_blank', 'noopener'); }
+  catch(error) { alert(error.message); }
+}
+async function showExternalPanel(btn, key){
+  let links;
+  try { links = await runtimeLinks(); }
+  catch(error) { alert(error.message); return; }
+  EXTERNAL_PANELS[key].url = links[key];
   document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("sel"));
   if(btn) btn.classList.add("sel");
   const p = EXTERNAL_PANELS[key];

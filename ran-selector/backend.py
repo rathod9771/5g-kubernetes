@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, g
 import subprocess, yaml, os, json
 import time
 import sys
@@ -7,9 +7,8 @@ from pathlib import Path
 import osm_client
 
 app = Flask(__name__)
-REPO_PATH = os.path.expanduser("~/5g-kubernetes")
-CONFIG_FILE = f"{REPO_PATH}/ran-selector/active-ran.yaml"
-NS = "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c"
+REPO_PATH = str(Path(__file__).resolve().parents[1])
+UI_DIR = str(Path(__file__).resolve().parent)
 
 # One registry supplies UI/inventory metadata and OSM descriptor identities.
 # Import helpers only; no generation, Helm calls or lifecycle work occurs at startup.
@@ -18,6 +17,53 @@ from scenario_registry import load_registry, dashboard_scenarios
 from osm_packages import DEFAULT_OUTPUT, PackageError, validated_snapshot
 from local_safety import exclusive_lock, atomic_write
 from osm_catalog import Catalog, CatalogError
+from runtime_config import load_config, ConfigError
+from state_schema import validate_state
+DEFAULT_STATE_PATH = str(Path(REPO_PATH) / '.runtime/active-ran.yaml')
+CONFIG_FILE = DEFAULT_STATE_PATH
+
+
+def _state_path():
+    if hasattr(g, 'runtime_state_path'):
+        return g.runtime_state_path
+    if CONFIG_FILE != DEFAULT_STATE_PATH:  # Explicit test/embedder override.
+        return CONFIG_FILE
+    cfg = getattr(g, 'runtime_config', None) or load_config()
+    return cfg['ACTIVE_STATE_PATH']
+
+
+def runtime_preflight():
+    cfg = osm_client.runtime_config(require=('kubernetes',))
+    with osm_client.runtime_session(cfg):
+        catalog = Catalog(cfg['OSM_HOST'], osm_client.get_token())
+        context = osm_client.context(cfg, catalog)
+    return cfg, context, catalog
+
+
+def _namespace():
+    if not hasattr(g, 'runtime_context'):
+        cfg, context, _ = runtime_preflight()
+        g.runtime_config, g.runtime_context = cfg, context
+    return g.runtime_context['namespace']
+
+
+def _kubectl_argv(args):
+    cfg = getattr(g, 'runtime_config', None) or load_config(require=('kubernetes',))
+    return ['kubectl', '--kubeconfig', cfg['OSM_KUBECONFIG_PATH'], *args]
+
+
+@app.errorhandler(ConfigError)
+def configuration_error(error):
+    return jsonify({'error': str(error)}), 409
+
+
+@app.route('/api/config')
+def public_config():
+    cfg = load_config(network='auto')
+    return jsonify({key: cfg[field] for key, field in
+                    [('rancher', 'RANCHER_URL'), ('osm', 'OSM_HOST'),
+                     ('grafana', 'GRAFANA_URL'), ('prometheus', 'PROMETHEUS_URL')]})
+
 
 SCENARIO_SPEC = load_registry()
 SCENARIO_ENTRIES = {s["key"]: s for s in SCENARIO_SPEC["scenarios"]}
@@ -64,11 +110,15 @@ def strip_ansi(text):
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 def run(cmd):
+    import shlex
+    cfg = getattr(g, 'runtime_config', None) or load_config(require=('kubernetes',))
+    # cmd is assembled internally; namespace has strict DNS validation. Paths are quoted.
+    cmd = cmd.replace('kubectl ', 'kubectl --kubeconfig ' + shlex.quote(cfg['OSM_KUBECONFIG_PATH']) + ' ')
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     return r.returncode, r.stdout, r.stderr
 
 def get_pod_name(label):
-    data = _kubectl_json(["get", "pods", "-n", NS, "-o", "json"])
+    data = _kubectl_json(["get", "pods", "-n", _namespace(), "-o", "json"])
     if data is None:
         return ""
     return next((p["metadata"]["name"] for p in data.get("items", [])
@@ -77,11 +127,11 @@ def get_pod_name(label):
 
 @app.route("/")
 def index():
-    return send_from_directory(os.path.dirname(CONFIG_FILE), "index.html")
+    return send_from_directory(UI_DIR, "index.html")
 
 @app.route("/api/pods")
 def pods():
-    _, out, _ = run(f"kubectl get pods -n {NS} -o json")
+    _, out, _ = run(f"kubectl get pods -n {_namespace()} -o json")
     try:
         data = json.loads(out)
         result = []
@@ -98,7 +148,7 @@ def pods():
         return jsonify({"pods": [], "error": "parse error"})
 
 def get_pod_name_by_label(label_value):
-    data = _kubectl_json(["get", "pods", "-n", NS, "-l",
+    data = _kubectl_json(["get", "pods", "-n", _namespace(), "-l",
                           "app.kubernetes.io/name=" + label_value, "-o", "json"])
     if data is None:
         return ""
@@ -109,7 +159,7 @@ def get_pod_name_by_label(label_value):
 def _kubectl_json(args):
     """Run kubectl and return parsed JSON, or None on failure."""
     try:
-        p = subprocess.run(["kubectl", *args], capture_output=True, text=True, timeout=8)
+        p = subprocess.run(_kubectl_argv(args), capture_output=True, text=True, timeout=8)
         if p.returncode != 0:
             return None
         return json.loads(p.stdout)
@@ -124,7 +174,7 @@ def _scenario_pods(key):
     if not scen:
         return []
 
-    data = _kubectl_json(["get", "pods", "-n", NS, "-o", "json"])
+    data = _kubectl_json(["get", "pods", "-n", _namespace(), "-o", "json"])
     if not data:
         return []
 
@@ -150,7 +200,7 @@ def _scenario_pods(key):
 def _nf_pod(nf):
     nf_upper = nf.upper()
     if nf_upper == "UE":
-        data = _kubectl_json(["get", "pods", "-n", NS, "-o", "json"])
+        data = _kubectl_json(["get", "pods", "-n", _namespace(), "-o", "json"])
         if not data:
             return None
         for p in data.get("items", []):
@@ -161,7 +211,7 @@ def _nf_pod(nf):
                 return p
         return None
     if nf_upper in NF_LABELS:
-        data = _kubectl_json(["get", "pods", "-n", NS, "-l",
+        data = _kubectl_json(["get", "pods", "-n", _namespace(), "-l",
                               f"app.kubernetes.io/name={NF_LABELS[nf_upper]}", "-o", "json"])
         if data:
             for p in data.get("items", []):
@@ -176,7 +226,7 @@ def _nf_pod(nf):
     pod_name = get_pod_name(label)
     if not pod_name:
         return None
-    data = _kubectl_json(["get", "pod", "-n", NS, pod_name, "-o", "json"])
+    data = _kubectl_json(["get", "pod", "-n", _namespace(), pod_name, "-o", "json"])
     return data
 
 
@@ -241,7 +291,7 @@ def _live_processes(p):
         )
         try:
             q = subprocess.run(
-                ["kubectl", "exec", "-n", NS, pod, "-c", cname, "--", "sh", "-c", cmd],
+                _kubectl_argv(["exec", "-n", _namespace(), pod, "-c", cname, "--", "sh", "-c", cmd]),
                 capture_output=True, text=True, timeout=8
             )
             if q.returncode != 0:
@@ -313,8 +363,8 @@ def _log_text_for_pod(pod, lines=60):
         if logfile:
             try:
                 q = subprocess.run(
-                    ["kubectl", "exec", "-n", NS, name, "-c", cname, "--",
-                     "sh", "-c", f"tail -n {int(lines)} {logfile} 2>/dev/null"],
+                    _kubectl_argv(["exec", "-n", _namespace(), name, "-c", cname, "--",
+                     "sh", "-c", f"tail -n {int(lines)} {logfile} 2>/dev/null"]),
                     capture_output=True, text=True, timeout=8
                 )
                 if q.stdout.strip():
@@ -325,7 +375,7 @@ def _log_text_for_pod(pod, lines=60):
 
         try:
             q = subprocess.run(
-                ["kubectl", "logs", "-n", NS, name, "-c", cname, f"--tail={int(lines)}"],
+                _kubectl_argv(["logs", "-n", _namespace(), name, "-c", cname, f"--tail={int(lines)}"]),
                 capture_output=True, text=True, timeout=8
             )
             out = (q.stdout or q.stderr).strip()
@@ -341,8 +391,8 @@ def _log_text_for_pod(pod, lines=60):
             continue
         try:
             q = subprocess.run(
-                ["kubectl", "exec", "-n", NS, name, "-c", cname, "--",
-                 "sh", "-c", "cat /proc/net/sctp/assocs 2>/dev/null | tail -n +2"],
+                _kubectl_argv(["exec", "-n", _namespace(), name, "-c", cname, "--",
+                 "sh", "-c", "cat /proc/net/sctp/assocs 2>/dev/null | tail -n +2"]),
                 capture_output=True, text=True, timeout=5
             )
             assoc = q.stdout.strip()
@@ -585,10 +635,10 @@ def logs(nf):
 @app.route("/api/status")
 def status():
     try:
-        with open(CONFIG_FILE) as f:
+        with open(_state_path()) as f:
             config = yaml.safe_load(f)
         frags = sorted({p for s in SCENARIOS.values() for p in s["pods"]})
-        _, pods_out, _ = run(f"kubectl get pods -n {NS} | grep -E '" + "|".join(frags) + "'")
+        _, pods_out, _ = run(f"kubectl get pods -n {_namespace()} | grep -E '" + "|".join(frags) + "'")
         return jsonify({"active": config.get("active","none"), "pods": pods_out.strip()})
     except Exception as e:
         return jsonify({"active": "none", "error": str(e)})
@@ -598,7 +648,7 @@ def osm_status():
     """OSM 19 + FluxCD health for the OSM panel."""
     out = {"pods": {"ready": 0, "total": 0}, "flux": [], "error": None}
     try:
-        _, po, _ = run("kubectl get pods -n osm -o json")
+        _, po, _ = run(f"kubectl get pods -n {load_config()['OSM_NAMESPACE']} -o json")
         items = json.loads(po).get("items", [])
         ready = 0
         for p in items:
@@ -619,7 +669,7 @@ def osm_status():
         out["error"] = str(e)
     return jsonify(out)
 
-DOCS_DIR = os.path.join(os.path.dirname(CONFIG_FILE), "docs")
+DOCS_DIR = os.path.join(UI_DIR, "docs")
 
 @app.route("/api/docs/slides")
 def docs_slides():
@@ -670,7 +720,7 @@ def scenarios():
 
 
 def _pods_present(frags, selector=None):
-    args = ["get", "pods,deployments,statefulsets,daemonsets,replicasets,jobs,services,configmaps", "-n", NS, "-o", "json"]
+    args = ["get", "pods,deployments,statefulsets,daemonsets,replicasets,jobs,services,configmaps", "-n", _namespace(), "-o", "json"]
     # Services/configmaps need not carry the pod selector; inspect all names.
     data = _kubectl_json(args)
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
@@ -702,7 +752,9 @@ def deploy():
     if key not in SCENARIOS:
         return jsonify({"error": "Unknown scenario"}), 400
     try:
-        with exclusive_lock(Path(CONFIG_FILE).parent / ".lifecycle.lock"):
+        g.runtime_state_path = _state_path()
+        Path(g.runtime_state_path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with exclusive_lock(Path(g.runtime_state_path).parent / ".lifecycle.lock"):
             return _deploy_locked(key)
     except Exception as error:
         return jsonify({"error": str(error)}), 500
@@ -718,18 +770,28 @@ def _deploy_locked(key):
         return jsonify({"error": scenario["blocked_reason"]}), 409
     try:
         artifacts = validated_snapshot(Path(__file__).resolve().parents[1], DEFAULT_OUTPUT, scenario)
-        catalog = Catalog(osm_client.OSM_HOST, osm_client.get_token())
+        cfg, context, catalog = runtime_preflight()
+        if cfg['DEPLOYMENT_PROFILE'] != 'rfsim':
+            raise ConfigError('USRP dashboard packaging is not wired; use an explicitly validated hardware workflow')
+        g.runtime_config, g.runtime_context = cfg, context
+        if CONFIG_FILE == DEFAULT_STATE_PATH and cfg['ACTIVE_STATE_PATH'] != g.runtime_state_path:
+            raise ConfigError('Runtime state path changed during preflight; retry after configuration is stable')
         identities = catalog.verify(scenario, artifacts)
     except (PackageError, CatalogError, OSError, ValueError) as error:
         return jsonify({"error": "Replacement preflight failed: " + str(error)}), 409
+    with osm_client.runtime_session(cfg):
+        return _deploy_verified(key, registry, entries, scen, scenario, context, identities)
+
+
+def _deploy_verified(key, registry, entries, scen, scenario, context, identities):
     try:
-        with open(CONFIG_FILE) as stream:
+        with open(_state_path()) as stream:
             config = yaml.safe_load(stream)
     except FileNotFoundError:
         raise ValueError("Missing runtime state; initialize explicitly before lifecycle operations") from None
-    if not isinstance(config, dict) or not isinstance(config.get("osm", {}), dict):
-        raise ValueError("Invalid runtime state; refusing lifecycle changes")
-    config.setdefault("osm", {})
+    validate_state(config, registry, context)
+    config.setdefault('osm', {})
+    config['context'] = context
     if config["osm"].get("pending_instance"):
         raise RuntimeError("Pending instance requires reconciliation before another deployment")
     if not scen.get("additive"):
@@ -751,17 +813,17 @@ def _deploy_locked(key):
             config["osm"].pop("active_instance_id", None)
             config["osm"].pop("active_scenario", None)
             config["active"] = "none"
-            atomic_write(CONFIG_FILE, yaml.safe_dump(config).encode())
+            atomic_write(_state_path(), yaml.safe_dump(config).encode())
     config["osm"]["pending_instance"] = {"scenario": key, "name": "ran-" + key,
                                            "nsd_uuid": identities["ns"], "stage": "requesting"}
-    atomic_write(CONFIG_FILE, yaml.safe_dump(config).encode())
+    atomic_write(_state_path(), yaml.safe_dump(config).encode())
     ns_id, op_id = osm_client.instantiate_ns(scenario["nsd_package"], "ran-" + key,
-                                            verified_nsd_uuid=identities["ns"])
+                                            verified_nsd_uuid=identities["ns"], vim_account_id=context["vim_id"])
     if not ns_id or not op_id:
         raise RuntimeError("Instantiation returned no instance/operation identity")
     # Persist pending identity before polling, so failures remain discoverable.
     config["osm"]["pending_instance"] = {"id": ns_id, "scenario": key, "operation": op_id}
-    atomic_write(CONFIG_FILE, yaml.safe_dump(config).encode())
+    atomic_write(_state_path(), yaml.safe_dump(config).encode())
     if osm_client.wait_for_op(op_id, timeout=180) != "COMPLETED":
         raise RuntimeError("Instantiation did not complete; pending instance retained")
     if scen.get("additive"):
@@ -770,7 +832,7 @@ def _deploy_locked(key):
         config["osm"].update(active_instance_id=ns_id, active_scenario=key)
         config["active"] = key
     config["osm"].pop("pending_instance", None)
-    atomic_write(CONFIG_FILE, yaml.safe_dump(config).encode())
+    atomic_write(_state_path(), yaml.safe_dump(config).encode())
     return jsonify({"status": "success", "ran": key, "name": scen["name"], "ns_instance_id": ns_id})
 
 
@@ -785,7 +847,7 @@ def verify_clean():
         sel = scen.get("selector")
         lflag = f" -l {sel}" if sel else ""
         for frag in scen["pods"]:
-            _, out, _ = run(f"kubectl get pods -n {NS}{lflag} --no-headers 2>/dev/null | grep {frag} | grep Running")
+            _, out, _ = run(f"kubectl get pods -n {_namespace()}{lflag} --no-headers 2>/dev/null | grep {frag} | grep Running")
             if out.strip():
                 hits.append(frag)
         if hits:
@@ -802,7 +864,7 @@ def verify_clean():
 @app.route("/api/hpa")
 def hpa():
     """Live autoscaler state - the v-CRAN evidence."""
-    _, out, _ = run(f"kubectl get hpa -n {NS} --no-headers 2>/dev/null")
+    _, out, _ = run(f"kubectl get hpa -n {_namespace()} --no-headers 2>/dev/null")
     rows = []
     for line in out.strip().split("\n"):
         p = line.split()
@@ -812,11 +874,11 @@ def hpa():
     return jsonify({"hpa": rows})
 
 
-PROM_URL = "http://localhost:30990"
+
 
 def _prom_query(promql):
     import urllib.request, urllib.parse, json as _json
-    url = f"{PROM_URL}/api/v1/query?query={urllib.parse.quote(promql)}"
+    url = f"{load_config()['PROMETHEUS_URL']}/api/v1/query?query={urllib.parse.quote(promql)}"
     try:
         with urllib.request.urlopen(url, timeout=4) as resp:
             data = _json.loads(resp.read().decode())
@@ -838,20 +900,20 @@ def latency():
 
 def _ue_status_payload():
     """Return the same live UE state used by /api/ue-status, without HTTP."""
-    _, pod, _ = run(f"kubectl get pods -n {NS} -l app=oai-nr-ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
+    _, pod, _ = run(f"kubectl get pods -n {_namespace()} -l app=oai-nr-ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
     pod = pod.strip().strip("'")
     registered = False
     pdu_session = False
     tun_ip = ""
     if pod:
-        _, tun_out, _ = run(f"kubectl exec -n {NS} {pod} -- ip -4 -o addr show oaitun_ue1 2>/dev/null")
+        _, tun_out, _ = run(f"kubectl exec -n {_namespace()} {pod} -- ip -4 -o addr show oaitun_ue1 2>/dev/null")
         m = re.search(r"inet (\S+)/", tun_out)
         if m:
             registered = True
             pdu_session = True
             tun_ip = m.group(1)
         else:
-            _, out, _ = run(f"kubectl logs -n {NS} {pod} 2>&1")
+            _, out, _ = run(f"kubectl logs -n {_namespace()} {pod} 2>&1")
             registered = "Registration complete" in out or "Received Registration Accept" in out
             pdu_session = (
                 "Received PDU Session Establishment Accept" in out
@@ -884,9 +946,9 @@ def istio_status():
     injected = {}
     for nf, label in NF_LABELS.items():
         _, containers, _ = run(
-            f"kubectl get pods -n {NS} -l app.kubernetes.io/name={label} "
+            f"kubectl get pods -n {_namespace()} -l app.kubernetes.io/name={label} "
             "--no-headers 2>/dev/null | grep Running | head -1 | awk '{print $1}' | "
-            f"xargs -I{{}} kubectl get pod -n {NS} {{}} -o jsonpath='{{.spec.containers[*].name}}' 2>/dev/null"
+            f"xargs -I{{}} kubectl get pod -n {_namespace()} {{}} -o jsonpath='{{.spec.containers[*].name}}' 2>/dev/null"
         )
         injected[nf] = "istio-proxy" in containers
 
@@ -916,7 +978,7 @@ def layer2_metrics():
 def layer3_actions():
     """Recent autonomous actions taken by the Layer 3 watcher."""
     import json as _json
-    path = os.path.expanduser("~/5g-kubernetes/layer3-autonomous/actions.log")
+    path = load_config()['ACTIONS_LOG_PATH']
     actions = []
     try:
         with open(path) as f:
@@ -933,4 +995,4 @@ def layer3_actions():
     return jsonify({"actions": actions})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8090, debug=False)
+    app.run(host="0.0.0.0", port=int(load_config()['DASHBOARD_PORT']), debug=False)

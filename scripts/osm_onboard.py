@@ -1,6 +1,6 @@
 """Explicit onboarding of prepared immutable bytes. Never invoked by local tests."""
 import argparse
-import os
+from runtime_config import load_config, discover_context, ConfigError
 from osm_packages import REPO_ROOT, DEFAULT_OUTPUT, prepare, validated_snapshot, PackageError
 from scenario_registry import load_registry, select_scenarios
 from osm_catalog import Catalog, CatalogError
@@ -20,13 +20,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         scenarios = select_scenarios(load_registry(), args.scenarios, args.ready)
+        cfg = load_config(network='auto', require=('osm',))
+        catalog = Catalog(cfg['OSM_HOST'])
+        catalog.authenticate(cfg['OSM_USER'], cfg['OSM_PASSWORD'], cfg['OSM_PROJECT_ID'] or cfg['OSM_PROJECT'])
+        discover_context(cfg, catalog, require_vim=False)
         prepare(REPO_ROOT, args.output, scenarios)
         snapshots = [validated_snapshot(REPO_ROOT, args.output, s) for s in scenarios]
-        password = os.environ.get('OSM_PASSWORD')
-        if not password:
-            raise CatalogError('Set OSM_PASSWORD')
-        catalog = Catalog(os.environ.get('OSM_HOST', 'https://gui.172.30.18.32.nip.io:30843'))
-        catalog.authenticate('admin', password)
         onboard(catalog, scenarios, snapshots)
         for scenario, artifacts in zip(scenarios, snapshots):
             catalog.verify(scenario, artifacts)

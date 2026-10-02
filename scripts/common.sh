@@ -21,62 +21,69 @@ fail() {
 }
 
 load_config() {
-  local cfg="${REPO_ROOT}/config/global.env"
-  local cfg_example="${REPO_ROOT}/config/global.env.example"
-  if [ -f "$cfg" ]; then
-    source "$cfg"
-    log_info "Loaded config/global.env"
-  elif [ -f "$cfg_example" ]; then
-    source "$cfg_example"
-    log_warn "config/global.env not found — using config/global.env.example defaults"
-    log_warn "Run: cp config/global.env.example config/global.env"
-  else
-    fail "Neither config/global.env nor config/global.env.example found" \
-      "Run this script from the repository root" \
-      "The repository clone may be incomplete"
+  # Disable tracing before reading any credential. Restore the caller's mode last.
+  local tracing=0
+  case $- in *x*) tracing=1; set +x ;; esac
+  local records name value buffer
+  buffer="$(mktemp -d)" || fail "Cannot allocate private configuration buffer"
+  records="$buffer/records"
+  chmod 700 "$buffer"
+  if ! python3 "${REPO_ROOT}/scripts/runtime_config.py" --auto-network --snapshot "$buffer/config.json" --shell-records "$@" > "$records"; then
+    rm -f "$records" "$buffer/config.json"
+    rmdir "$buffer"
+    fail "Runtime configuration validation failed"
   fi
-
-  if [ -z "${HOST_IP:-}" ]; then
-    HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    [ -n "$HOST_IP" ] && log_info "Auto-detected HOST_IP=$HOST_IP"
-  fi
-  if [ -z "${HOST_INTERFACE:-}" ]; then
-    HOST_INTERFACE="$(ip route get 1.1.1.1 2>/dev/null | awk '{print $5; exit}')"
-    [ -n "$HOST_INTERFACE" ] && log_info "Auto-detected HOST_INTERFACE=$HOST_INTERFACE"
-  fi
-  if [ -z "${OSM_BASE_DOMAIN:-}" ] && [ -n "${HOST_IP:-}" ]; then
-    OSM_BASE_DOMAIN="${HOST_IP}.nip.io"
-  fi
-  export HOST_IP HOST_INTERFACE OSM_BASE_DOMAIN
+  while IFS= read -r -d '' name && IFS= read -r -d '' value; do
+    case "$name" in
+      OSM_PASSWORD|GRAFANA_ADMIN_PASSWORD|RANCHER_BOOTSTRAP_PASSWORD)
+        # Secrets live only in the owner-only snapshot; do not retain shell variables.
+        unset "$name"
+        ;;
+      *) printf -v "$name" '%s' "$value"; export "$name" ;;
+    esac
+  done < "$records"
+  rm -f "$records"
+  export P0_RUNTIME_CONFIG="$buffer/config.json"
+  # Children inherit only the snapshot path, never individual credentials.
+  P0_CONFIG_BUFFER="$buffer"
+  trap 'rm -f "$P0_CONFIG_BUFFER/config.json"; rmdir "$P0_CONFIG_BUFFER"' EXIT
+  [ "$tracing" -eq 0 ] || set -x
 }
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
-k_() { kubectl --kubeconfig "${OSM_KUBECONFIG_PATH:-$HOME/osm-kubeconfig.yaml}" "$@"; }
+# Management owns OSM/monitoring/Rancher; workload owns core/RAN/exporters.
+p_kubectl() { command kubectl --kubeconfig "${KUBECONFIG_PATH:?load_config is required}" "$@"; }
+r_kubectl() { command kubectl --kubeconfig "${OSM_KUBECONFIG_PATH:?load_config is required}" "$@"; }
+p_helm() { command helm --kubeconfig "${KUBECONFIG_PATH:?load_config is required}" "$@"; }
+r_helm() { command helm --kubeconfig "${OSM_KUBECONFIG_PATH:?load_config is required}" "$@"; }
+k_() { r_kubectl "$@"; } # Existing workload callers, retained for compatibility.
 
 kubectl_available() {
-  command_exists kubectl && k_ version --client >/dev/null 2>&1
+  command_exists kubectl && p_kubectl version --client >/dev/null 2>&1
 }
 
 namespace_exists() {
-  k_ get namespace "$1" >/dev/null 2>&1
+  p_kubectl get namespace "$1" >/dev/null 2>&1
 }
+
+ran_namespace_exists() { r_kubectl get namespace "$1" >/dev/null 2>&1; }
 
 helm_release_exists() {
   local release="$1" ns="${2:-default}"
-  helm status "$release" -n "$ns" >/dev/null 2>&1
+  p_helm status "$release" -n "$ns" >/dev/null 2>&1
 }
 
 crd_exists() {
-  k_ get crd "$1" >/dev/null 2>&1
+  p_kubectl get crd "$1" >/dev/null 2>&1
 }
 
 pods_ready_in_namespace() {
   local ns="$1"
   local total ready
-  total="$(k_ get pods -n "$ns" --no-headers 2>/dev/null | wc -l)"
+  total="$(p_kubectl get pods -n "$ns" --no-headers 2>/dev/null | wc -l)"
   [ "$total" -eq 0 ] && return 1
-  ready="$(k_ get pods -n "$ns" --no-headers 2>/dev/null | awk '{split($2,a,"/"); if (a[1]==a[2] && $3=="Running") c++} END{print c+0}')"
+  ready="$(p_kubectl get pods -n "$ns" --no-headers 2>/dev/null | awk '{split($2,a,"/"); if (a[1]==a[2] && $3=="Running") c++} END{print c+0}')"
   [ "$ready" -eq "$total" ]
 }
 

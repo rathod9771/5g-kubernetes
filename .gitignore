@@ -7,3 +7,8 @@ config/global.env
 
 # Generated exclusively from config/scenarios.json and canonical Helm sources.
 /build/osm-packages/
+
+# Generated runtime identities, private values and logs
+/.runtime/
+# Dormant legacy state: already tracked; preserved until explicit untracking review.
+/ran-selector/active-ran.yaml

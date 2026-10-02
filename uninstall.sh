@@ -30,15 +30,7 @@ confirm() {
 
 do_ran() {
   if confirm "the currently active RAN NS instance (via OSM terminate)"; then
-    ACTIVE_SCENARIO="$(python3 -c "
-import yaml
-try:
-    with open('${REPO_ROOT}/ran-selector/active-ran.yaml') as f:
-        d = yaml.safe_load(f) or {}
-    print(d.get('active') or '')
-except Exception:
-    print('')
-" 2>/dev/null)"
+    ACTIVE_SCENARIO="$(python3 "${REPO_ROOT}/scripts/runtime_state.py" active)" || fail "Cannot read runtime state"
     if [ -z "$ACTIVE_SCENARIO" ] || [ "$ACTIVE_SCENARIO" = "none" ]; then
       log_info "No active RAN scenario recorded — nothing to terminate"
     else
@@ -53,10 +45,10 @@ except Exception:
 do_monitoring() {
   if confirm "kube-prometheus-stack, ran-exporter, latency-probe, and their PodMonitors"; then
     log_info "Uninstalling monitoring components..."
-    helm uninstall kube-prometheus-stack -n monitoring 2>/dev/null || true
-    kubectl delete namespace monitoring --ignore-not-found 2>/dev/null || true
+    p_helm uninstall kube-prometheus-stack -n monitoring 2>/dev/null || true
+    p_kubectl delete namespace monitoring --ignore-not-found 2>/dev/null || true
     if [ -n "${OSM_PROJECT_NAMESPACE:-}" ]; then
-      kubectl delete deployment ran-exporter latency-probe -n "${OSM_PROJECT_NAMESPACE}" --ignore-not-found 2>/dev/null || true
+      r_kubectl delete deployment ran-exporter latency-probe -n "${OSM_PROJECT_NAMESPACE}" --ignore-not-found 2>/dev/null || true
     fi
     log_ok "Monitoring removed"
   else
@@ -75,12 +67,12 @@ do_core() {
 do_platform() {
   if confirm "OSM, Longhorn, and cert-manager (Kubernetes itself is left alone)"; then
     log_info "Uninstalling OSM..."
-    kubectl delete namespace osm --ignore-not-found 2>/dev/null || true
+    p_kubectl delete namespace "$OSM_NAMESPACE" --ignore-not-found 2>/dev/null || true
     log_info "Uninstalling Longhorn..."
-    helm uninstall longhorn -n longhorn-system 2>/dev/null || true
-    kubectl delete namespace longhorn-system --ignore-not-found 2>/dev/null || true
+    p_helm uninstall longhorn -n longhorn-system 2>/dev/null || true
+    p_kubectl delete namespace longhorn-system --ignore-not-found 2>/dev/null || true
     log_info "Uninstalling cert-manager..."
-    kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.5/cert-manager.yaml --ignore-not-found 2>/dev/null || true
+    p_kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.5/cert-manager.yaml --ignore-not-found 2>/dev/null || true
     log_ok "Platform components removed. Kubernetes itself is untouched -- reset it separately if needed (kubeadm reset)."
   else
     log_info "Skipped --platform"

@@ -5,22 +5,32 @@
 #   ./bench-all-ran.sh            # all ten
 #   ./bench-all-ran.sh oran-oai   # just one or a few
 #
-# Results append to results.csv and results.log in the current directory.
+# Results append under the private runtime directory. The configured iperf server
+# must already be running; this benchmark does not manage host server processes.
 
 set -uo pipefail
 
-NS=free5gc
-DASH=http://localhost:8090
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$REPO_ROOT/scripts/common.sh"
+load_config --require kubernetes
+NS="$(python3 "$REPO_ROOT/scripts/runtime_state.py" namespace)" || exit 1
+DASH="$DASHBOARD_URL"
+[ -n "$BENCH_IPERF_HOST" ] || fail "Configure BENCH_IPERF_HOST before benchmarking"
 IPERF_SECS=10
 PING_COUNT=15
 SETTLE_MAX=300          # seconds to wait for the UE session
-CSV=results.csv
-LOG=results.log
+mkdir -p "$RUNTIME_DIR" || exit 1
+CSV="$RUNTIME_DIR/results.csv"
+LOG="$RUNTIME_DIR/results.log"
 
-ALL=(cran-srsran cran-oai oran-srsran oran-oai cloudran-srsran cloudran-oai \
-     hcran-srsran hcran-oai vcran-srsran vcran-oai)
-TARGETS=("${@:-${ALL[@]}}")
+mapfile -t ALL < <(python3 -c 'import json,sys; print("\n".join(s["key"] for s in json.load(open(sys.argv[1]))["scenarios"] if s["generation_status"]=="ready" and not s["additive"]))' "$REPO_ROOT/config/scenarios.json")
+TARGETS=("${ALL[@]}")
 [ $# -gt 0 ] && TARGETS=("$@")
+for target in "${TARGETS[@]}"; do
+  matched=0
+  for allowed in "${ALL[@]}"; do [ "$target" != "$allowed" ] || matched=1; done
+  [ "$matched" -eq 1 ] || fail "Benchmark target must be a ready non-additive RAN scenario"
+done
 
 log(){ echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
@@ -28,20 +38,20 @@ log(){ echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
 fix_edge_route(){
   local upf
-  upf=$(kubectl get pods -n $NS -l app.kubernetes.io/name=upf -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  upf=$(r_kubectl get pods -n $NS -l app.kubernetes.io/name=upf -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
   [ -z "$upf" ] && return
   local ip
-  ip=$(kubectl get pod -n $NS "$upf" -o jsonpath='{.status.podIP}' 2>/dev/null)
-  [ -n "$ip" ] && sudo ip route replace 10.47.0.0/16 via "$ip" 2>/dev/null
+  ip=$(r_kubectl get pod -n $NS "$upf" -o jsonpath='{.status.podIP}' 2>/dev/null)
+  [ -n "$ip" ] && sudo ip route replace "$EDGE_CIDR" via "$ip" 2>/dev/null
 }
 
-ue_pod(){ kubectl get pods -n $NS -l component=ue -o jsonpath='{.items[0].metadata.name}' 2>/dev/null; }
+ue_pod(){ r_kubectl get pods -n $NS -l component=ue -o jsonpath='{.items[0].metadata.name}' 2>/dev/null; }
 
 wait_for_session(){
   local deadline=$((SECONDS + SETTLE_MAX)) ue
   while [ $SECONDS -lt $deadline ]; do
     ue=$(ue_pod)
-    if [ -n "$ue" ] && kubectl exec -n $NS "$ue" -- ip addr show uesimtun0 2>/dev/null | grep -q "10\.45\."; then
+    if [ -n "$ue" ] && r_kubectl exec -n $NS "$ue" -- ip addr show uesimtun0 2>/dev/null | grep -q "inet "; then
       sleep 10          # let the link settle before measuring
       return 0
     fi
@@ -51,7 +61,7 @@ wait_for_session(){
 }
 
 cpu_of(){   # cpu_of <component-label>  -> millicores, or empty
-  kubectl top pod -n $NS -l component="$1" --no-headers 2>/dev/null \
+  r_kubectl top pod -n $NS -l component="$1" --no-headers 2>/dev/null \
     | awk '{gsub(/m/,"",$2); print $2; exit}'
 }
 
@@ -77,21 +87,19 @@ for key in "${TARGETS[@]}"; do
 
   # the UE image ships without iperf3 and the install does not survive a pod
   # restart, so put it back after every deploy
-  if ! kubectl exec -n $NS "$UE" -- which iperf3 >/dev/null 2>&1; then
+  if ! r_kubectl exec -n $NS "$UE" -- which iperf3 >/dev/null 2>&1; then
     log "installing iperf3 into the UE pod..."
-    kubectl exec -n $NS "$UE" -- sh -c \
+    r_kubectl exec -n $NS "$UE" -- sh -c \
       "apt-get update -qq >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iperf3 >/dev/null 2>&1"
-    if ! kubectl exec -n $NS "$UE" -- which iperf3 >/dev/null 2>&1; then
+    if ! r_kubectl exec -n $NS "$UE" -- which iperf3 >/dev/null 2>&1; then
       log "iperf3 install FAILED - recording latency only"
     fi
   fi
 
   # throughput
-  pkill iperf3 2>/dev/null; sleep 1
-  iperf3 -s -D
-  sleep 2
-  IPERF=$(kubectl exec -n $NS "$UE" -- iperf3 -c 10.244.0.1 -B 10.45.0.2 -t $IPERF_SECS 2>&1)
-  pkill iperf3 2>/dev/null
+  # Use the explicitly configured server; do not stop/start unrelated host servers.
+  UE_ADDRESS="$(r_kubectl exec -n "$NS" "$UE" -- ip -j -4 address show uesimtun0 | python3 -c 'import ipaddress,json,sys; a=[x["local"] for e in json.load(sys.stdin) for x in e.get("addr_info",[]) if x.get("family")=="inet"]; len(a)==1 or sys.exit("Missing or ambiguous UE address"); print(ipaddress.IPv4Address(a[0]))')" || exit 1
+  IPERF=$(r_kubectl exec -n "$NS" "$UE" -- iperf3 -c "$BENCH_IPERF_HOST" -p "$BENCH_IPERF_PORT" -B "$UE_ADDRESS" -t "$IPERF_SECS" 2>&1)
   echo "$IPERF" >> "$LOG"
 
   # summary line: [  4]  0.00-10.00 sec  382 MBytes  320 Mbits/sec  473  sender
@@ -106,7 +114,7 @@ for key in "${TARGETS[@]}"; do
   case "$RETR" in (*[!0-9]*) RETR="" ;; esac
 
   # latency
-  PING=$(kubectl exec -n $NS "$UE" -- ping -I uesimtun0 -c $PING_COUNT 8.8.8.8 2>&1 | tail -2)
+  PING=$(r_kubectl exec -n $NS "$UE" -- ping -I uesimtun0 -c "$PING_COUNT" "$BENCH_PING_HOST" 2>&1 | tail -2)
   echo "$PING" >> "$LOG"
   # line looks like: rtt min/avg/max/mdev = 7.932/8.325/10.857/0.718 ms
   RTT=$(echo "$PING" | sed -n 's/.*= \([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\)\/.*/\1 \2 \3/p')

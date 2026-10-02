@@ -56,8 +56,8 @@ class Catalog:
         except Exception:
             raise CatalogError('OSM request failed; catalog provenance unavailable') from None
 
-    def authenticate(self, user, password):
-        data = yaml.safe_dump({'username': user, 'password': password, 'project-id': 'admin'}).encode()
+    def authenticate(self, user, password, project):
+        data = yaml.safe_dump({'username': user, 'password': password, 'project-id': project}).encode()
         parsed = parse_response(self.request('POST', '/admin/v1/tokens', data))
         if not isinstance(parsed, dict) or not isinstance(parsed.get('id'), str):
             raise CatalogError('Invalid authentication response')

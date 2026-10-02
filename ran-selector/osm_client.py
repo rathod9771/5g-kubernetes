@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """OSM lifecycle client using verified HTTPS and strict structured responses."""
 import os
+import contextlib
+import contextvars
+import functools
+import threading
 from pathlib import Path
 import sys
 import time
@@ -9,31 +13,67 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from osm_catalog import Catalog, CatalogError, AuthorizationError, identifier
 
-OSM_HOST = 'https://gui.172.30.18.32.nip.io:30843'
-OSM_USER = 'admin'
-OSM_PASS = os.environ.get('OSM_PASSWORD')
-VIM_ACCOUNT_ID = 'b0481f03-f5eb-47a2-9a20-bd72430b3b13'
-_token_cache = {'token': None, 'fetched_at': 0}
+from runtime_config import load_config, discover_context, kubernetes_json, ConfigError
+
+_session = contextvars.ContextVar('osm_runtime_configuration', default=None)
+
+
+@contextlib.contextmanager
+def runtime_session(cfg):
+    marker = _session.set(dict(cfg))
+    try:
+        yield
+    finally:
+        _session.reset(marker)
+
+
+_token_lock = threading.RLock()
+_token_cache = {'token': None, 'fetched_at': 0, 'identity': None}
+
+
+def runtime_config(require=()):
+    if _session.get() is not None:
+        return dict(_session.get())
+    return load_config(network='auto', require=('osm', *require))
+
+
+def runtime_operation(function):
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        cfg = runtime_config()
+        with runtime_session(cfg):
+            return function(*args, **kwargs)
+    return wrapped
 
 
 def get_token(force=False):
-    if not force and _token_cache['token'] and time.time() - _token_cache['fetched_at'] < 2700:
-        return _token_cache['token']
-    if not OSM_PASS:
-        raise CatalogError('Set OSM_PASSWORD; no default credential is permitted')
-    catalog = Catalog(OSM_HOST)
-    catalog.authenticate(OSM_USER, OSM_PASS)
-    _token_cache.update(token=catalog.token, fetched_at=time.time())
-    return catalog.token
+    cfg = runtime_config()
+    with _token_lock:
+        identity = tuple(cfg[k] for k in ['OSM_HOST', 'OSM_USER', 'OSM_PASSWORD', 'OSM_PROJECT', 'OSM_PROJECT_ID'])
+        if not force and _token_cache['identity'] == identity and _token_cache['token'] and time.time() - _token_cache['fetched_at'] < 2700:
+            return _token_cache['token']
+        catalog = Catalog(cfg['OSM_HOST'])
+        catalog.authenticate(cfg['OSM_USER'], cfg['OSM_PASSWORD'], cfg['OSM_PROJECT_ID'] or cfg['OSM_PROJECT'])
+        _token_cache.update(token=catalog.token, fetched_at=time.time(), identity=identity)
+        return catalog.token
+
+
+def context(cfg=None, catalog=None):
+    cfg = cfg or runtime_config(require=('kubernetes',))
+    with runtime_session(cfg):
+        catalog = catalog or Catalog(cfg['OSM_HOST'], get_token())
+        return discover_context(cfg, catalog, lambda: kubernetes_json(cfg, ['get', 'namespaces', '-o', 'json']))
 
 
 def _request(method, path, data=None):
-    catalog = Catalog(OSM_HOST, get_token())
-    try:
-        return catalog.request(method, path, data)
-    except AuthorizationError:
-        catalog.token = get_token(force=True)
-        return catalog.request(method, path, data)
+    cfg = runtime_config()
+    with runtime_session(cfg):
+        catalog = Catalog(cfg['OSM_HOST'], get_token())
+        try:
+            return catalog.request(method, path, data)
+        except AuthorizationError:
+            catalog.token = get_token(force=True)
+            return catalog.request(method, path, data)
 
 
 def _mapping(content):
@@ -48,13 +88,16 @@ def _mapping(content):
 
 def get_nsd_uuid(nsd_name, force=False):
     # No indefinite NSD cache; dashboard supplies the preflight-verified UUID.
-    return Catalog(OSM_HOST, get_token()).lookup('ns', nsd_name)
+    cfg = runtime_config()
+    with runtime_session(cfg):
+        return Catalog(cfg['OSM_HOST'], get_token()).lookup('ns', nsd_name)
 
 
-def instantiate_ns(nsd_name, ns_name, description='Deployed via RAN selector dashboard', verified_nsd_uuid=None):
+@runtime_operation
+def instantiate_ns(nsd_name, ns_name, description='Deployed via RAN selector dashboard', verified_nsd_uuid=None, vim_account_id=None):
     nsd_id = identifier(verified_nsd_uuid or get_nsd_uuid(nsd_name))
     body = yaml.safe_dump({'nsdId': nsd_id, 'nsName': ns_name, 'nsDescription': description,
-                           'vimAccountId': identifier(VIM_ACCOUNT_ID)}).encode()
+                           'vimAccountId': identifier(vim_account_id or context()['vim_id'])}).encode()
     response = _mapping(_request('POST', '/nslcm/v1/ns_instances_content', body))
     return identifier(response.get('id')), identifier(response.get('nslcmop_id'))
 
@@ -94,6 +137,7 @@ def get_op_state(nslcmop_id):
     return _mapping(_request('GET', '/nslcm/v1/ns_lcm_op_occs/' + identifier(nslcmop_id))).get('operationState')
 
 
+@runtime_operation
 def wait_for_op(nslcmop_id, timeout=180, interval=5):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
