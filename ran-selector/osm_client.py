@@ -1,120 +1,104 @@
 #!/usr/bin/env python3
-"""
-Minimal OSM NBI client for the RAN selector backend.
-Reuses the exact request patterns proven working via curl throughout
-this project (see scripts/osm-onboard.sh for the same auth pattern).
-"""
-import subprocess
-import time
+"""OSM lifecycle client using verified HTTPS and strict structured responses."""
 import os
+from pathlib import Path
+import sys
+import time
 import yaml
 
-OSM_HOST = "https://gui.172.30.18.32.nip.io:30843"
-OSM_USER = "admin"
-OSM_PASS = os.environ.get("OSM_PASSWORD", "admin")
-VIM_ACCOUNT_ID = "b0481f03-f5eb-47a2-9a20-bd72430b3b13"  # dummyvim, set after full OSM rebuild
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+from osm_catalog import Catalog, CatalogError, AuthorizationError, identifier
 
-_token_cache = {"token": None, "fetched_at": 0}
-_nsd_cache = {}  # nsd_name -> uuid
-
-
-def _curl(args, data=None):
-    cmd = ["curl", "-sk"] + args
-    result = subprocess.run(cmd, input=data, capture_output=True, text=True, timeout=30)
-    return result.stdout
+OSM_HOST = 'https://gui.172.30.18.32.nip.io:30843'
+OSM_USER = 'admin'
+OSM_PASS = os.environ.get('OSM_PASSWORD')
+VIM_ACCOUNT_ID = 'b0481f03-f5eb-47a2-9a20-bd72430b3b13'
+_token_cache = {'token': None, 'fetched_at': 0}
 
 
 def get_token(force=False):
-    if not force and _token_cache["token"] and (time.time() - _token_cache["fetched_at"] < 2700):
-        return _token_cache["token"]
-    body = f"username: {OSM_USER}\npassword: {OSM_PASS}\nproject-id: admin"
-    out = _curl([
-        "-X", "POST", f"{OSM_HOST}/osm/admin/v1/tokens",
-        "-H", "Content-Type: application/yaml",
-        "--data-binary", "@-"
-    ], data=body)
-    parsed = yaml.safe_load(out)
-    token = parsed.get("id") if parsed else None
-    if not token:
-        raise RuntimeError(f"Failed to get OSM token: {out}")
-    _token_cache["token"] = token
-    _token_cache["fetched_at"] = time.time()
-    return token
+    if not force and _token_cache['token'] and time.time() - _token_cache['fetched_at'] < 2700:
+        return _token_cache['token']
+    if not OSM_PASS:
+        raise CatalogError('Set OSM_PASSWORD; no default credential is permitted')
+    catalog = Catalog(OSM_HOST)
+    catalog.authenticate(OSM_USER, OSM_PASS)
+    _token_cache.update(token=catalog.token, fetched_at=time.time())
+    return catalog.token
 
 
-def _auth_curl(args, data=None, retry_on_401=True):
-    token = get_token()
-    out = _curl(["-H", f"Authorization: Bearer {token}"] + args, data=data)
-    if retry_on_401 and ("UNAUTHORIZED" in out or "Expired Token" in out):
-        token = get_token(force=True)
-        out = _curl(["-H", f"Authorization: Bearer {token}"] + args, data=data)
-    return out
+def _request(method, path, data=None):
+    catalog = Catalog(OSM_HOST, get_token())
+    try:
+        return catalog.request(method, path, data)
+    except AuthorizationError:
+        catalog.token = get_token(force=True)
+        return catalog.request(method, path, data)
+
+
+def _mapping(content):
+    try:
+        value = yaml.safe_load(content)
+    except yaml.YAMLError:
+        raise CatalogError('Malformed OSM response') from None
+    if not isinstance(value, dict):
+        raise CatalogError('Expected an OSM object response')
+    return value
 
 
 def get_nsd_uuid(nsd_name, force=False):
-    if not force and nsd_name in _nsd_cache:
-        return _nsd_cache[nsd_name]
-    out = _auth_curl(["-X", "GET", f"{OSM_HOST}/osm/nsd/v1/ns_descriptors"])
-    parsed = yaml.safe_load(out)
-    if not parsed:
-        raise RuntimeError(f"Failed to list NSDs: {out}")
-    for entry in parsed:
-        if entry.get("id") == nsd_name:
-            uuid = entry.get("_id")
-            _nsd_cache[nsd_name] = uuid
-            return uuid
-    raise RuntimeError(f"NSD '{nsd_name}' not found in OSM catalog")
+    # No indefinite NSD cache; dashboard supplies the preflight-verified UUID.
+    return Catalog(OSM_HOST, get_token()).lookup('ns', nsd_name)
 
 
-def instantiate_ns(nsd_name, ns_name, description="Deployed via RAN selector dashboard"):
-    nsd_id = get_nsd_uuid(nsd_name)
-    body = (f"nsdId: {nsd_id}\nnsName: {ns_name}\n"
-            f"nsDescription: {description}\nvimAccountId: {VIM_ACCOUNT_ID}")
-    out = _auth_curl([
-        "-w", "\nHTTP:%{http_code}\n",
-        "-X", "POST", f"{OSM_HOST}/osm/nslcm/v1/ns_instances_content",
-        "-H", "Content-Type: application/yaml",
-        "--data-binary", "@-"
-    ], data=body)
-    if "HTTP:201" not in out and "HTTP:202" not in out:
-        raise RuntimeError(f"Instantiate failed for {nsd_name}: {out}")
-    parsed = yaml.safe_load(out.split("HTTP:")[0])
-    return parsed.get("id"), parsed.get("nslcmop_id")
+def instantiate_ns(nsd_name, ns_name, description='Deployed via RAN selector dashboard', verified_nsd_uuid=None):
+    nsd_id = identifier(verified_nsd_uuid or get_nsd_uuid(nsd_name))
+    body = yaml.safe_dump({'nsdId': nsd_id, 'nsName': ns_name, 'nsDescription': description,
+                           'vimAccountId': identifier(VIM_ACCOUNT_ID)}).encode()
+    response = _mapping(_request('POST', '/nslcm/v1/ns_instances_content', body))
+    return identifier(response.get('id')), identifier(response.get('nslcmop_id'))
 
 
 def terminate_ns(ns_instance_id):
-    out = _auth_curl([
-        "-w", "\nHTTP:%{http_code}\n",
-        "-X", "POST", f"{OSM_HOST}/osm/nslcm/v1/ns_instances/{ns_instance_id}/terminate",
-        "-H", "Content-Length: 0"
-    ])
-    if "HTTP:200" not in out and "HTTP:202" not in out:
-        raise RuntimeError(f"Terminate failed for {ns_instance_id}: {out}")
-    parsed = yaml.safe_load(out.split("HTTP:")[0])
-    return parsed.get("id") if parsed else None
+    response = _mapping(_request('POST', '/nslcm/v1/ns_instances/' + identifier(ns_instance_id) + '/terminate', b''))
+    return identifier(response.get('id'))
 
 
 def delete_ns_instance(ns_instance_id):
-    out = _auth_curl([
-        "-w", "\nHTTP:%{http_code}\n",
-        "-X", "DELETE", f"{OSM_HOST}/osm/nslcm/v1/ns_instances/{ns_instance_id}"
-    ])
-    return "HTTP:204" in out or "HTTP:200" in out
+    # request rejects every non-2xx status, including transport/TLS failures.
+    _request('DELETE', '/nslcm/v1/ns_instances/' + identifier(ns_instance_id))
+    return True
+
+
+def ns_instance_absent(ns_instance_id):
+    try:
+        entries = yaml.safe_load(_request('GET', '/nslcm/v1/ns_instances'))
+    except yaml.YAMLError:
+        return False
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return False
+        value = entry.get('_id', entry.get('id'))
+        try:
+            value = identifier(value)
+        except CatalogError:
+            return False
+        if value == ns_instance_id:
+            return False
+    return True
 
 
 def get_op_state(nslcmop_id):
-    out = _auth_curl(["-X", "GET", f"{OSM_HOST}/osm/nslcm/v1/ns_lcm_op_occs/{nslcmop_id}"])
-    parsed = yaml.safe_load(out)
-    return parsed.get("operationState") if parsed else None
+    return _mapping(_request('GET', '/nslcm/v1/ns_lcm_op_occs/' + identifier(nslcmop_id))).get('operationState')
 
 
 def wait_for_op(nslcmop_id, timeout=180, interval=5):
-    """Poll an LCM operation until it leaves PROCESSING/COMPLETING, or timeout."""
-    waited = 0
-    while waited < timeout:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         state = get_op_state(nslcmop_id)
-        if state in ("COMPLETED", "PARTIALLY_COMPLETED", "FAILED", "FAILED_TEMP"):
+        if state in ('COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED', 'FAILED_TEMP'):
             return state
         time.sleep(interval)
-        waited += interval
-    return "TIMEOUT"
+    return 'TIMEOUT'

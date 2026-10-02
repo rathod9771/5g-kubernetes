@@ -1,0 +1,563 @@
+{
+  "schema_version": 1,
+  "aliases": {
+    "srsran": "cran-srsran",
+    "oai": "oran-oai",
+    "oai-cran": "cran-oai",
+    "srsran-oran": "oran-srsran",
+    "cran": "cran-srsran",
+    "oran": "oran-oai"
+  },
+  "scenarios": [
+    {
+      "key": "cran-srsran",
+      "display_name": "C-RAN + srsRAN (3GPP Rel-15 CU/DU/F1)",
+      "ran_type": "cran",
+      "implementation": "srsRAN",
+      "deployment_mechanism": "osm",
+      "generation_status": "ready",
+      "blocked_reason": null,
+      "knf_package": "cran_srsran_knf",
+      "nsd_package": "cran_srsran_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "cran-srsran-cu",
+          "source": "helm/cran-srsran/cu",
+          "values_files": []
+        },
+        {
+          "kdu": "du",
+          "release_name": "cran-srsran-du",
+          "source": "helm/cran-srsran/du",
+          "values_files": []
+        }
+      ],
+      "pods": [
+        "cran-srsran-cu",
+        "cran-srsran-du"
+      ],
+      "selector": "ran-type=cran",
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/cran_srsran_knf",
+        "tree_sha256": "b54ff4b816f0c9782ce4470eda64ef8506793c015b7fa4b1f569c733b52afdaa",
+        "archive_sha256": "9adeeabe5c7c1aee87d3b3345c0b29123238f449e6f543cb478722d7d23e061d"
+      },
+      "member_id": "srsran",
+      "preserved_fixes": [
+        "AMF discovery via amf-ngap-stable",
+        "Pod-IP bind/advertise substitution",
+        "Explicit slice SST 1 / SD 010203",
+        "Istio injection disabled on RAN pods"
+      ],
+      "source_decision": "Shared CU/DU implementation and profiles from commit 6dbf6b2; older monolithic/forked packages are preserved as audit references. vCRAN intentionally has no HPA.",
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": false
+      }
+    },
+    {
+      "key": "cran-oai",
+      "display_name": "C-RAN + OAI",
+      "ran_type": "cran",
+      "implementation": "OAI",
+      "deployment_mechanism": "osm",
+      "generation_status": "ready",
+      "blocked_reason": null,
+      "knf_package": "cran_oai_knf",
+      "nsd_package": "cran_oai_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "cran-oai-cu",
+          "source": "helm/cran-oai/cu",
+          "values_files": []
+        },
+        {
+          "kdu": "du",
+          "release_name": "cran-oai-du",
+          "source": "helm/cran-oai/du",
+          "values_files": []
+        }
+      ],
+      "pods": [
+        "cran-oai-cu",
+        "cran-oai-du"
+      ],
+      "selector": "ran-type=cran",
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/cran_oai_knf",
+        "tree_sha256": "0fe915ac9b2138317aa53488d351af80baa94e3734451d31942d5ecdb211fae0",
+        "archive_sha256": "defa5d5276ef8defe536abd071dd0f2ae36cbe7789fb070704f5cbbcfbc0915f"
+      },
+      "member_id": "cran-oai",
+      "preserved_fixes": [
+        "AMF discovery via amf-ngap-stable",
+        "Pod-IP bind/advertise substitution",
+        "Explicit slice SST 1 / SD 010203",
+        "Istio injection disabled on RAN pods"
+      ],
+      "source_decision": "Shared CU/DU implementation and profiles from commit 6dbf6b2; older monolithic/forked packages are preserved as audit references. vCRAN intentionally has no HPA.",
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": false
+      }
+    },
+    {
+      "key": "oran-srsran",
+      "display_name": "O-RAN + srsRAN (CU/DU over F1)",
+      "ran_type": "oran",
+      "implementation": "srsRAN",
+      "deployment_mechanism": "osm",
+      "generation_status": "blocked",
+      "blocked_reason": "Packaged CU contains configurable amf-ngap-stable discovery absent from helm/srsran-oran/cu. Reconcile before generation.",
+      "knf_package": "oran_srsran_knf",
+      "nsd_package": "oran_srsran_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "srsran-cu",
+          "source": "helm/srsran-oran/cu",
+          "values_files": []
+        },
+        {
+          "kdu": "du",
+          "release_name": "srsran-du",
+          "source": "helm/srsran-oran/du",
+          "values_files": []
+        }
+      ],
+      "pods": [
+        "srsran-cu",
+        "srsran-du"
+      ],
+      "selector": "ran-type=oran",
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/oran_srsran_knf",
+        "tree_sha256": "0152176e3d4cd15661f6c4dfecb171c3ba9e565c914c8d53571507841fc608da",
+        "archive_sha256": "ec3484784d2a89e758e87708b18a183f1b0383e7278b4a25d34c945c2c9fad08"
+      },
+      "member_id": "oran-srsran",
+      "preserved_fixes": []
+    },
+    {
+      "key": "oran-oai",
+      "display_name": "O-RAN + OAI (CU/DU over F1)",
+      "ran_type": "oran",
+      "implementation": "OAI",
+      "deployment_mechanism": "osm",
+      "generation_status": "blocked",
+      "blocked_reason": "Authority between helm/oai and helm/oran-oai is unresolved; packaged helm/oai CU also has an AMF discovery fix absent from that source.",
+      "knf_package": "oran_oai_knf",
+      "nsd_package": "oran_oai_ns",
+      "descriptor_version": "1.0",
+      "charts": [],
+      "pods": [
+        "oai-cu",
+        "oai-du"
+      ],
+      "selector": "ran-type=oran",
+      "additive": false,
+      "observed_releases": [
+        {
+          "kdu": "cu",
+          "release_name": "oai-cu",
+          "source": "helm/oai/cu",
+          "values_files": []
+        },
+        {
+          "kdu": "du",
+          "release_name": "oai-du",
+          "source": "helm/oai/du",
+          "values_files": []
+        }
+      ],
+      "candidate_sources": [
+        "helm/oai/cu",
+        "helm/oai/du",
+        "helm/oran-oai/cu",
+        "helm/oran-oai/du"
+      ],
+      "reviewed_legacy": {
+        "path": "osm-packages/oran_oai_knf",
+        "tree_sha256": "7f96dcc06c944aa1159f36876bc3d8eb1225c8ec189a906434710e60e6e59eb9",
+        "archive_sha256": "063946b0e8d87b557403ff779e364e19459b628be2cd5048855baeef2fa18aea"
+      },
+      "member_id": "oran-oai",
+      "preserved_fixes": []
+    },
+    {
+      "key": "cloudran-srsran",
+      "display_name": "Cloud-RAN + srsRAN",
+      "ran_type": "cloud-ran",
+      "implementation": "srsRAN",
+      "deployment_mechanism": "osm",
+      "generation_status": "ready",
+      "blocked_reason": null,
+      "knf_package": "cloudran_srsran_knf",
+      "nsd_package": "cloudran_srsran_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "cloud-ran-srsran-cu",
+          "source": "helm/cran-srsran/cu",
+          "values_files": [
+            "helm/cran-srsran/cu/values-cloudran.yaml"
+          ]
+        },
+        {
+          "kdu": "du",
+          "release_name": "cloud-ran-srsran-du",
+          "source": "helm/cran-srsran/du",
+          "values_files": [
+            "helm/cran-srsran/du/values-cloudran.yaml"
+          ]
+        }
+      ],
+      "pods": [
+        "cloud-ran-srsran-cu",
+        "cloud-ran-srsran-du"
+      ],
+      "selector": "ran-type=cloud-ran",
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/cloudran_srsran_knf",
+        "tree_sha256": "105138b96cc20eb31c002aa24d12190f48f696797263f0b1afea7268227c8605",
+        "archive_sha256": "db785ae6890ca5be9f8fc30ebf3ae15a1b639c2b3d4340013645fb43d92b204f"
+      },
+      "member_id": "cloudran-srsran",
+      "preserved_fixes": [
+        "AMF discovery via amf-ngap-stable",
+        "Pod-IP bind/advertise substitution",
+        "Explicit slice SST 1 / SD 010203",
+        "Istio injection disabled on RAN pods"
+      ],
+      "source_decision": "Shared CU/DU implementation and profiles from commit 6dbf6b2; older monolithic/forked packages are preserved as audit references. vCRAN intentionally has no HPA.",
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": false
+      }
+    },
+    {
+      "key": "cloudran-oai",
+      "display_name": "Cloud-RAN + OAI",
+      "ran_type": "cloud-ran",
+      "implementation": "OAI",
+      "deployment_mechanism": "osm",
+      "generation_status": "ready",
+      "blocked_reason": null,
+      "knf_package": "cloudran_oai_knf",
+      "nsd_package": "cloudran_oai_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "cloud-ran-oai-cu",
+          "source": "helm/cran-oai/cu",
+          "values_files": [
+            "helm/cran-oai/cu/values-cloudran.yaml"
+          ]
+        },
+        {
+          "kdu": "du",
+          "release_name": "cloud-ran-oai-du",
+          "source": "helm/cran-oai/du",
+          "values_files": [
+            "helm/cran-oai/du/values-cloudran.yaml"
+          ]
+        }
+      ],
+      "pods": [
+        "cloud-ran-oai-cu",
+        "cloud-ran-oai-du"
+      ],
+      "selector": "ran-type=cloud-ran",
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/cloudran_oai_knf",
+        "tree_sha256": "b6f9b5ded1ad3879a3a355202dc7d7a766b970c6eb61967dc1644e8ec1bf0db0",
+        "archive_sha256": "9ea321c0d0fc0c43deda0ad0644d6f7eba6f0eb2ec03c8b5d6139a7d37b315f4"
+      },
+      "member_id": "cloudran-oai",
+      "preserved_fixes": [
+        "AMF discovery via amf-ngap-stable",
+        "Pod-IP bind/advertise substitution",
+        "Explicit slice SST 1 / SD 010203",
+        "Istio injection disabled on RAN pods"
+      ],
+      "source_decision": "Shared CU/DU implementation and profiles from commit 6dbf6b2; older monolithic/forked packages are preserved as audit references. vCRAN intentionally has no HPA.",
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": false
+      }
+    },
+    {
+      "key": "hcran-srsran",
+      "display_name": "H-CRAN + srsRAN (macro + small cell)",
+      "ran_type": "hcran",
+      "implementation": "srsRAN",
+      "deployment_mechanism": "osm",
+      "generation_status": "blocked",
+      "blocked_reason": "Packaged AMF discovery fix is absent from canonical source; existing KNF describes one KDU rather than macro + small cell.",
+      "knf_package": "hcran_srsran_knf",
+      "nsd_package": "hcran_srsran_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "macro",
+          "release_name": "hcran-macro",
+          "source": "helm/hcran-srsran",
+          "values_files": []
+        },
+        {
+          "kdu": "small",
+          "release_name": "hcran-small",
+          "source": "helm/hcran-srsran",
+          "values_files": [
+            "helm/hcran-srsran/values-small.yaml"
+          ]
+        }
+      ],
+      "pods": [
+        "hcran-macro",
+        "hcran-small"
+      ],
+      "selector": null,
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/hcran_srsran_knf",
+        "tree_sha256": "46177c8ecc4c55df8cd1474d860175269b486cfb76126d6455ccfc19c500f1f4",
+        "archive_sha256": "cc5c682e33fc45040e92a2b770b502b7f749aabf00b3b3509a13a5bdd458b856"
+      },
+      "member_id": "hcran-srsran",
+      "preserved_fixes": []
+    },
+    {
+      "key": "hcran-oai",
+      "display_name": "H-CRAN + OAI (macro + small cell)",
+      "ran_type": "hcran",
+      "implementation": "OAI",
+      "deployment_mechanism": "osm",
+      "generation_status": "blocked",
+      "blocked_reason": "Packaged AMF discovery fix is absent from canonical source; existing KNF describes one KDU rather than macro + small cell.",
+      "knf_package": "hcran_oai_knf",
+      "nsd_package": "hcran_oai_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "macro",
+          "release_name": "hcran-oai-macro",
+          "source": "helm/hcran-oai",
+          "values_files": []
+        },
+        {
+          "kdu": "small",
+          "release_name": "hcran-oai-small",
+          "source": "helm/hcran-oai",
+          "values_files": [
+            "helm/hcran-oai/values-small.yaml"
+          ]
+        }
+      ],
+      "pods": [
+        "hcran-oai-macro",
+        "hcran-oai-small"
+      ],
+      "selector": null,
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/hcran_oai_knf",
+        "tree_sha256": "df39a988442e60c153e37fd7c087f2311fb1977059bfb2df47c3c0c95c6c4555",
+        "archive_sha256": "9690e8138e04afb30e077f029e2d0037a144b6b9b646f948005f1b029463bfcf"
+      },
+      "member_id": "hcran-oai",
+      "preserved_fixes": []
+    },
+    {
+      "key": "vcran-srsran",
+      "display_name": "v-CRAN + srsRAN",
+      "ran_type": "vcran",
+      "implementation": "srsRAN",
+      "deployment_mechanism": "osm",
+      "generation_status": "ready",
+      "blocked_reason": null,
+      "knf_package": "vcran_srsran_knf",
+      "nsd_package": "vcran_srsran_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "vcran-srsran-cu",
+          "source": "helm/cran-srsran/cu",
+          "values_files": [
+            "helm/cran-srsran/cu/values-vcran.yaml"
+          ]
+        },
+        {
+          "kdu": "du",
+          "release_name": "vcran-srsran-du",
+          "source": "helm/cran-srsran/du",
+          "values_files": [
+            "helm/cran-srsran/du/values-vcran.yaml"
+          ]
+        }
+      ],
+      "pods": [
+        "vcran-srsran-cu",
+        "vcran-srsran-du"
+      ],
+      "selector": "ran-type=vcran",
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/vcran_srsran_knf",
+        "tree_sha256": "122babdb66a7140a27378fe69ee8bf838677cfb647b333e91ccae902b165dd8a",
+        "archive_sha256": "11ccf3d7b4fbb67727c5324b1599bf73d68fecf20aa14ce66f7a39319e14022c"
+      },
+      "member_id": "vcran-srsran",
+      "preserved_fixes": [
+        "AMF discovery via amf-ngap-stable",
+        "Pod-IP bind/advertise substitution",
+        "Explicit slice SST 1 / SD 010203",
+        "Istio injection disabled on RAN pods"
+      ],
+      "source_decision": "Shared CU/DU implementation and profiles from commit 6dbf6b2; older monolithic/forked packages are preserved as audit references. vCRAN intentionally has no HPA.",
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": true
+      }
+    },
+    {
+      "key": "vcran-oai",
+      "display_name": "v-CRAN + OAI",
+      "ran_type": "vcran",
+      "implementation": "OAI",
+      "deployment_mechanism": "osm",
+      "generation_status": "ready",
+      "blocked_reason": null,
+      "knf_package": "vcran_oai_knf",
+      "nsd_package": "vcran_oai_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "vcran-oai-cu",
+          "source": "helm/cran-oai/cu",
+          "values_files": [
+            "helm/cran-oai/cu/values-vcran.yaml"
+          ]
+        },
+        {
+          "kdu": "du",
+          "release_name": "vcran-oai-du",
+          "source": "helm/cran-oai/du",
+          "values_files": [
+            "helm/cran-oai/du/values-vcran.yaml"
+          ]
+        }
+      ],
+      "pods": [
+        "vcran-oai-cu",
+        "vcran-oai-du"
+      ],
+      "selector": "ran-type=vcran",
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/vcran_oai_knf",
+        "tree_sha256": "af0552c77f9d965e4382f0c815a24204144a44be870e0d5ac196bf096fe78dfc",
+        "archive_sha256": "f068cce32d7d9a55f3448cc6a33b26471e7b14ba7c2e91cfbb953aee6a5e62d6"
+      },
+      "member_id": "vcran-oai",
+      "preserved_fixes": [
+        "AMF discovery via amf-ngap-stable",
+        "Pod-IP bind/advertise substitution",
+        "Explicit slice SST 1 / SD 010203",
+        "Istio injection disabled on RAN pods"
+      ],
+      "source_decision": "Shared CU/DU implementation and profiles from commit 6dbf6b2; older monolithic/forked packages are preserved as audit references. vCRAN intentionally has no HPA.",
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": true
+      }
+    },
+    {
+      "key": "fran",
+      "display_name": "F-RAN edge breakout (MEC app)",
+      "ran_type": "fran",
+      "implementation": "vendor-independent",
+      "deployment_mechanism": "osm",
+      "generation_status": "ready",
+      "blocked_reason": null,
+      "knf_package": "fran_knf",
+      "nsd_package": "fran_ns",
+      "descriptor_version": "1.0",
+      "charts": [
+        {
+          "kdu": "fran-edge",
+          "release_name": "fran-edge",
+          "source": "helm/fran-edge",
+          "values_files": []
+        }
+      ],
+      "pods": [
+        "fran-edge-app"
+      ],
+      "selector": null,
+      "additive": true,
+      "reviewed_legacy": {
+        "path": "osm-packages/fran_knf",
+        "tree_sha256": "eb3cb8dabced1687eea48f819f92f4ef69d064a9248b1be8a1d8f6e14918cb67",
+        "archive_sha256": "d47751c6f4e0b9801ab9f18848a2eb7ffb9e4236c09132398b52d38092da70d5"
+      },
+      "member_id": "fran",
+      "preserved_fixes": [],
+      "validation_policy": {
+        "split_ran": false,
+        "forbid_hpa": false
+      }
+    },
+    {
+      "key": "none",
+      "display_name": "No RAN",
+      "ran_type": "none",
+      "implementation": null,
+      "deployment_mechanism": "control-only",
+      "generation_status": "blocked",
+      "blocked_reason": "Terminate-only lifecycle support is outside P0-A; no none_ns package exists.",
+      "knf_package": null,
+      "nsd_package": null,
+      "descriptor_version": "1.0",
+      "charts": [],
+      "pods": [],
+      "selector": null,
+      "additive": false,
+      "preserved_fixes": []
+    }
+  ],
+  "blocked_components": [
+    {
+      "key": "open5gs",
+      "knf_package": "open5gs_knf",
+      "nsd_package": "open5gs_ns",
+      "reason": "Verified staging-only NRF templating, metrics and stable-AMF fixes are absent from helm/open5gs. Do not regenerate."
+    },
+    {
+      "key": "ims",
+      "knf_package": "ims_knf",
+      "nsd_package": "ims_ns",
+      "reason": "Unresolved P-CSCF .99 versus .100 discrepancy and external configuration/images. Do not regenerate."
+    },
+    {
+      "key": "full-stack",
+      "knf_package": null,
+      "nsd_package": "full_stack_ns",
+      "reason": "Depends on blocked Open5GS and IMS; committed descriptor/archive differ. Do not regenerate."
+    }
+  ]
+}

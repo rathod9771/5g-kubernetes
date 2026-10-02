@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 layer3-autonomous/actions.log
 config/global.env
+
+# Generated exclusively from config/scenarios.json and canonical Helm sources.
+/build/osm-packages/
