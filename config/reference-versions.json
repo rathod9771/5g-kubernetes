@@ -126,5 +126,10 @@
     "sha256": "4c90bf11f1ba55a2005b512887c5fab0043831d9ec7b672dc8b017ac0d43143e",
     "tree": "42ddcbf52f27bcc967e6b72496349fffb73c97b3",
     "reference_commit": "3804ad93d2626137ca5295a7ecdae29d301a6274"
+  },
+  "osm_gitops": {
+    "gitBaseUrl": "http://git.127.0.0.1.nip.io",
+    "fleetRepoUrl": "https://github.com/example/example.git",
+    "swcatalogsRepoUrl": "https://github.com/example/example.git"
   }
 }

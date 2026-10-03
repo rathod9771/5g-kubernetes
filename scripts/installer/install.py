@@ -378,10 +378,35 @@ class Installer:
             deployment = self.kjson('get', 'deployment', 'lcm', '-n', namespace)
         validate_management_mount(deployment, keys.stdout.decode().splitlines())
 
+    def reconcile_lcm_gitops(self, chart):
+        namespace = self.cfg['OSM_NAMESPACE']
+        desired = osm_values(self.cfg, self.lock)['global']['gitops']
+        def matches():
+            current = json.loads(self.helm('get', 'values', 'osm', '-n', namespace, '-o', 'json').stdout) or {}
+            configured = current.get('global', {}).get('gitops', {})
+            if any(configured.get(k) != v for k, v in desired.items()):
+                return False
+            deployment = self.kjson('get', 'deployment', 'lcm', '-n', namespace)
+            containers = deployment.get('spec', {}).get('template', {}).get('spec', {}).get('containers', [])
+            if not any(c.get('name') == 'lcm' and any(e.get('secretRef', {}).get('name') == 'osm-gitops-secret' for e in c.get('envFrom', [])) for c in containers):
+                return False
+            keys = self.kubectl('get', 'secret', 'osm-gitops-secret', '-n', namespace,
+                                '-o', 'go-template={{range $key,$value := .data}}{{$key}}{{"\\n"}}{{end}}', check=False)
+            return not keys.returncode and {'OSM_GITOPS_GIT_BASE_URL', 'OSM_GITOPS_FLEET_REPO_URL', 'OSM_GITOPS_SW_CATALOGS_REPO_URL'} <= set(keys.stdout.decode().splitlines())
+        if matches():
+            return
+        path = self.directory / 'osm-gitops-values.yaml'
+        atomic_write(path, yaml.safe_dump({'global': {'gitops': desired}}).encode())
+        self.helm('upgrade', 'osm', str(chart), '-n', namespace, '--reuse-values', '-f', str(path), '--timeout', '20m',
+                  context='OSM reference GitOps startup configuration reconciliation')
+        if not matches():
+            raise ConfigError('OSM LCM reference GitOps configuration missing after reconciliation; readiness refused')
+
     def osm(self):
         chart = self.osm_source()
         self.prepare_management_credentials()
         self.release('osm', self.cfg['OSM_NAMESPACE'], str(chart), self.lock['osm'], osm_values(self.cfg, self.lock), wait=False)
+        self.reconcile_lcm_gitops(chart)
         self.validate_lcm_management(chart)
         self.kubectl('wait', 'certificate', '--all', '-n', self.cfg['OSM_NAMESPACE'], '--for=condition=Ready', '--timeout=600s')
         self.apply(api_ingress(self.cfg))

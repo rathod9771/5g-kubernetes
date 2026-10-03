@@ -33,7 +33,7 @@ class ReferenceInstallerTests(unittest.TestCase):
         v = osm_values({'OSM_BASE_DOMAIN':'example.invalid'}, versions())
         self.assertIn('@sha256:', v['nbi']['image']['tag'])
         self.assertTrue(v['mongodb']['image']['digest'].startswith('sha256:'))
-        self.assertFalse(v['global']['gitops']['enabled'])
+        self.assertTrue(v['global']['gitops']['enabled'])
         self.assertNotIn('password', json.dumps(v).lower())
 
     def test_api_ingress(self):
@@ -675,3 +675,71 @@ class ManagementKubeconfigTests(unittest.TestCase):
             self.assertIn('secretName: mgmtcluster-secret', text)
             self.assertIn('defaultMode: 416', text)
             self.assertIn('readOnly: true', text)
+
+
+class GitopsReferenceTests(unittest.TestCase):
+    def test_exact_observed_reference_urls(self):
+        values = osm_values({'OSM_BASE_DOMAIN':'example.invalid'}, versions())['global']['gitops']
+        self.assertEqual(values, {'enabled':True,'gitBaseUrl':'http://git.127.0.0.1.nip.io',
+            'fleetRepoUrl':'https://github.com/example/example.git',
+            'swcatalogsRepoUrl':'https://github.com/example/example.git'})
+        # The observed LCM startup operation receives strings, never None.
+        for name in ['gitBaseUrl','fleetRepoUrl','swcatalogsRepoUrl']:
+            self.assertIsInstance(values[name].replace('https://','https://'),str)
+
+    def test_absent_url_is_rejected_instead_of_none_replace_crash(self):
+        for name in ['gitBaseUrl','fleetRepoUrl','swcatalogsRepoUrl']:
+            for value in [None,'']:
+                lock=versions();lock['osm_gitops'][name]=value
+                with self.assertRaisesRegex(ConfigError,'URL configuration missing'):
+                    osm_values({'OSM_BASE_DOMAIN':'example.invalid'},lock)
+
+    def test_disabling_chart_gate_does_not_disable_lcm_initialization(self):
+        lock=versions();lock['osm_gitops']['enabled']=False
+        values=osm_values({'OSM_BASE_DOMAIN':'example.invalid'},lock)
+        self.assertTrue(values['global']['gitops']['enabled'])
+        self.assertTrue(values['global']['gitops']['swcatalogsRepoUrl'])
+
+    def test_credentials_in_url_are_rejected_without_leaking(self):
+        lock=versions();lock['osm_gitops']['gitBaseUrl']='https://user:PRIVATE_SENTINEL@example.invalid'
+        with self.assertRaises(ConfigError) as error:
+            osm_values({'OSM_BASE_DOMAIN':'example.invalid'},lock)
+        self.assertNotIn('PRIVATE_SENTINEL',str(error.exception))
+
+    def installer(self,path):
+        installer=Installer({'RUNTIME_DIR':path,'OSM_NAMESPACE':'osm','OSM_BASE_DOMAIN':'example.invalid'})
+        installer.kjson=mock.Mock(return_value={'spec':{'template':{'spec':{'containers':[
+            {'name':'lcm','envFrom':[{'secretRef':{'name':'osm-gitops-secret'}}]}]}}}})
+        installer.kubectl=mock.Mock(return_value=subprocess.CompletedProcess([],0,
+            b'OSM_GITOPS_GIT_BASE_URL\nOSM_GITOPS_FLEET_REPO_URL\nOSM_GITOPS_SW_CATALOGS_REPO_URL\n',b''))
+        return installer
+
+    def test_existing_disabled_release_repairs_once_and_preserves_values(self):
+        with tempfile.TemporaryDirectory() as t:
+            installer=self.installer(t)
+            desired={'global':{'gitops':osm_values(installer.cfg,installer.lock)['global']['gitops']}}
+            replies=[{'global':{'gitops':{'enabled':False}}},desired,desired]
+            def helm(*args,**kwargs):
+                return subprocess.CompletedProcess([],0,json.dumps(replies.pop(0)).encode() if args[0]=='get' else b'',b'')
+            installer.helm=mock.Mock(side_effect=helm)
+            installer.reconcile_lcm_gitops('chart');installer.reconcile_lcm_gitops('chart')
+            upgrades=[c for c in installer.helm.call_args_list if c.args[0]=='upgrade']
+            self.assertEqual(len(upgrades),1)
+            self.assertIn('--reuse-values',upgrades[0].args)
+            import yaml
+            self.assertEqual(yaml.safe_load((Path(t)/'osm-gitops-values.yaml').read_text()),desired)
+
+    def test_nonconvergent_repair_fails_before_readiness(self):
+        with tempfile.TemporaryDirectory() as t:
+            installer=self.installer(t)
+            installer.helm=mock.Mock(return_value=subprocess.CompletedProcess([],0,b'{}',b''))
+            with self.assertRaisesRegex(ConfigError,'readiness refused'):installer.reconcile_lcm_gitops('chart')
+
+    def test_missing_gitops_secret_keys_trigger_reconciliation(self):
+        with tempfile.TemporaryDirectory() as t:
+            installer=self.installer(t)
+            desired={'global':{'gitops':osm_values(installer.cfg,installer.lock)['global']['gitops']}}
+            installer.helm=mock.Mock(return_value=subprocess.CompletedProcess([],0,json.dumps(desired).encode(),b''))
+            installer.kubectl.side_effect=[subprocess.CompletedProcess([],1,b'',b'PRIVATE'),installer.kubectl.return_value]
+            installer.reconcile_lcm_gitops('chart')
+            self.assertEqual(len([c for c in installer.helm.call_args_list if c.args[0]=='upgrade']),1)

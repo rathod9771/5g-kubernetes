@@ -121,8 +121,17 @@ def validate_management_mount(deployment, secret_keys):
 def osm_values(cfg, lock):
     """Reference OSM chart configuration, excluding all private inputs."""
     domain = cfg['OSM_BASE_DOMAIN']
+    from runtime_config import ConfigError
+    gitops = lock.get('osm_gitops', {})
+    for key in ('gitBaseUrl', 'fleetRepoUrl', 'swcatalogsRepoUrl'):
+        value = gitops.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError('OSM reference GitOps URL configuration missing: ' + key)
+        parsed = urlsplit(value)
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ConfigError('OSM reference GitOps URL configuration invalid: ' + key)
     values = {'global': {'hostname': domain, 'ingressClassName': 'nginx',
-                         'gitops': {'enabled': False}},
+                         'gitops': dict(gitops, enabled=True)},
               'certauth': {'enabled': True}}
     # Pin the actual reference NF bytes while preserving repository/tag behavior.
     for component, chart_key in [('nbi', 'nbi'), ('lcm', 'lcm'), ('mon', 'mon'),

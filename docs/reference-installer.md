@@ -233,3 +233,29 @@ values. Missing objects or wrong paths fail specifically. For an existing
 pinned release lacking the mount, a single Helm upgrade of the adapted chart
 with `--reuse-values` reconciles it; subsequent reruns do not repeat that repair.
 Existing timeouts remain unchanged. No reference-machine credentials are copied.
+
+### Reference GitOps startup settings (supersedes the disabled-GitOps assumption)
+
+Read-only inspection confirmed that the reference release uses the upstream
+`global.gitops.enabled: true` default, imports `osm-gitops-secret` into LCM,
+and provides all three URL keys. Its runtime base is the upstream default
+`http://git.127.0.0.1.nip.io`; both Helm repository URL overrides are
+`https://github.com/example/example.git`. These are observed reference bootstrap
+settings, not invented replacements or proof of functional GitOps repositories.
+Secret data and runtime authentication values were not printed. The LCM ConfigMap contains
+no GitOps overrides; URLs reach LCM through Secret-backed environment variables.
+
+The running LCM GitOps constructor builds an authenticated catalog URL without
+handling None. Disabling the Helm gate removes required environment settings;
+it does not implement a clean application-level GitOps disable switch.
+The installer now reproduces those exact non-secret settings from the version
+lock. No LCM code, private Git credentials or repository provisioning is added.
+Missing or credential-bearing URL configuration is rejected before rendering.
+Existing releases are reconciled with a values-preserving Helm upgrade only
+when settings, environment reference or required Secret keys are missing.
+Subsequent matching reruns leave the release alone. Readiness refuses a repair
+that does not converge. No timeout is increased.
+
+The earlier management credential Role remains scoped to the OSM namespace.
+This change fixes reference startup configuration; it does not grant permissions
+or create real repositories for management GitOps provisioning workflows.
