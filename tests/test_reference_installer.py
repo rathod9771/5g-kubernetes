@@ -131,7 +131,7 @@ class ReferenceInstallerTests(unittest.TestCase):
             installer.packages=mock.Mock(return_value=[{'ns':'synthetic'}])
             installer.entries=mock.Mock(return_value=[{'name':'core-persistent','id':'synthetic'}])
             installer.catalog=mock.Mock()
-            (Path(t)/'core-instance.json').write_text(json.dumps({'context':installer.context,'id':'synthetic','stage':'created'}))
+            (Path(t)/'core-instance.json').write_text(json.dumps({'context':installer.context,'id':'synthetic','stage':'uncertain'}))
             with self.assertRaisesRegex(ConfigError,'Interrupted core'): installer.core()
             installer.catalog.request.assert_not_called()
 
@@ -743,3 +743,103 @@ class GitopsReferenceTests(unittest.TestCase):
             installer.kubectl.side_effect=[subprocess.CompletedProcess([],1,b'',b'PRIVATE'),installer.kubectl.return_value]
             installer.reconcile_lcm_gitops('chart')
             self.assertEqual(len([c for c in installer.helm.call_args_list if c.args[0]=='upgrade']),1)
+
+
+class CoreInstantiationTests(unittest.TestCase):
+    ns = '11111111-1111-1111-1111-111111111111'
+    nsd = '22222222-2222-2222-2222-222222222222'
+    vim = '33333333-3333-3333-3333-333333333333'
+
+    def installer(self,t):
+        i=Installer({'RUNTIME_DIR':t});i.context={'vim_id':self.vim,'cluster_uid':'fixture'}
+        i.entries=mock.Mock(return_value=[]);i.catalog=mock.Mock()
+        i.catalog.request.return_value=json.dumps({'id':self.ns}).encode()
+        return i
+
+    def test_required_payload_and_rerun_no_duplicate(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t)
+            self.assertEqual(i.ensure_core_instance({'ns':self.nsd},'target-project'),self.ns)
+            calls=i.catalog.request.call_args_list
+            payload=yaml.safe_load(calls[1].args[2])
+            self.assertEqual(payload['nsName'],'core-persistent')
+            self.assertEqual(payload['nsDescription'],'persistent open5gs core with NRF fix')
+            self.assertEqual(payload['nsdId'],self.nsd);self.assertEqual(payload['vimAccountId'],self.vim)
+            self.assertEqual(payload['additionalParamsForVnf'][0]['additionalParamsForKdu'][0]['k8s-namespace'],'target-project')
+            i.entries.return_value=[{'name':'core-persistent','_id':self.ns}]
+            i.catalog.request.reset_mock()
+            i.ensure_core_instance({'ns':self.nsd},'target-project')
+            i.catalog.request.assert_not_called()
+
+    def test_rejected_instantiate_reuses_owned_uninstantiated_instance(self):
+        from osm_catalog import OSMHTTPError
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t)
+            i.catalog.request.side_effect=[json.dumps({'id':self.ns}).encode(),OSMHTTPError(422,'instantiate','; required field nsName missing')]
+            with self.assertRaisesRegex(OSMHTTPError,'instantiate.*422'):i.ensure_core_instance({'ns':self.nsd},'project')
+            i.entries.side_effect=[[{'name':'core-persistent','id':self.ns}],[]]
+            i.catalog.request.reset_mock()
+            i.catalog.request.side_effect=[b'nsState: NOT_INSTANTIATED\n',b'{}']
+            i.ensure_core_instance({'ns':self.nsd},'project')
+            calls=i.catalog.request.call_args_list
+            self.assertEqual(len([c for c in calls if c.args[0]=='POST']),1)
+            self.assertTrue(calls[-1].args[1].endswith('/'+self.ns+'/instantiate'))
+
+    def test_accepted_but_interrupted_request_does_not_repeat(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t)
+            (Path(t)/'core-instance.json').write_text(json.dumps({'id':self.ns,'context':i.context,'stage':'created'}))
+            i.entries.return_value=[{'name':'core-persistent','id':self.ns}]
+            i.catalog.request.return_value=b'nsState: BUILDING\n'
+            i.ensure_core_instance({'ns':self.nsd},'project')
+            self.assertEqual(i.catalog.request.call_count,1)
+            self.assertEqual(i.catalog.request.call_args.args[0],'GET')
+
+    def test_lifecycle_history_prevents_unsafe_reinstantiate(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t)
+            (Path(t)/'core-instance.json').write_text(json.dumps({'id':self.ns,'context':i.context,'stage':'created'}))
+            i.entries.side_effect=[[{'name':'core-persistent','id':self.ns}],[{'operationState':'FAILED'}]]
+            i.catalog.request.return_value=b'nsState: NOT_INSTANTIATED\n'
+            with self.assertRaisesRegex(ConfigError,'lifecycle operations'):i.ensure_core_instance({'ns':self.nsd},'project')
+            self.assertFalse(any(c.args[0]=='POST' for c in i.catalog.request.call_args_list))
+
+    def test_http_422_reports_operation_without_private_response(self):
+        import urllib.error
+        from osm_catalog import Catalog,OSMHTTPError
+        c=Catalog('https://example.invalid','PRIVATE_TOKEN')
+        error=urllib.error.HTTPError('https://example.invalid',422,'private',{},io.BytesIO(b"detail: \"'nsName' is a required property PRIVATE_SENTINEL\""))
+        opener=mock.Mock();opener.open.side_effect=error
+        with mock.patch('urllib.request.build_opener',return_value=opener):
+            with self.assertRaises(OSMHTTPError) as caught:c.request('POST','/nslcm/v1/ns_instances/'+self.ns+'/instantiate',b'PRIVATE_BODY')
+        self.assertIn('instantiate failed: HTTP 422',str(caught.exception))
+        self.assertIn('required field nsName missing',str(caught.exception))
+        self.assertNotIn('PRIVATE',str(caught.exception));self.assertNotIn('provenance',str(caught.exception))
+
+    def test_nbi_backend_is_plain_http_and_ingress_stays_tls(self):
+        d=api_ingress({'OSM_HOST':'https://gui.example.invalid:30843','OSM_NAMESPACE':'osm'})
+        self.assertEqual(d['metadata']['annotations']['nginx.ingress.kubernetes.io/backend-protocol'],'HTTP')
+        self.assertEqual(d['spec']['rules'][0]['http']['paths'][0]['backend']['service'],{'name':'nbi','port':{'number':9999}})
+        self.assertTrue(d['spec']['tls'])
+
+    def test_successful_onboarding_keeps_catalog_byte_provenance(self):
+        import yaml
+        from osm_catalog import Catalog
+        from osm_onboard import onboard
+        c=Catalog('https://example.invalid');stored={}
+        scenario={'knf_package':'fixture_knf','nsd_package':'fixture_ns'}
+        artifacts={'fixture_knf.tar.gz':b'knf','fixture_ns.tar.gz':b'ns'}
+        def request(method,path,data=None,content_type='application/yaml'):
+            kind='knf' if 'vnf_' in path or 'vnfpkgm' in path else 'ns'
+            name=scenario['knf_package' if kind=='knf' else 'nsd_package']
+            if method=='POST':
+                stored[kind]=data
+                self.assertEqual(content_type,'application/gzip')
+                return yaml.safe_dump({'id':self.ns}).encode()
+            if path.endswith(('/package_content','/nsd_content')):return stored[kind]
+            entries=[] if kind not in stored else [{'id':name,'product-name':name,'_id':self.ns}]
+            return yaml.safe_dump(entries).encode()
+        with mock.patch.object(c,'request',side_effect=request):
+            onboard(c,[scenario],[artifacts])
+            self.assertEqual(c.verify(scenario,artifacts),{'knf':self.ns,'ns':self.ns})

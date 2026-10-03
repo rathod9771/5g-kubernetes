@@ -499,33 +499,60 @@ class Installer:
         onboard(self.catalog, scenarios, artifacts)
         return [self.catalog.verify(s, a) for s, a in zip(scenarios, artifacts)]
 
-    def core(self):
-        identities = self.packages(['open5gs'])[0]
-        namespace = self.cfg['OSM_PROJECT_NAMESPACE']
+    def ensure_core_instance(self, identities, namespace):
         path = '/nslcm/v1/ns_instances'
-        instances = self.entries(path)
-        matches = [e for e in instances if e.get('name') == 'core-persistent']
+        matches = [e for e in self.entries(path) if e.get('name') == 'core-persistent']
         receipt = self.directory / 'core-instance.json'
         if receipt.exists():
             recorded = json.loads(receipt.read_text())
-            if recorded['context'] != self.context or len(matches) != 1 or matches[0]['id'] != recorded['id']:
+            if recorded['context'] != self.context or len(matches) != 1 or (matches[0].get('id') or matches[0].get('_id')) != recorded['id']:
                 raise ConfigError('Core receipt/context differs; refuse to adopt another deployment')
-            if recorded.get('stage') != 'instantiated':
-                raise ConfigError('Interrupted core creation/instantiation; inspect the recorded OSM instance before explicit recovery')
-            ns_id = recorded['id']
+            if recorded.get('stage') not in ('created', 'instantiate_rejected', 'instantiated'):
+                raise ConfigError('Interrupted core state is unknown; explicit recovery required')
+            ns_id = identifier(recorded['id'])
+            if recorded['stage'] == 'instantiated':
+                return ns_id
+            status = parse_response(self.catalog.request('GET', path + '/' + ns_id))
+            if not isinstance(status, dict):
+                raise ConfigError('Interrupted core state is invalid; explicit recovery required')
+            state = status.get('nsState')
+            if state in ('READY', 'BUILDING'):
+                atomic_write(receipt, json.dumps(dict(recorded, stage='instantiated')).encode())
+                return ns_id
+            if state != 'NOT_INSTANTIATED' or (status.get('nsdId') and status['nsdId'] != identities['ns']):
+                raise ConfigError('Interrupted core is not safely reusable; explicit recovery required')
+            operations = self.entries('/nslcm/v1/ns_lcm_op_occs?nsInstanceId=' + ns_id)
+            if operations:
+                raise ConfigError('Interrupted core has lifecycle operations; explicit recovery required')
         else:
             if matches:
                 raise ConfigError('Existing core has no installer receipt; explicit adoption required')
             response = parse_response(self.catalog.request('POST', path,
                                       yaml.safe_dump({'nsName': 'core-persistent', 'nsdId': identities['ns'],
+                                                      'nsDescription': 'persistent open5gs core with NRF fix',
                                                       'vimAccountId': self.context['vim_id']}).encode()))
             ns_id = identifier(response.get('id') or response.get('_id'))
-            atomic_write(receipt, json.dumps({'id': ns_id, 'context': self.context, 'stage': 'created'}).encode())
-            body = {'nsdId': identities['ns'], 'vimAccountId': self.context['vim_id'],
-                    'additionalParamsForVnf': [{'member-vnf-index': 'open5gs',
-                                              'additionalParamsForKdu': [{'kdu_name': 'open5gs', 'k8s-namespace': namespace}]}]}
+            recorded = {'id': ns_id, 'context': self.context, 'stage': 'created'}
+            atomic_write(receipt, json.dumps(recorded).encode())
+        body = {'nsName': 'core-persistent', 'nsDescription': 'persistent open5gs core with NRF fix',
+                'nsdId': identities['ns'], 'vimAccountId': self.context['vim_id'],
+                'additionalParamsForVnf': [{'member-vnf-index': 'open5gs',
+                                          'additionalParamsForKdu': [{'kdu_name': 'open5gs', 'k8s-namespace': namespace}]}]}
+        from osm_catalog import OSMHTTPError
+        try:
             self.catalog.request('POST', path + '/' + ns_id + '/instantiate', yaml.safe_dump(body).encode())
-            atomic_write(receipt, json.dumps({'id': ns_id, 'context': self.context, 'stage': 'instantiated'}).encode())
+        except OSMHTTPError as error:
+            if error.status == 422:
+                atomic_write(receipt, json.dumps(dict(recorded, stage='instantiate_rejected')).encode())
+            raise
+        atomic_write(receipt, json.dumps(dict(recorded, stage='instantiated')).encode())
+        return ns_id
+
+    def core(self):
+        identities = self.packages(['open5gs'])[0]
+        namespace = self.cfg['OSM_PROJECT_NAMESPACE']
+        path = '/nslcm/v1/ns_instances'
+        ns_id = self.ensure_core_instance(identities, namespace)
         deadline = time.monotonic() + 1200
         while time.monotonic() < deadline:
             status = parse_response(self.catalog.request('GET', path + '/' + ns_id))

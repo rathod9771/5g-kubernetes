@@ -259,3 +259,26 @@ that does not converge. No timeout is increased.
 The earlier management credential Role remains scoped to the OSM namespace.
 This change fixes reference startup configuration; it does not grant permissions
 or create real repositories for management GitOps provisioning workflows.
+
+### Open5GS NS instantiate contract and reruns
+
+Read-only reference operation metadata showed `nsName: core-persistent`,
+`nsDescription: persistent open5gs core with NRF fix`, an NSD catalog UUID and
+its dummy-VIM UUID, with no additional per-VNF overrides. The installer uses
+that name/description with the freshly verified target NSD and discovered VIM;
+it retains its target-project Kubernetes namespace parameters. Reference UUIDs
+are not copied. Both creation and the separate instantiate POST include nsName.
+
+The private context-bound receipt records creation before instantiation. A
+schema-rejected request retains the owned instance. Reruns may resubmit only
+when that exact instance is NOT_INSTANTIATED and has no lifecycle operations.
+READY/BUILDING instances resume without another instantiate request. Unknown
+ownership, mismatched contexts, existing operations and broken states require
+explicit recovery; no automatic terminate/delete or duplicate creation occurs.
+
+HTTP failures retain their status and operation. A 422 required-field response
+is summarized using a fixed field whitelist; arbitrary response bodies, tokens
+and request data are suppressed. Catalog byte-provenance checks still run after
+onboarding and are not bypassed. The ingress API remains verified HTTPS, with
+an explicit HTTP upstream protocol to the NBI service at port 9999. The installer
+does not make direct HTTPS requests to that plain-HTTP service port.

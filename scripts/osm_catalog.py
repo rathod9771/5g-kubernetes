@@ -13,6 +13,11 @@ class CatalogError(ValueError):
 class AuthorizationError(CatalogError):
     pass
 
+class OSMHTTPError(CatalogError):
+    def __init__(self, status, operation, detail=''):
+        self.status = status
+        super().__init__('OSM ' + operation + ' failed: HTTP ' + str(status) + detail)
+
 def parse_response(content):
     try:
         return yaml.safe_load(content)
@@ -42,6 +47,7 @@ class Catalog:
         self.ca_file = ca_file
 
     def request(self, method, path, data=None, content_type='application/yaml'):
+        operation = 'instantiate' if path.endswith('/instantiate') else 'HTTP request'
         headers = {'Content-Type': content_type, 'Accept': 'application/gzip' if path.endswith(('/package_content', '/nsd_content')) else 'application/yaml'}
         if self.token:
             headers['Authorization'] = 'Bearer ' + self.token
@@ -58,9 +64,16 @@ class Catalog:
         except urllib.error.HTTPError as error:
             if error.code == 401:
                 raise AuthorizationError('OSM authorization expired') from None
-            raise CatalogError('OSM HTTP request failed; catalog provenance unavailable') from None
+            detail = ''
+            if error.code == 422:
+                text = error.read(8192).decode('utf-8', errors='replace')
+                for field in ('nsName', 'nsdId', 'vimAccountId'):
+                    if "'" + field + "' is a required property" in text:
+                        detail = '; required field ' + field + ' missing'
+                        break
+            raise OSMHTTPError(error.code, operation, detail) from None
         except Exception:
-            raise CatalogError('OSM request failed; catalog provenance unavailable') from None
+            raise CatalogError('OSM ' + operation + ' transport request failed (private details suppressed)') from None
 
     def authenticate(self, user, password, project):
         data = yaml.safe_dump({'username': user, 'password': password, 'project-id': project}).encode()

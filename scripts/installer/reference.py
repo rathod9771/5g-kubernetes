@@ -168,7 +168,8 @@ def api_ingress(cfg):
     from urllib.parse import urlsplit
     return {'apiVersion': 'networking.k8s.io/v1', 'kind': 'Ingress',
             'metadata': {'name': 'submission-osm-api', 'namespace': cfg['OSM_NAMESPACE'],
-                         'annotations': {'nginx.ingress.kubernetes.io/force-ssl-redirect': 'true'}},
+                         'annotations': {'nginx.ingress.kubernetes.io/force-ssl-redirect': 'true',
+                                         'nginx.ingress.kubernetes.io/backend-protocol': 'HTTP'}},
             'spec': {'ingressClassName': 'nginx',
                      'tls': [{'secretName': 'ngui-cert', 'hosts': [urlsplit(cfg['OSM_HOST']).hostname]}],
                      'rules': [{'host': urlsplit(cfg['OSM_HOST']).hostname,
