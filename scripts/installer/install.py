@@ -10,6 +10,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import quote
 
@@ -31,7 +32,7 @@ from state_schema import validate_state
 NETWORK_ERRORS = ('connection reset by peer', 'connection refused', 'temporary failure in name resolution',
                   'no such host', 'network is unreachable', 'i/o timeout', 'context deadline exceeded',
                   'tls handshake timeout', 'unexpected eof', 'service unavailable', 'bad gateway',
-                  'gateway timeout')
+                  'gateway timeout', 'could not resolve host', 'failed to connect', 'early eof')
 DETERMINISTIC_ERRORS = ('failed to parse', 'parse error', 'yaml parse', 'execution error',
                         'unknown flag', 'not found', 'unauthorized', 'forbidden', 'x509:',
                         'certificate verify failed', 'invalid value')
@@ -51,7 +52,7 @@ def stderr_summary(stderr):
 class Runner:
     stage = 'installer'
 
-    def run(self, args, data=None, check=True, timeout=1800, context=None, remote_fetch=False):
+    def run(self, args, data=None, check=True, timeout=1800, context=None, remote_fetch=False, fetch_timeout=120):
         # Only explicitly classified read/fetch operations may retry. Never retry
         # installation/lifecycle commands, whose side effects could be ambiguous.
         attempts = 4 if remote_fetch and check else 1
@@ -59,7 +60,7 @@ class Runner:
         for attempt in range(attempts):
             try:
                 result = subprocess.run([str(a) for a in args], input=data, capture_output=True,
-                                        timeout=min(timeout, 120) if remote_fetch else timeout)
+                                        timeout=min(timeout, fetch_timeout) if remote_fetch else timeout)
             except subprocess.TimeoutExpired:
                 if remote_fetch and attempt + 1 < attempts:
                     time.sleep(2 ** (attempt + 1))
@@ -224,17 +225,77 @@ class Installer:
         self.release('istiod', 'istio-system', 'istiod', self.lock['istio'],
                      repo='https://istio-release.storage.googleapis.com/charts')
 
-    def osm_source(self):
+    def acquire_osm_source(self):
         source = self.directory / 'osm-devops'
+        commit, url = self.lock['osm_source_commit'], self.lock['osm_source_url']
         if source.is_symlink():
             raise ConfigError('OSM source checkout must not be a symlink')
-        if not source.exists():
-            self.runner.run(['git', 'clone', '--no-checkout', self.lock['osm_source_url'], str(source)])
-        self.runner.run(['git', '-C', str(source), 'checkout', '--detach', self.lock['osm_source_commit']])
-        if self.runner.run(['git', '-C', str(source), 'rev-parse', 'HEAD']).stdout.decode().strip() != self.lock['osm_source_commit']:
-            raise ConfigError('OSM source revision does not match lock')
-        if self.runner.run(['git', '-C', str(source), 'status', '--porcelain']).stdout:
-            raise ConfigError('OSM download tree has local modifications; refuse to use it')
+        def git(path, *args, check=True, context='OSM source validation'):
+            return self.runner.run(['git', '-C', str(path), *args], check=check, context=context)
+        def valid_repository(path):
+            # Reject linked worktrees and arbitrary directories: only a self-contained
+            # cache with the locked origin is eligible for automatic recovery.
+            if not (path / '.git').is_dir() or (path / '.git').is_symlink():
+                raise ConfigError('OSM invalid partial cache: expected a self-contained Git repository; preserve and inspect it')
+            top = git(path, 'rev-parse', '--show-toplevel', check=False)
+            origin = git(path, 'remote', 'get-url', 'origin', check=False)
+            if top.returncode or Path(os.fsdecode(top.stdout).strip()).resolve() != path.resolve() or origin.returncode or os.fsdecode(origin.stdout).strip() != url:
+                raise ConfigError('OSM invalid partial cache: repository/source identity mismatch; preserve and inspect it')
+        def has_commit(path):
+            return not git(path, 'cat-file', '-e', commit + '^{commit}', check=False).returncode
+        partial = False
+        if source.exists():
+            valid_repository(source)
+            partial = {p.name for p in source.iterdir()} == {'.git'}
+            if not partial:
+                if git(source, 'status', '--porcelain').stdout:
+                    raise ConfigError('OSM download tree has local modifications; refuse to use it')
+                if has_commit(source) and os.fsdecode(git(source, 'rev-parse', 'HEAD').stdout).strip() == commit:
+                    return source
+        self.directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='.osm-acquisition-', dir=self.directory) as temporary:
+            root = Path(temporary)
+            candidate = root / 'checkout'
+            if source.exists() and not partial:
+                shutil.copytree(source, candidate, symlinks=True)
+            else:
+                # Each retry gets an empty destination, even after Git leaves .git.
+                for attempt in range(4):
+                    if candidate.exists():
+                        shutil.rmtree(candidate)
+                    try:
+                        self.runner.run(['git', 'clone', '--no-checkout', url, str(candidate)],
+                                        timeout=300, context='OSM source clone (remote Git; timeout 300s)')
+                        break
+                    except ConfigError as error:
+                        message = str(error)
+                        transient = 'command timeout' in message or any(phrase in message for phrase in NETWORK_ERRORS)
+                        if not transient or attempt == 3:
+                            raise ConfigError(message + '; clone acquisition attempt ' + str(attempt + 1) + '/4') from None
+                        time.sleep(2 ** (attempt + 1))
+            valid_repository(candidate)
+            if not has_commit(candidate):
+                self.runner.run(['git', '-C', str(candidate), 'fetch', 'origin', commit],
+                                remote_fetch=True, fetch_timeout=300, timeout=300,
+                                context='OSM pinned commit unavailable: remote Git fetch')
+            if not has_commit(candidate):
+                raise ConfigError('OSM pinned commit unavailable after source acquisition')
+            git(candidate, 'checkout', '--detach', commit, context='OSM source checkout failure (pinned commit)')
+            if os.fsdecode(git(candidate, 'rev-parse', 'HEAD').stdout).strip() != commit or git(candidate, 'status', '--porcelain').stdout:
+                raise ConfigError('OSM source checkout failure: revision or clean working tree verification failed')
+            previous = root / 'previous'
+            if source.exists():
+                os.replace(source, previous)
+            try:
+                os.replace(candidate, source)
+            except BaseException:
+                if previous.exists():
+                    os.replace(previous, source)
+                raise
+        return source
+
+    def osm_source(self):
+        source = self.acquire_osm_source()
         chart = self.directory / 'osm-chart'
         if chart.is_symlink():
             raise ConfigError('Generated OSM chart directory must not be a symlink')

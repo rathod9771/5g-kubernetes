@@ -321,3 +321,176 @@ class ReferenceInstallerTests(unittest.TestCase):
                 with mock.patch('subprocess.run',side_effect=[failure,success]) as run, mock.patch('installer.install.time.sleep'):
                     installer.helm(*command,context='OSM chart 19.0.0 dependencies')
                 self.assertEqual(run.call_count,2)
+
+
+class OsmAcquisitionTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.base = Path(self.temporary.name)
+        self.remote = self.base / 'remote'
+        self.remote.mkdir()
+        self.git(self.remote, 'init')
+        self.git(self.remote, 'config', 'user.email', 'fixture@example.invalid')
+        self.git(self.remote, 'config', 'user.name', 'Fixture')
+        (self.remote / 'source.txt').write_text('pinned source')
+        self.git(self.remote, 'add', 'source.txt')
+        self.git(self.remote, 'commit', '-m', 'fixture')
+        self.commit = self.git(self.remote, 'rev-parse', 'HEAD').stdout.decode().strip()
+        self.installer = Installer({'RUNTIME_DIR': str(self.base / 'runtime')})
+        self.installer.lock = dict(self.installer.lock, osm_source_url=str(self.remote), osm_source_commit=self.commit)
+        self.source = self.installer.directory / 'osm-devops'
+
+    def git(self, path, *args):
+        return subprocess.run(['git', '-C', str(path), *args], check=True, capture_output=True)
+
+    def assert_clean(self):
+        self.assertFalse(list(self.installer.directory.glob('.osm-acquisition-*')))
+
+    def test_clone_long_timeout_and_transactional_promote(self):
+        original = self.installer.runner.run
+        calls = []
+        def run(args, **kwargs):
+            calls.append((args, kwargs))
+            if args[:2] == ['git', 'clone']:
+                self.assertFalse(self.source.exists())
+                self.assertEqual(kwargs['timeout'], 300)
+                self.assertNotEqual(Path(args[-1]), self.source)
+            return original(args, **kwargs)
+        self.installer.runner.run = run
+        self.assertEqual(self.installer.acquire_osm_source(), self.source)
+        self.assertEqual((self.source / 'source.txt').read_text(), 'pinned source')
+        self.assert_clean()
+
+    def test_clone_timeout_and_transient_failure_then_success(self):
+        original = self.installer.runner.run
+        attempts = []
+        def run(args, **kwargs):
+            if args[:2] == ['git', 'clone']:
+                attempts.append(args)
+                self.assertFalse(Path(args[-1]).exists())
+                if len(attempts) < 3:
+                    (Path(args[-1]) / '.git').mkdir(parents=True)
+                    raise ConfigError('OSM source clone: command timeout' if len(attempts) == 1 else 'OSM source clone: connection reset by peer')
+            return original(args, **kwargs)
+        self.installer.runner.run = run
+        with mock.patch('installer.install.time.sleep') as sleep:
+            self.installer.acquire_osm_source()
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [2, 4])
+        self.assert_clean()
+
+    def test_interrupted_git_only_cache_is_rebuilt(self):
+        self.source.parent.mkdir()
+        subprocess.run(['git', 'clone', '--no-checkout', str(self.remote), str(self.source)], check=True, capture_output=True)
+        self.assertEqual({p.name for p in self.source.iterdir()}, {'.git'})
+        self.installer.acquire_osm_source()
+        self.assertTrue((self.source / 'source.txt').exists())
+        self.assert_clean()
+
+    def test_valid_cached_checkout_reused_without_clone_fetch_checkout(self):
+        self.installer.acquire_osm_source()
+        original = self.installer.runner.run
+        with mock.patch.object(self.installer.runner, 'run', wraps=original) as run:
+            self.installer.acquire_osm_source()
+        for call in run.call_args_list:
+            self.assertFalse(set(call.args[0]) & {'clone', 'fetch', 'checkout'})
+
+    def test_missing_pinned_commit_fetches_in_temporary_copy(self):
+        self.installer.acquire_osm_source()
+        (self.remote / 'source.txt').write_text('new pinned source')
+        self.git(self.remote, 'commit', '-am', 'second')
+        commit = self.git(self.remote, 'rev-parse', 'HEAD').stdout.decode().strip()
+        self.installer.lock['osm_source_commit'] = commit
+        original = self.installer.runner.run
+        with mock.patch.object(self.installer.runner, 'run', wraps=original) as run:
+            self.installer.acquire_osm_source()
+        fetches = [c for c in run.call_args_list if 'fetch' in c.args[0]]
+        self.assertEqual(len(fetches), 1)
+        self.assertEqual(fetches[0].kwargs['fetch_timeout'], 300)
+        self.assertNotEqual(fetches[0].args[0][2], str(self.source))
+        self.assertEqual((self.source / 'source.txt').read_text(), 'new pinned source')
+        self.assert_clean()
+
+    def test_retry_exhaustion_and_cleanup(self):
+        original = self.installer.runner.run
+        attempts = []
+        def run(args, **kwargs):
+            if args[:2] == ['git', 'clone']:
+                attempts.append(args)
+                (Path(args[-1]) / '.git').mkdir(parents=True)
+                raise ConfigError('OSM source clone: command timeout (private output suppressed)')
+            return original(args, **kwargs)
+        self.installer.runner.run = run
+        with mock.patch('installer.install.time.sleep') as sleep:
+            with self.assertRaisesRegex(ConfigError, 'attempt 4/4'):
+                self.installer.acquire_osm_source()
+        self.assertEqual(len(attempts), 4)
+        self.assertEqual([c.args[0] for c in sleep.call_args_list], [2, 4, 8])
+        self.assertFalse(self.source.exists())
+        self.assert_clean()
+
+    def test_invalid_origin_and_modified_source_preserved(self):
+        self.installer.acquire_osm_source()
+        (self.source / 'source.txt').write_text('user source')
+        with self.assertRaisesRegex(ConfigError, 'local modifications'):
+            self.installer.acquire_osm_source()
+        self.assertEqual((self.source / 'source.txt').read_text(), 'user source')
+        self.git(self.source, 'remote', 'set-url', 'origin', 'https://example.invalid/private')
+        with self.assertRaisesRegex(ConfigError, 'identity mismatch'):
+            self.installer.acquire_osm_source()
+
+    def test_promotion_failure_rolls_back_existing_cache(self):
+        self.installer.acquire_osm_source()
+        (self.remote / 'source.txt').write_text('second')
+        self.git(self.remote, 'commit', '-am', 'second')
+        self.installer.lock['osm_source_commit'] = self.git(self.remote, 'rev-parse', 'HEAD').stdout.decode().strip()
+        replace = os.replace
+        def fail(candidate, destination):
+            if Path(candidate).name == 'checkout':
+                raise OSError('synthetic promotion failure')
+            return replace(candidate, destination)
+        with mock.patch('installer.install.os.replace', side_effect=fail):
+            with self.assertRaises(OSError): self.installer.acquire_osm_source()
+        self.assertEqual((self.source / 'source.txt').read_text(), 'pinned source')
+        self.assert_clean()
+
+    def test_git_fetch_timeout_retry_has_safe_diagnostics(self):
+        failure = subprocess.TimeoutExpired(['git'], 300, output=b'PRIVATE', stderr=b'PRIVATE')
+        with mock.patch('subprocess.run', side_effect=failure) as run, mock.patch('installer.install.time.sleep'):
+            with self.assertRaises(ConfigError) as error:
+                Runner().run(['git', 'fetch'], timeout=300, fetch_timeout=300, remote_fetch=True, context='OSM remote Git fetch')
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual(run.call_args.kwargs['timeout'], 300)
+        self.assertNotIn('PRIVATE', str(error.exception))
+
+    def test_unavailable_commit_preserves_previous_cache(self):
+        self.installer.acquire_osm_source()
+        self.installer.lock['osm_source_commit'] = '0' * 40
+        with self.assertRaisesRegex(ConfigError, 'pinned commit'):
+            self.installer.acquire_osm_source()
+        self.assertEqual((self.source / 'source.txt').read_text(), 'pinned source')
+        self.assert_clean()
+
+    def test_checkout_failure_never_promotes_partial_source(self):
+        original = self.installer.runner.run
+        def run(args, **kwargs):
+            if 'checkout' in args[3:]:
+                raise ConfigError('OSM source checkout failure (pinned commit): unclassified failure')
+            return original(args, **kwargs)
+        self.installer.runner.run = run
+        with self.assertRaisesRegex(ConfigError, 'checkout failure'):
+            self.installer.acquire_osm_source()
+        self.assertFalse(self.source.exists())
+        self.assert_clean()
+
+    def test_deterministic_clone_failure_does_not_retry_or_leak(self):
+        failure = subprocess.CompletedProcess(['git'], 128, b'PRIVATE', b'authentication unauthorized PRIVATE')
+        with mock.patch('subprocess.run', return_value=failure) as run, mock.patch('installer.install.time.sleep') as sleep:
+            with self.assertRaises(ConfigError) as error:
+                self.installer.acquire_osm_source()
+        self.assertEqual(run.call_count, 1)
+        sleep.assert_not_called()
+        self.assertNotIn('PRIVATE', str(error.exception))
+        self.assertIn('remote Git', str(error.exception))
+        self.assert_clean()
