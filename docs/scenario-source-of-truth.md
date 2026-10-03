@@ -171,3 +171,27 @@ by external actors, and isolated runtime/schema compatibility verification
 remain outstanding. File locks coordinate cooperating processes on this local
 filesystem; they are not distributed locks across machines. Other clients must
 not independently edit runtime state or catalog contents during a switch.
+
+### Content identity and audit metadata
+
+Format-2 provenance has an exact required schema; missing/extra fields, malformed
+hashes, unsupported generator/schema versions and unknown format versions fail.
+Validation still checks the immutable publication digest and every raw chart,
+descriptor and archive byte against current canonical sources before provenance
+comparison. Scenario identity/hash, profile/source inputs, descriptor/staging/
+archive hashes and Kubernetes render version remain strict content identities.
+
+Toolchain fields and generator implementation hashes record original build
+metadata. Differences produce a stderr notice listing JSON-pointer paths, but
+cannot invalidate byte-identical payloads. A whole-registry hash difference is
+also reported only after the resolved scenario hash and every payload identity
+match: registry changes that alter this scenario remain fatal through its hash.
+Generator version remains schema identity, not an ignored implementation hash.
+
+`validated_snapshot()` returns the original validated stored bytes, including
+the original provenance. Metadata-only validation never rewrites provenance,
+CURRENT or archives, and never invokes preparation. In particular, original
+PyYAML 6.0.1 build metadata validates with PyYAML 6.0.3 when all payloads match.
+Explicit prepare also reuses an unchanged scenario's original provenance, so
+audit-only changes do not republish identical payloads. Validation and replacement
+preflight do not silently prepare packages or fabricate refreshed build history.

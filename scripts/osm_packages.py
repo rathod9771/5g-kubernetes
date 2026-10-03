@@ -363,6 +363,65 @@ def published_output(output):
     return output / "releases" / name
 
 
+def compare_provenance(stored_bytes, expected_bytes):
+    """Strict format-2 content identity; return audit-only JSON pointer changes."""
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise PackageError('Duplicate provenance field')
+            result[key] = value
+        return result
+    try:
+        stored = json.loads(stored_bytes, object_pairs_hook=unique_object)
+        expected = json.loads(expected_bytes, object_pairs_hook=unique_object)
+    except (ValueError, UnicodeError) as error:
+        raise PackageError('Invalid provenance JSON') from None
+    fields = {'format_version', 'registry_sha256', 'generator', 'toolchain', 'profile_sha256',
+              'descriptor_sha256', 'scenario', 'scenario_sha256', 'kubernetes_render_version',
+              'source_inputs', 'staging_sha256', 'archives_sha256'}
+    hash_maps = ('profile_sha256', 'descriptor_sha256', 'source_inputs', 'staging_sha256', 'archives_sha256')
+    def digest(value):
+        return isinstance(value, str) and re.fullmatch(r'[a-f0-9]{64}', value) is not None
+    for provenance in (stored, expected):
+        if not isinstance(provenance, dict) or set(provenance) != fields:
+            raise PackageError('Missing or unknown provenance schema fields')
+        if type(provenance['format_version']) is not int or provenance['format_version'] != FORMAT_VERSION:
+            raise PackageError('Unknown provenance format/version')
+        if not all(digest(provenance[k]) for k in ('registry_sha256', 'scenario_sha256')):
+            raise PackageError('Invalid provenance identity hash')
+        for key in hash_maps:
+            value = provenance[key]
+            if not isinstance(value, dict) or not all(isinstance(k, str) and digest(v) for k, v in value.items()):
+                raise PackageError('Invalid provenance hash map: ' + key)
+        if not all(isinstance(provenance[k], str) and provenance[k] for k in ('scenario', 'kubernetes_render_version')):
+            raise PackageError('Invalid provenance scenario/render identity')
+        generator = provenance['generator']
+        if not isinstance(generator, dict) or set(generator) != {'version', 'implementation_sha256'} or generator['version'] != '2':
+            raise PackageError('Unknown provenance generator schema/version')
+        implementation = generator['implementation_sha256']
+        if not isinstance(implementation, dict) or set(implementation) != {'local_safety.py', 'osm_packages.py', 'scenario_registry.py'} or not all(digest(v) for v in implementation.values()):
+            raise PackageError('Missing or unknown generator implementation schema')
+        toolchain = provenance['toolchain']
+        if not isinstance(toolchain, dict) or set(toolchain) != {'helm', 'python', 'zlib', 'pyyaml', 'compression', 'archive'} or not all(isinstance(v, str) and v for v in toolchain.values()):
+            raise PackageError('Missing or unknown provenance toolchain schema')
+    # Whole-registry edits are audit-only only AFTER the resolved scenario and
+    # every source/profile/descriptor/staging/archive identity prove unchanged.
+    for key in sorted(fields - {'generator', 'toolchain', 'registry_sha256'}):
+        if stored[key] != expected[key]:
+            raise PackageError('Payload provenance drift: ' + key)
+    changes = []
+    if stored['registry_sha256'] != expected['registry_sha256']:
+        changes.append('/registry_sha256')
+    for key in sorted(stored['toolchain']):
+        if stored['toolchain'][key] != expected['toolchain'][key]:
+            changes.append('/toolchain/' + key)
+    for key in sorted(stored['generator']['implementation_sha256']):
+        if stored['generator']['implementation_sha256'][key] != expected['generator']['implementation_sha256'][key]:
+            changes.append('/generator/implementation_sha256/' + key)
+    return changes
+
+
 def validate_artifacts(root, output, scenario):
     expected = expected_artifacts(root, scenario)
     output_root = safe_output(root, output)
@@ -380,10 +439,14 @@ def validate_artifacts(root, output, scenario):
                 raise PackageError(f"{scenario['key']}: missing generated file: {name}")
             actual[name] = file.read_bytes()
     missing, extra = expected.keys() - actual.keys(), actual.keys() - expected.keys()
-    changed = {name for name in expected.keys() & actual.keys() if expected[name] != actual[name]}
+    provenance_name = scenario['key'] + '.provenance.json'
+    changed = {name for name in expected.keys() & actual.keys() if name != provenance_name and expected[name] != actual[name]}
     if missing or extra or changed:
         raise PackageError(f"{scenario['key']}: source/staging/archive drift; missing={sorted(missing)}, extra={sorted(extra)}, changed={sorted(changed)}")
-    return expected
+    audit_changes = compare_provenance(actual[provenance_name], expected[provenance_name])
+    if audit_changes:
+        print(scenario['key'] + ': payload integrity verified; audit metadata differs: ' + ', '.join(audit_changes) + '; stored provenance preserved', file=sys.stderr)
+    return actual
 
 
 def helm_command():
@@ -525,6 +588,17 @@ def _build_locked(root, output, scenarios):
             previous = read_tree(published_output(output))
             if tree_digest(previous) != (output / "CURRENT").read_text().strip():
                 raise PackageError("Immutable publication was modified")
+            for scenario, expected in plans:
+                provenance_name = scenario['key'] + '.provenance.json'
+                prefixes = (scenario['knf_package'] + '/', scenario['nsd_package'] + '/')
+                payload = {n: b for n, b in expected.items() if n != provenance_name}
+                prior_payload = {n: b for n, b in previous.items() if n.startswith(prefixes) or n in payload}
+                if prior_payload == payload:
+                    if provenance_name not in previous:
+                        raise PackageError('Missing required stored provenance')
+                    compare_provenance(previous[provenance_name], expected[provenance_name])
+                    # Keep the original audit record and publication identity.
+                    combined[provenance_name] = previous[provenance_name]
             combined = previous | combined
         digest = tree_digest(combined)
         releases = output / "releases"

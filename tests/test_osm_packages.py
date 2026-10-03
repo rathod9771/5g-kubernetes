@@ -107,7 +107,7 @@ class PackageTests(unittest.TestCase):
                 self.materialize()
                 target = self.output / filename
                 target.write_bytes(target.read_bytes() + b"tampered")
-                with self.assertRaisesRegex(packages.PackageError, "drift"):
+                with self.assertRaisesRegex(packages.PackageError, "drift|Invalid provenance JSON"):
                     packages.validate_artifacts(self.root, self.output, self.scenario)
 
     def test_nsd_knf_and_kdu_mismatches_are_detected(self):
@@ -238,3 +238,114 @@ class DashboardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProvenanceIdentityTests(unittest.TestCase):
+    setUpClass = classmethod(PackageTests.setUpClass.__func__)
+    setUp = PackageTests.setUp
+    materialize = PackageTests.materialize
+
+    def published_fixture(self, mutate=None):
+        with mock.patch.object(packages.yaml, '__version__', '6.0.1'):
+            self.materialize()
+        name=self.scenario['key']+'.provenance.json'
+        if mutate:
+            provenance=json.loads((self.output/name).read_bytes())
+            mutate(provenance)
+            (self.output/name).write_bytes(packages.json_bytes(provenance))
+        tree=packages.read_tree(self.output)
+        digest=packages.tree_digest(tree)
+        target=self.output/'releases'/digest
+        for path,data in tree.items():
+            file=target/path;file.parent.mkdir(parents=True,exist_ok=True);file.write_bytes(data)
+        (self.output/'CURRENT').write_text(digest+'\n')
+        return target,tree
+
+    def validate_unchanged(self,target,tree):
+        pointer=(self.output/'CURRENT').read_bytes()
+        pointer_mtime=(self.output/'CURRENT').stat().st_mtime_ns
+        before={name:(target/name).stat().st_mtime_ns for name in tree}
+        with mock.patch.object(packages.yaml,'__version__','6.0.3'):
+            result=packages.validated_snapshot(self.root,self.output,self.scenario)
+        self.assertEqual(result,tree)
+        self.assertEqual((self.output/'CURRENT').read_bytes(),pointer)
+        self.assertEqual((self.output/'CURRENT').stat().st_mtime_ns,pointer_mtime)
+        for name,data in tree.items():
+            self.assertEqual((target/name).read_bytes(),data)
+            self.assertEqual((target/name).stat().st_mtime_ns,before[name])
+        return result
+
+    def test_precision_pyyaml_only_drift_returns_stored_bytes_unchanged(self):
+        target,tree=self.published_fixture()
+        with mock.patch('sys.stderr',new_callable=io.StringIO) as warnings:
+            self.validate_unchanged(target,tree)
+        self.assertIn('/toolchain/pyyaml',warnings.getvalue())
+        self.assertIn('payload integrity verified',warnings.getvalue())
+
+    def test_generator_implementation_only_drift_is_audit_metadata(self):
+        target,tree=self.published_fixture(lambda p:p['generator']['implementation_sha256'].update({'osm_packages.py':'0'*64}))
+        self.validate_unchanged(target,tree)
+
+    def test_each_content_identity_field_remains_fatal(self):
+        original=json.loads(packages.expected_artifacts(self.root,self.scenario)['cran-srsran.provenance.json'])
+        for field in ['scenario','scenario_sha256','profile_sha256','descriptor_sha256','source_inputs','staging_sha256','archives_sha256','kubernetes_render_version']:
+            with self.subTest(field=field):
+                changed=copy.deepcopy(original)
+                if isinstance(changed[field],dict):
+                    key=next(iter(changed[field]), 'unexpected-profile');changed[field][key]='0'*64
+                elif field.endswith('sha256'):changed[field]='0'*64
+                else:changed[field]='different'
+                with self.assertRaisesRegex(packages.PackageError,'Payload provenance drift'):
+                    packages.compare_provenance(packages.json_bytes(changed),packages.json_bytes(original))
+
+    def test_missing_and_unknown_schema_fields_rejected(self):
+        original=json.loads(packages.expected_artifacts(self.root,self.scenario)['cran-srsran.provenance.json'])
+        for mutate in [lambda p:p.pop('source_inputs'),lambda p:p['toolchain'].pop('pyyaml'),lambda p:p.update({'unknown_field':True}),lambda p:p.update({'format_version':999}),lambda p:p['generator'].update({'version':'999'})]:
+            changed=copy.deepcopy(original);mutate(changed)
+            with self.assertRaises(packages.PackageError):packages.compare_provenance(packages.json_bytes(changed),packages.json_bytes(original))
+
+    def test_registry_difference_requires_identical_resolved_scenario(self):
+        original=json.loads(packages.expected_artifacts(self.root,self.scenario)['cran-srsran.provenance.json'])
+        changed=copy.deepcopy(original);changed['registry_sha256']='0'*64
+        self.assertEqual(packages.compare_provenance(packages.json_bytes(changed),packages.json_bytes(original)),['/registry_sha256'])
+        changed['scenario_sha256']='1'*64
+        with self.assertRaisesRegex(packages.PackageError,'scenario_sha256'):
+            packages.compare_provenance(packages.json_bytes(changed),packages.json_bytes(original))
+
+    def test_publication_digest_tampering_fails_before_audit_comparison(self):
+        target,tree=self.published_fixture()
+        name='cran-srsran.provenance.json'
+        (target/name).write_bytes((target/name).read_bytes()+b' ')
+        with self.assertRaisesRegex(packages.PackageError,'Immutable publication was modified'):
+            packages.validated_snapshot(self.root,self.output,self.scenario)
+
+    def test_missing_required_field_in_publication_fails(self):
+        self.published_fixture(lambda p:p.pop('archives_sha256'))
+        with self.assertRaisesRegex(packages.PackageError,'schema fields'):
+            packages.validated_snapshot(self.root,self.output,self.scenario)
+
+    def test_unknown_format_in_publication_fails(self):
+        self.published_fixture(lambda p:p.update({'format_version':999}))
+        with self.assertRaisesRegex(packages.PackageError,'format/version'):
+            packages.validated_snapshot(self.root,self.output,self.scenario)
+
+    def test_payload_tampering_with_updated_publication_digest_still_fails(self):
+        target,tree=self.published_fixture()
+        archive=self.scenario['knf_package']+'.tar.gz'
+        tree[archive]=tree[archive]+b'tampered'
+        digest=packages.tree_digest(tree)
+        altered=self.output/'releases'/digest
+        for name,data in tree.items():
+            file=altered/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_bytes(data)
+        (self.output/'CURRENT').write_text(digest+'\n')
+        with self.assertRaisesRegex(packages.PackageError,'source/staging/archive drift'):
+            packages.validated_snapshot(self.root,self.output,self.scenario)
+
+    def test_prepare_metadata_only_change_reuses_publication(self):
+        target,tree=self.published_fixture()
+        pointer=(self.output/'CURRENT').read_bytes();mtime=(self.output/'CURRENT').stat().st_mtime_ns
+        with mock.patch.object(packages.yaml,'__version__','6.0.3'):
+            self.assertEqual(packages.prepare(self.root,self.output,[self.scenario]),target)
+        self.assertEqual((self.output/'CURRENT').read_bytes(),pointer)
+        self.assertEqual((self.output/'CURRENT').stat().st_mtime_ns,mtime)
+        self.assertEqual(packages.read_tree(target),tree)
