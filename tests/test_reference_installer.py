@@ -921,7 +921,7 @@ class MonitoringResumeTests(unittest.TestCase):
             i.monitoring();i.monitoring()
             self.assertEqual([c.args[0] for c in i.helm.call_args_list],['list','list'])
             for call in i.kubectl.call_args_list:
-                self.assertIn('rollout verification',call.kwargs['context'])
+                self.assertTrue(any(label in call.kwargs['context'] for label in ('rollout verification','PodMonitor schema validation')))
             self.assertFalse(any(c.kwargs.get('context')=='monitoring NodePort apply' for c in i.apply.call_args_list))
 
     def test_ready_workloads_skip_redundant_rollout_verification(self):
@@ -939,3 +939,56 @@ class MonitoringResumeTests(unittest.TestCase):
             i.release('kube-prometheus-stack','monitoring','kube-prometheus-stack',i.lock['monitoring_chart'])
             i.kubectl.assert_not_called()
             self.assertFalse(i.monitoring_workload_ready('deployment',{'metadata':{'generation':2},'status':{'observedGeneration':1}}))
+
+
+class PodMonitorCompatibilityTests(unittest.TestCase):
+    def document(self):
+        import yaml
+        from runtime_render import render_manifest
+        return next(yaml.safe_load_all(render_manifest(ROOT/'monitoring/open5gs-podmonitor.yaml',
+                    {'OSM_PROJECT_NAMESPACE':'fixture-project','OSM_BASE_DOMAIN':'example.invalid','PROMETHEUS_NODEPORT':'30990'})))
+
+    def test_pinned_schema_without_fallback_accepts_exact_render(self):
+        # Reference CRD endpoint schema excerpt; unsupported field is deliberately absent.
+        endpoint_properties={'port':{'type':'string'},'path':{'type':'string'},'interval':{'type':'string'}}
+        doc=self.document()
+        self.assertEqual(doc['apiVersion'],'monitoring.coreos.com/v1')
+        self.assertEqual(doc['kind'],'PodMonitor')
+        self.assertEqual(doc['metadata'],{'name':'open5gs-metrics','namespace':'monitoring','labels':{'release':'kube-prometheus-stack'}})
+        self.assertEqual(doc['spec']['podMetricsEndpoints'],[{'port':'metrics','path':'/metrics','interval':'15s'}])
+        for endpoint in doc['spec']['podMetricsEndpoints']:
+            self.assertTrue(set(endpoint)<=set(endpoint_properties))
+            self.assertNotIn('fallbackScrapeProtocol',endpoint)
+
+    def test_selectors_preserved(self):
+        spec=self.document()['spec']
+        self.assertEqual(spec['namespaceSelector'],{'any':True})
+        self.assertEqual(spec['selector'],{'matchExpressions':[{'key':'app.kubernetes.io/name','operator':'In','values':['amf','smf','upf','pcf']}]})
+
+    def test_matching_existing_monitor_reused_without_write(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=Installer({'RUNTIME_DIR':t});doc=self.document()
+            i.kjson=mock.Mock(return_value={'items':[doc]});i.kubectl=mock.Mock();i.apply=mock.Mock()
+            i.monitoring_podmonitor(doc);i.monitoring_podmonitor(doc)
+            i.kubectl.assert_not_called();i.apply.assert_not_called()
+
+    def test_server_dry_run_before_apply(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=Installer({'RUNTIME_DIR':t});doc=self.document();events=[]
+            i.kjson=mock.Mock(return_value={'items':[]})
+            i.kubectl=mock.Mock(side_effect=lambda *args,**kwargs:events.append(('validate',args,kwargs)))
+            i.apply=mock.Mock(side_effect=lambda *args,**kwargs:events.append(('apply',args,kwargs)))
+            i.monitoring_podmonitor(doc)
+            self.assertEqual([e[0] for e in events],['validate','apply'])
+            self.assertIn('--dry-run=server',events[0][1]);self.assertIn('--validate=strict',events[0][1])
+
+    def test_schema_rejection_is_specific_fatal_and_not_retried(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=Installer({'RUNTIME_DIR':t,'KUBECONFIG_PATH':'fixture'});i.runner.stage='monitoring'
+            i.kjson=mock.Mock(return_value={'items':[]});i.apply=mock.Mock()
+            failure=subprocess.CompletedProcess([],1,b'',b'strict decoding error: unknown field spec.podMetricsEndpoints[0].fallbackScrapeProtocol PRIVATE')
+            with mock.patch('subprocess.run',return_value=failure) as run,mock.patch('installer.install.time.sleep') as sleep:
+                with self.assertRaisesRegex(ConfigError,'PodMonitor schema-compatibility error: open5gs-metrics') as error:
+                    i.monitoring_podmonitor(self.document())
+            self.assertEqual(run.call_count,1);sleep.assert_not_called();i.apply.assert_not_called()
+            self.assertNotIn('PRIVATE',str(error.exception))

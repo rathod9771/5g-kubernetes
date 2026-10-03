@@ -36,7 +36,8 @@ NETWORK_ERRORS = ('connection reset by peer', 'connection refused', 'temporary f
                   'gateway timeout', 'could not resolve host', 'failed to connect', 'early eof')
 DETERMINISTIC_ERRORS = ('failed to parse', 'parse error', 'yaml parse', 'execution error',
                         'unknown flag', 'not found', 'unauthorized', 'forbidden', 'x509:',
-                        'certificate verify failed', 'invalid value')
+                        'certificate verify failed', 'invalid value', 'strict decoding error',
+                        'unknown field')
 
 
 def stderr_summary(stderr):
@@ -698,6 +699,24 @@ class Installer:
         if not matches():
             raise ConfigError('monitoring NodePort service verification failed: expected selector/ports not present')
 
+    def monitoring_podmonitor(self, document):
+        metadata = document['metadata']
+        name, namespace = metadata['name'], metadata['namespace']
+        existing = self.kjson('get', 'podmonitors', '-n', namespace,
+                              context='monitoring PodMonitor discovery ' + name, retry_network=True)['items']
+        matches = [d for d in existing if d['metadata']['name'] == name]
+        if len(matches) == 1 and matches[0].get('spec') == document['spec'] and all(matches[0]['metadata'].get('labels', {}).get(k) == v for k, v in metadata.get('labels', {}).items()):
+            return
+        try:
+            self.kubectl('apply', '--dry-run=server', '--validate=strict', '-f', '-',
+                         data=yaml.safe_dump(document).encode(), context='monitoring PodMonitor schema validation ' + name,
+                         retry_network=True)
+        except ConfigError as error:
+            if any(phrase in str(error) for phrase in ('strict decoding error', 'unknown field')):
+                raise ConfigError('monitoring PodMonitor schema-compatibility error: ' + name + '; manifest rejected by installed CRD schema') from None
+            raise
+        self.apply(document, context='monitoring PodMonitor apply ' + name, retry_network=True)
+
     def monitoring(self):
         values = yaml.safe_load((ROOT / 'monitoring/kube-prometheus-stack-values.yaml').read_text())
         values.setdefault('grafana', {}).update({'adminPassword': self.cfg['GRAFANA_ADMIN_PASSWORD'],
@@ -708,8 +727,9 @@ class Installer:
         self.monitoring_nodeport()
         for relative in ['monitoring/open5gs-podmonitor.yaml', 'monitoring/ran-exporter/podmonitor.yaml',
                          'monitoring/latency-probe/podmonitor.yaml']:
-            self.apply(list(yaml.safe_load_all(render_manifest(ROOT / relative, self.cfg))),
-                       context='monitoring PodMonitor apply ' + relative, retry_network=True)
+            for document in yaml.safe_load_all(render_manifest(ROOT / relative, self.cfg)):
+                if document:
+                    self.monitoring_podmonitor(document)
         namespace = self.cfg['OSM_PROJECT_NAMESPACE']
         services = self.kjson('get', 'services', '-n', namespace, workload=True,
                              context='monitoring AMF service discovery', retry_network=True)['items']

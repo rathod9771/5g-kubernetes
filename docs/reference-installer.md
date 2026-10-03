@@ -310,3 +310,19 @@ are a separate platform gap; metrics-server is not installed by this fix.
 The original generic error cannot identify which command failed on the second
 machine. In particular, the unnamed StatefulSet rollout succeeds on the
 reference; new diagnostics avoid attributing the failure to it without evidence.
+
+### PodMonitor schema compatibility
+
+Read-only reference inspection confirmed deployed kube-prometheus-stack 91.4.1
+and a served PodMonitor v1 CRD without endpoint `fallbackScrapeProtocol`.
+Reference `monitoring/open5gs-metrics` also omits that field. The repository now
+matches its spec: release label kube-prometheus-stack, namespaceSelector.any,
+AMF/SMF/UPF/PCF name selector, metrics port, /metrics path and 15s interval.
+No Operator, stack, Open5GS labels or metrics endpoints are changed.
+
+Before writing a missing or differing PodMonitor, the installer performs strict
+server-side dry-run validation against the target API. Unknown-field/strict
+schema rejection produces an explicit PodMonitor schema-compatibility error
+without applying the object. Transient communication failures retain bounded
+retry behavior. Matching spec and required labels reuse the existing object
+without dry-run or apply. Monitoring Helm releases remain unchanged on rerun.

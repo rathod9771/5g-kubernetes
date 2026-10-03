@@ -17,4 +17,3 @@ spec:
   - port: metrics
     path: /metrics
     interval: 15s
-    fallbackScrapeProtocol: PrometheusText0.0.4
