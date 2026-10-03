@@ -134,6 +134,7 @@ def main():
             from osm_catalog import Catalog, parse_response
             from runtime_config import discover_context, kubernetes_json
             catalog = Catalog(cfg['OSM_HOST'])
+            catalog.ca_file = cfg.get('OSM_CA_CERT_PATH') or None
             catalog.authenticate(cfg['OSM_USER'], cfg['OSM_PASSWORD'], cfg['OSM_PROJECT_ID'] or cfg['OSM_PROJECT'])
             context = discover_context(cfg, catalog, lambda: kubernetes_json(cfg, ['get', 'namespaces', '-o', 'json']))
             initialize_state(cfg['ACTIVE_STATE_PATH'], context, parse_response(catalog.request('GET', '/nslcm/v1/ns_instances')))

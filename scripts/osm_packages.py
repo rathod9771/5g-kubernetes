@@ -114,9 +114,19 @@ def reject_inline_credentials(value):
             reject_inline_credentials(content)
 
 
-def safe_chart_inputs(files):
+def safe_chart_inputs(files, reviewed=None):
     """Fail closed on local debris even when .helmignore happens to hide it."""
     for name in files:
+        if reviewed is not None:
+            # A vendored multi-chart tree is accepted only as an exact, reviewed
+            # byte inventory. Generic RAN input rules remain fail-closed.
+            if set(files) != set(reviewed) or sha256(files[name]) != reviewed.get(name):
+                raise PackageError("Reviewed vendored chart changed: " + name)
+            if Path(name).is_absolute() or ".." in Path(name).parts or "\\" in name:
+                raise PackageError("Unsafe reviewed chart path")
+            if any(b"PRIVATE KEY-----" in line and line.strip() != b"## -----BEGIN RSA PRIVATE KEY-----" for line in files[name].splitlines()):
+                raise PackageError("Private key material is not a chart input")
+            continue
         path = Path(name)
         parts = [part.lower() for part in path.parts]
         sensitive = any((part.startswith(".") and part != ".helmignore") or part.startswith(("secret", ".#")) or part.endswith("#")
@@ -138,9 +148,9 @@ def safe_chart_inputs(files):
             reject_inline_credentials(yaml.safe_load(files[name]))
 
 
-def helm_packaged_files(files):
+def helm_packaged_files(files, reviewed=None):
     """Helm itself applies .helmignore and its standard packaging exclusions."""
-    safe_chart_inputs(files)
+    safe_chart_inputs(files, reviewed)
     metadata = mapping(files.get("Chart.yaml", b"{}"), "Chart.yaml")
     for field in ("name", "version"):
         value = metadata.get(field)
@@ -182,16 +192,22 @@ def chart_files(root, chart):
     files = read_tree(source)
     if "Chart.yaml" not in files or not any(f.startswith("templates/") for f in files):
         raise PackageError(f"Missing Chart.yaml/templates: {source}")
-    safe_chart_inputs(files)
+    safe_chart_inputs(files, chart.get("reviewed_inputs"))
     inputs = {f"{chart['source']}/{name}": sha256(data) for name, data in files.items()}
     profiles = []
     for relative in chart["values_files"]:
         content = repository_path(root, relative).read_bytes()
         inputs[relative] = sha256(content)
         profiles.append(content)
-    packaged = helm_packaged_files(files)
+    packaged = helm_packaged_files(files, chart.get("reviewed_inputs"))
     if "Chart.yaml" not in packaged or not any(n.startswith("templates/") for n in packaged):
         raise PackageError("Helm exclusions removed required chart files")
+    if chart.get("reviewed_inputs") is not None:
+        # Reference reproduction preserves vendored defaults verbatim. Do not
+        # attempt dependency/profile baking or normalize the working chart.
+        if profiles:
+            raise PackageError("Reviewed reference chart does not accept profile baking")
+        return packaged, inputs
     # Resolve against packaged defaults, as a real Helm installation does.
     values = helm_effective_values(packaged, profiles)
     reject_inline_credentials(values)
@@ -463,13 +479,13 @@ def source_snapshot(root, scenarios, destination):
     for scenario in scenarios:
         for chart in scenario["charts"]:
             tree = read_tree(repository_path(root, chart["source"]))
-            safe_chart_inputs(tree)
+            safe_chart_inputs(tree, chart.get("reviewed_inputs"))
             inputs.update({chart["source"] + "/" + n: b for n, b in tree.items()})
         review = scenario["reviewed_legacy"]
         inputs.update({review["path"] + "/" + n: b for n, b in read_tree(repository_path(root, review["path"])).items()})
         inputs[review["path"] + ".tar.gz"] = repository_path(root, review["path"] + ".tar.gz").read_bytes()
     parsed = json.loads(inputs["config/scenarios.json"])
-    entries = {s["key"]: s for s in parsed["scenarios"]}
+    entries = {s["key"]: s for s in parsed["scenarios"] + parsed.get("installer_components", [])}
     if any(entries.get(s["key"]) != s for s in scenarios):
         raise PackageError("Registry changed before snapshot")
     for scenario in scenarios:

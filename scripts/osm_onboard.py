@@ -22,6 +22,7 @@ def main(argv=None):
         scenarios = select_scenarios(load_registry(), args.scenarios, args.ready)
         cfg = load_config(network='auto', require=('osm',))
         catalog = Catalog(cfg['OSM_HOST'])
+        catalog.ca_file = cfg.get('OSM_CA_CERT_PATH') or None
         catalog.authenticate(cfg['OSM_USER'], cfg['OSM_PASSWORD'], cfg['OSM_PROJECT_ID'] or cfg['OSM_PROJECT'])
         discover_context(cfg, catalog, require_vim=False)
         prepare(REPO_ROOT, args.output, scenarios)

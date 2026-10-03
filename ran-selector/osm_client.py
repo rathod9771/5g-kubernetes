@@ -53,6 +53,7 @@ def get_token(force=False):
         if not force and _token_cache['identity'] == identity and _token_cache['token'] and time.time() - _token_cache['fetched_at'] < 2700:
             return _token_cache['token']
         catalog = Catalog(cfg['OSM_HOST'])
+        catalog.ca_file = cfg.get('OSM_CA_CERT_PATH') or None
         catalog.authenticate(cfg['OSM_USER'], cfg['OSM_PASSWORD'], cfg['OSM_PROJECT_ID'] or cfg['OSM_PROJECT'])
         _token_cache.update(token=catalog.token, fetched_at=time.time(), identity=identity)
         return catalog.token
@@ -62,6 +63,7 @@ def context(cfg=None, catalog=None):
     cfg = cfg or runtime_config(require=('kubernetes',))
     with runtime_session(cfg):
         catalog = catalog or Catalog(cfg['OSM_HOST'], get_token())
+        catalog.ca_file = cfg.get('OSM_CA_CERT_PATH') or None
         return discover_context(cfg, catalog, lambda: kubernetes_json(cfg, ['get', 'namespaces', '-o', 'json']))
 
 
@@ -69,6 +71,7 @@ def _request(method, path, data=None):
     cfg = runtime_config()
     with runtime_session(cfg):
         catalog = Catalog(cfg['OSM_HOST'], get_token())
+        catalog.ca_file = cfg.get('OSM_CA_CERT_PATH') or None
         try:
             return catalog.request(method, path, data)
         except AuthorizationError:
@@ -90,7 +93,9 @@ def get_nsd_uuid(nsd_name, force=False):
     # No indefinite NSD cache; dashboard supplies the preflight-verified UUID.
     cfg = runtime_config()
     with runtime_session(cfg):
-        return Catalog(cfg['OSM_HOST'], get_token()).lookup('ns', nsd_name)
+        catalog = Catalog(cfg['OSM_HOST'], get_token())
+        catalog.ca_file = cfg.get('OSM_CA_CERT_PATH') or None
+        return catalog.lookup('ns', nsd_name)
 
 
 @runtime_operation

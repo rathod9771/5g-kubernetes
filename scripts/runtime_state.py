@@ -32,6 +32,7 @@ def main():
         else:
             cfg = load_config(network='auto', require=('osm', 'kubernetes'))
             catalog = Catalog(cfg['OSM_HOST'])
+            catalog.ca_file = cfg.get('OSM_CA_CERT_PATH') or None
             catalog.authenticate(cfg['OSM_USER'], cfg['OSM_PASSWORD'], cfg['OSM_PROJECT_ID'] or cfg['OSM_PROJECT'])
             context = discover_context(cfg, catalog, lambda: kubernetes_json(cfg, ['get', 'namespaces', '-o', 'json']))
             print(context['namespace'])

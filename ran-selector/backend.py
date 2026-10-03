@@ -36,6 +36,7 @@ def runtime_preflight():
     cfg = osm_client.runtime_config(require=('kubernetes',))
     with osm_client.runtime_session(cfg):
         catalog = Catalog(cfg['OSM_HOST'], osm_client.get_token())
+        catalog.ca_file = cfg.get('OSM_CA_CERT_PATH') or None
         context = osm_client.context(cfg, catalog)
     return cfg, context, catalog
 

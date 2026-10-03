@@ -35,7 +35,7 @@ load_config() {
   fi
   while IFS= read -r -d '' name && IFS= read -r -d '' value; do
     case "$name" in
-      OSM_PASSWORD|GRAFANA_ADMIN_PASSWORD|RANCHER_BOOTSTRAP_PASSWORD)
+      OSM_PASSWORD|GRAFANA_ADMIN_PASSWORD|RANCHER_BOOTSTRAP_PASSWORD|OSM_BOOTSTRAP_PASSWORD)
         # Secrets live only in the owner-only snapshot; do not retain shell variables.
         unset "$name"
         ;;

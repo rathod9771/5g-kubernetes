@@ -39,8 +39,10 @@ DEFAULTS = {
     'ACTIONS_LOG_PATH': '', 'RF_DEVICE_ARGS': '', 'SRSRAN_BINARY': '',
     'IMS_CONFIG_PATH': '', 'IMS_MYSQL_DATA_PATH': '', 'FLEXRIC_ADDRESS': '',
     'BENCH_IPERF_HOST': '', 'BENCH_PING_HOST': '8.8.8.8', 'BENCH_IPERF_PORT': '5201',
+    'OSM_CA_CERT_PATH': '', 'OSM_BOOTSTRAP_PASSWORD': '',
+    'INGRESS_HTTP_NODEPORT': '32080', 'OSM_CLUSTER_NAME': 'submission-cluster', 'SUBSCRIBER_DATABASE_INPUT': '',
 }
-SECRETS = {'OSM_PASSWORD', 'GRAFANA_ADMIN_PASSWORD', 'RANCHER_BOOTSTRAP_PASSWORD'}
+SECRETS = {'OSM_PASSWORD', 'GRAFANA_ADMIN_PASSWORD', 'RANCHER_BOOTSTRAP_PASSWORD', 'OSM_BOOTSTRAP_PASSWORD'}
 DNS = re.compile(r'[a-z0-9](?:[-a-z0-9]*[a-z0-9])?\Z')
 
 def private_text(path, required=False, strict=False):
@@ -232,7 +234,8 @@ def load_config(root=ROOT, environ=None, home=None, network=False, require=(), q
     if not (root / 'config/scenarios.json').is_file():
         raise ConfigError('Repository lacks config/scenarios.json')
     for field in ['RUNTIME_DIR', 'ACTIONS_LOG_PATH', 'KUBECONFIG_PATH', 'OSM_KUBECONFIG_PATH',
-                  'SRSRAN_BINARY', 'IMS_CONFIG_PATH', 'IMS_MYSQL_DATA_PATH']:
+                  'SRSRAN_BINARY', 'IMS_CONFIG_PATH', 'IMS_MYSQL_DATA_PATH',
+                  'OSM_CA_CERT_PATH', 'SUBSCRIBER_DATABASE_INPUT']:
         fallback = {'RUNTIME_DIR': str(root / '.runtime'), 'KUBECONFIG_PATH': str(home / '.kube/config')}
         if field == 'OSM_KUBECONFIG_PATH':
             fallback[field] = cfg['KUBECONFIG_PATH']
@@ -262,7 +265,7 @@ def load_config(root=ROOT, environ=None, home=None, network=False, require=(), q
             if value.overlaps(subnet):
                 raise ConfigError('Conflicting network ranges: ' + key + ' and ' + other)
     ports = []
-    for field in ['OSM_HTTPS_PORT', 'PROMETHEUS_NODEPORT', 'GRAFANA_NODEPORT', 'DASHBOARD_PORT', 'RANCHER_PORT']:
+    for field in ['INGRESS_HTTP_NODEPORT', 'OSM_HTTPS_PORT', 'PROMETHEUS_NODEPORT', 'GRAFANA_NODEPORT', 'DASHBOARD_PORT', 'RANCHER_PORT']:
         if not cfg[field].isdigit() or not 1 <= int(cfg[field]) <= 65535:
             raise ConfigError(field + ' must be a port between 1 and 65535')
         if field.endswith('NODEPORT') and not 30000 <= int(cfg[field]) <= 32767:
@@ -274,7 +277,7 @@ def load_config(root=ROOT, environ=None, home=None, network=False, require=(), q
         raise ConfigError('DEPLOYMENT_PROFILE must be rfsim or usrp')
     if not cfg['OSM_NAMESPACE']:
         raise ConfigError('OSM_NAMESPACE must not be empty')
-    for field in ['OSM_NAMESPACE', 'OSM_PROJECT_NAMESPACE']:
+    for field in ['OSM_NAMESPACE', 'OSM_PROJECT_NAMESPACE', 'OSM_CLUSTER_NAME']:
         if cfg[field] and (len(cfg[field]) > 63 or not DNS.fullmatch(cfg[field])):
             raise ConfigError(field + ' must be a Kubernetes namespace name')
     for field in ['OSM_PROJECT_ID', 'OSM_VIM_ACCOUNT_ID', 'OSM_K8S_CLUSTER_ID']:

@@ -33,7 +33,7 @@ def load_registry(root=REPO_ROOT):
     if data.get("schema_version") != 1:
         raise RegistryError("Unsupported scenario registry schema")
     keys, packages, releases = set(), set(), set()
-    for scenario in data["scenarios"]:
+    for scenario in data["scenarios"] + data.get("installer_components", []):
         key = scenario["key"]
         if not NAME.fullmatch(key) or key in keys:
             raise RegistryError(f"Invalid or duplicate scenario: {key}")
@@ -76,7 +76,9 @@ def load_registry(root=REPO_ROOT):
                 raise RegistryError(f"Duplicate/invalid release: {release}")
             releases.add(release)
             source = repository_path(root, chart["source"])
-            if not (source / "Chart.yaml").is_file():
+            # Installer-only input existence is checked on package selection/build;
+            # dashboard/runtime configuration does not require those source trees.
+            if scenario in data["scenarios"] and not (source / "Chart.yaml").is_file():
                 raise RegistryError(f"Missing chart: {chart['source']}")
             for values in chart["values_files"]:
                 profile = repository_path(root, values)
@@ -110,7 +112,7 @@ def select_scenarios(registry, keys=(), ready=False):
         return [s for s in registry["scenarios"] if s["generation_status"] == "ready"]
     if not keys:
         raise RegistryError("Specify scenario keys or --ready")
-    entries = {s["key"]: s for s in registry["scenarios"]}
+    entries = {s["key"]: s for s in registry["scenarios"] + registry.get("installer_components", [])}
     blocked = {s["key"]: s["reason"] for s in registry["blocked_components"]}
     selected = []
     for key in keys:

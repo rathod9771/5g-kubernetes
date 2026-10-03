@@ -34,11 +34,12 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Catalog:
-    def __init__(self, host, token=None):
+    def __init__(self, host, token=None, ca_file=None):
         parsed = urlsplit(host)
         if parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise CatalogError('OSM requires verified HTTPS')
         self.host, self.token = host.rstrip('/'), token
+        self.ca_file = ca_file
 
     def request(self, method, path, data=None, content_type='application/yaml'):
         headers = {'Content-Type': content_type, 'Accept': 'application/gzip' if path.endswith(('/package_content', '/nsd_content')) else 'application/yaml'}
@@ -46,7 +47,12 @@ class Catalog:
             headers['Authorization'] = 'Bearer ' + self.token
         request = urllib.request.Request(self.host + '/osm' + path, data=data, headers=headers, method=method)
         try:
-            opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl.create_default_context()), NoRedirect())
+            context = ssl.create_default_context()
+            if self.ca_file:
+                from runtime_config import private_text
+                certificate, _ = private_text(self.ca_file, required=True)
+                context.load_verify_locations(cadata=certificate)
+            opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), NoRedirect())
             with opener.open(request, timeout=30) as response:
                 return response.read()
         except urllib.error.HTTPError as error:
