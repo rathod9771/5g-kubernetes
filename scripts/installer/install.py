@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import yaml
-from installer.reference import ROOT, versions, adapt_osm_chart, osm_values, api_ingress
+from installer.reference import ROOT, versions, adapt_osm_chart, osm_values, api_ingress, apply_osm_source_patch
 from installer.private_input import private_archive, import_decision, restore_command
 from local_safety import atomic_write, exclusive_lock
 from runtime_config import load_config, write_snapshot, discover_context, ConfigError, read_snapshot
@@ -302,7 +302,11 @@ class Installer:
         if chart.exists():
             # Generated build copy only. Upstream checkout and persistent data are untouched.
             shutil.rmtree(chart)
-        shutil.copytree(source / 'installers/helm/osm', chart)
+        with tempfile.TemporaryDirectory(prefix='.osm-reference-', dir=self.directory) as temporary:
+            reconstructed = Path(temporary) / 'source'
+            shutil.copytree(source, reconstructed, symlinks=True)
+            apply_osm_source_patch(reconstructed, self.lock, self.runner)
+            shutil.copytree(reconstructed / 'installers/helm/osm', chart)
         if yaml.safe_load((chart / 'Chart.yaml').read_text())['version'] != self.lock['osm']:
             raise ConfigError('Downloaded OSM chart version mismatch')
         adapt_osm_chart(chart)

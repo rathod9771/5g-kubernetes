@@ -152,3 +152,53 @@ the pinned version before any release creation, then installed from that local
 archive. Install/upgrade, lint and other lifecycle/validation operations are not
 retried. Errors identify the stage/component and chart/version where applicable;
 final stderr is summarized using public error categories to avoid leaking secrets.
+
+### Public OSM source reconstruction
+
+The acquisition pin is Gerrit's publicly advertised `v19.0` commit
+`019473f83210197b833c03e2efdda0fb290b9eed`. Its ancestor is the peeled
+`v19.0.0` release tag, `d0376773da8b460264c1ada5f95c8d5f6f03340b`.
+Read-only verification on 2026-10-03 found that the reference checkout's origin
+was `https://osm.etsi.org/gitlab/osm/devops.git`, rather than Gerrit.
+Its HEAD `3804ad93d2626137ca5295a7ecdae29d301a6274` is the upstream
+June 2026 Jenkinsfile rename commit, parent
+`9cab697f49b5341f75e019cb9d983bb6d474e56d`; it was also its cached
+`origin/v19.0`. Public GitLab `ls-remote` independently confirmed that same tip.
+GitLab availability does not prove Gerrit availability. Gerrit's
+advertised branch ends at the selected base, while its annotated release tag
+is `c1fd66fc44b86e85dd61828735f536c913ae35a0`.
+
+`scripts/installer/patches/osm-v19-reference.patch` captures the exact committed
+base-to-reference delta: rename `Jenkinsfile` to `Jenkinsfile.old`, change the
+release default, add the `-R` installer option, and pass the daily release into
+the upstream test pipeline. These five files are preserved for source identity;
+our installer never executes upstream installation or CI scripts. This patch
+contains no Helm changes. Its SHA256 and reconstructed Git tree
+`42ddcbf52f27bcc967e6b72496349fffb73c97b3` are locked alongside the public base.
+A fresh public clone plus this patch reproduced that complete committed tree.
+All 44 tracked OSM chart files matched the reference working tree exactly.
+
+The reference working tree is not claimed to equal that committed tree. It has
+11 uncommitted wrapper changes: ten scripts replaced with `exit 0` (client tools,
+Kubernetes, auxiliary services, Flux cloning, four Gitea helpers, and two Minio
+helpers), plus `40-deploy-osm.sh` overrides disabling its Prometheus/Grafana and
+setting a host-specific domain. They are not chart changes and are not copied:
+our installer owns those lifecycle stages and generates domain configuration.
+The untracked management-cluster clone helper is another `exit 0` stub and is
+not required by our execution path. The two `.bak` files are backups, not inputs;
+`40-deploy-osm.sh.bak` equals its HEAD original, while the client-tools backup
+differs from its HEAD original. No kubeconfig, certificate, credential or local host value
+is extracted into the source patch.
+
+Ignored chart outputs comprise `Chart.lock` and six dependency `.tgz` archives.
+Chart.yaml pins all six dependency versions exactly; their reference bytes
+match `osm_dependencies` in the version lock. They remain generated/downloaded
+outputs, verified by the existing dependency checks.
+
+Reruns reuse only a clean verified public-base cache. Reconstruction happens in
+a temporary copy, with base, patch checksum, staged tree and working content
+verified before the chart is used. Reapplying to an already reconstructed copy
+verifies the same tree without applying twice. Wrong bases, patch failures and
+unexpected changes stop installation. The public source cache remains pristine;
+existing repository-owned certificate adaptations still operate on the chart
+build copy after reconstruction.

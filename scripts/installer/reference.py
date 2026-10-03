@@ -1,5 +1,6 @@
 """Pure reference-source adaptations; never execute upstream installer scripts."""
 import json
+import hashlib
 from urllib.parse import urlsplit
 from pathlib import Path
 
@@ -9,6 +10,38 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def versions():
     return json.loads((ROOT / 'config/reference-versions.json').read_text())
+
+
+def apply_osm_source_patch(source, lock, runner):
+    """Reconstruct the reference committed tree in an expendable build copy.
+
+    The pristine public checkout remains untouched. No upstream script executes.
+    Already reconstructed copies are accepted only after content verification.
+    """
+    from runtime_config import ConfigError
+    source = Path(source)
+    spec = lock['osm_source_patch']
+    patch = ROOT / spec['path']
+    if patch.is_symlink() or not patch.is_file() or hashlib.sha256(patch.read_bytes()).hexdigest() != spec['sha256']:
+        raise ConfigError('OSM reference source patch checksum mismatch')
+    def git(*args, check=True):
+        return runner.run(['git', '-C', str(source), *args], check=check,
+                          context='OSM reference source patch')
+    if git('rev-parse', 'HEAD').stdout.decode().strip() != lock['osm_source_commit']:
+        raise ConfigError('OSM reference source patch: wrong public base')
+    if git('diff', '--quiet', check=False).returncode or git('ls-files', '--others').stdout:
+        raise ConfigError('OSM reference source patch: unexpected working-tree content')
+    tree = git('write-tree').stdout.decode().strip()
+    if tree == spec['tree']:
+        return tree
+    if tree != git('rev-parse', 'HEAD^{tree}').stdout.decode().strip():
+        raise ConfigError('OSM reference source patch: unexpected staged content')
+    git('apply', '--check', '--index', str(patch))
+    git('apply', '--index', str(patch))
+    tree = git('write-tree').stdout.decode().strip()
+    if tree != spec['tree'] or git('diff', '--quiet', check=False).returncode:
+        raise ConfigError('OSM reference source patch: reconstructed tree mismatch')
+    return tree
 
 
 def adapt_osm_chart(chart):

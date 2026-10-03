@@ -1,0 +1,59 @@
+diff --git a/Jenkinsfile b/Jenkinsfile.old
+similarity index 100%
+rename from Jenkinsfile
+rename to Jenkinsfile.old
+diff --git a/installers/00-default-install-options.rc b/installers/00-default-install-options.rc
+index 752b41ca18a63682375cc815ae7debd6c1ce0b77..814029915682613d000310bbfba733638d09bd0a 100644
+--- a/installers/00-default-install-options.rc
++++ b/installers/00-default-install-options.rc
+@@ -19,7 +19,7 @@ export ASSUME_YES=""
+ export APT_PROXY_URL=""
+ export K8S_CLUSTER_ENGINE="k3s"
+ export DEBUG_INSTALL=""
+-export RELEASE="releasenineteen-daily"
++export RELEASE="ReleaseNINETEEN"
+ export INSTALL_AUX_CLUSTER="y"
+ export INSTALL_MGMT_CLUSTER="y"
+ export OSM_NAMESPACE=osm
+diff --git a/installers/full_install_osm.sh b/installers/full_install_osm.sh
+index 71a9e9d8101e4d92d3b08ba6f8084342eb0cc82b..2d464ad651a71de07f1e3409c3a2735b3f5e090b 100755
+--- a/installers/full_install_osm.sh
++++ b/installers/full_install_osm.sh
+@@ -49,8 +49,11 @@ echo "Load default options and export user installation options"
+ source $OSM_DEVOPS/installers/00-default-install-options.rc
+
+ RE_CHECK='^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+-while getopts ":a:c:e:S:D:s:t:U:d:p:m:T:M:G:O:-: hy" o; do
++while getopts ":a:c:e:R:S:D:s:t:U:d:p:m:T:M:G:O:-: hy" o; do
+     case "${o}" in
++        R)
++            RELEASE="${OPTARG}"
++            ;;
+         S)
+             DEVOPS_GERRIT_REFSPEC="${OPTARG}"
+             ;;
+diff --git a/installers/install_osm.sh b/installers/install_osm.sh
+index 28d36f3390ddab7696130065c26b966056563e62..b6b4a4ba249ec3ea0439cf8b9fefb9deb06b70ce 100755
+--- a/installers/install_osm.sh
++++ b/installers/install_osm.sh
+@@ -60,7 +60,7 @@ EOF"
+     [ -z "${DEBUG_INSTALL}" ] || DEBUG end of function
+ }
+
+-while getopts ":a:c:e:S:D:s:t:U:d:p:m:T:M:G:O:-: hy" o; do
++while getopts ":a:c:e:R:S:D:s:t:U:d:p:m:T:M:G:O:-: hy" o; do
+     case "${o}" in
+         S)
+             DEVOPS_GERRIT_REFSPEC="${OPTARG}"
+diff --git a/jenkins/ci-pipelines/ci_e2e_tests.groovy b/jenkins/ci-pipelines/ci_e2e_tests.groovy
+index 3747a569f61c68249c0f3998b048b1fb7334f5ec..f9bb1e8d889fc96e2d63c6fa29214ea3d8317157 100644
+--- a/jenkins/ci-pipelines/ci_e2e_tests.groovy
++++ b/jenkins/ci-pipelines/ci_e2e_tests.groovy
+@@ -178,6 +178,7 @@ node('pool') {
+         if (testedModuleName?.equalsIgnoreCase('devops') && installerRefspec) {
+             installArgs << "-S ${installerRefspec}"
+         }
++        installArgs << "-R releasenineteen-daily"
+         installArgs << "-d ${registryUser}:${registryPassword}@${INTERNAL_DOCKER_REGISTRY}"
+         installArgs << "-p ${INTERNAL_DOCKER_PROXY}"
+         installArgs << "-t ${commonModulesTag}"

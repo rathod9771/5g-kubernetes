@@ -494,3 +494,76 @@ class OsmAcquisitionTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', str(error.exception))
         self.assertIn('remote Git', str(error.exception))
         self.assert_clean()
+
+
+class OsmReferencePatchTests(unittest.TestCase):
+    setUp = OsmAcquisitionTests.setUp
+    git = OsmAcquisitionTests.git
+
+    def fixture(self):
+        import hashlib
+        from installer.reference import apply_osm_source_patch
+        source = self.installer.acquire_osm_source()
+        (source / 'source.txt').write_text('reference patched source')
+        patch = self.base / 'reference.patch'
+        patch.write_bytes(self.git(source, 'diff', '--binary', '--full-index').stdout)
+        self.git(source, 'add', 'source.txt')
+        tree = self.git(source, 'write-tree').stdout.decode().strip()
+        self.git(source, 'reset', '--hard', self.commit)
+        lock = dict(self.installer.lock, osm_source_patch={
+            'path': str(patch), 'sha256': hashlib.sha256(patch.read_bytes()).hexdigest(), 'tree': tree})
+        return source, patch, lock, apply_osm_source_patch
+
+    def test_clean_apply_and_already_applied_are_identical(self):
+        source, patch, lock, apply = self.fixture()
+        for _ in range(2):
+            self.assertEqual(apply(source, lock, Runner()), lock['osm_source_patch']['tree'])
+            self.assertEqual((source / 'source.txt').read_text(), 'reference patched source')
+        self.assertEqual(self.git(source, 'rev-parse', 'HEAD').stdout.decode().strip(), self.commit)
+
+    def test_wrong_base_rejected_before_patch(self):
+        source, patch, lock, apply = self.fixture()
+        lock['osm_source_commit'] = '0' * 40
+        with self.assertRaisesRegex(ConfigError, 'wrong public base'): apply(source, lock, Runner())
+        self.assertEqual((source / 'source.txt').read_text(), 'pinned source')
+
+    def test_patch_checksum_failure_is_safe(self):
+        source, patch, lock, apply = self.fixture()
+        patch.write_bytes(b'PRIVATE_INVALID_PATCH_SENTINEL')
+        with self.assertRaisesRegex(ConfigError, 'checksum mismatch') as error:
+            apply(source, lock, Runner())
+        self.assertNotIn('PRIVATE', str(error.exception))
+        self.assertEqual((source / 'source.txt').read_text(), 'pinned source')
+
+    def test_patch_failure_does_not_change_source(self):
+        import hashlib
+        source, patch, lock, apply = self.fixture()
+        patch.write_bytes(patch.read_bytes().replace(b'-pinned source', b'-absent original'))
+        lock['osm_source_patch']['sha256'] = hashlib.sha256(patch.read_bytes()).hexdigest()
+        with self.assertRaises(ConfigError): apply(source, lock, Runner())
+        self.assertEqual((source / 'source.txt').read_text(), 'pinned source')
+        self.assertFalse(self.git(source, 'status', '--porcelain').stdout)
+
+    def test_unexpected_tree_or_working_content_rejected(self):
+        source, patch, lock, apply = self.fixture()
+        lock['osm_source_patch']['tree'] = '0' * 40
+        with self.assertRaisesRegex(ConfigError, 'tree mismatch'): apply(source, lock, Runner())
+        (source / 'source.txt').write_text('user change')
+        with self.assertRaisesRegex(ConfigError, 'unexpected working-tree'): apply(source, lock, Runner())
+
+    def test_real_patch_provenance_and_public_base_are_locked(self):
+        import hashlib
+        lock = versions()
+        self.assertEqual(lock['osm_source_commit'], '019473f83210197b833c03e2efdda0fb290b9eed')
+        spec = lock['osm_source_patch']
+        self.assertEqual(spec['tree'], '42ddcbf52f27bcc967e6b72496349fffb73c97b3')
+        self.assertEqual(hashlib.sha256((ROOT / spec['path']).read_bytes()).hexdigest(), spec['sha256'])
+        self.assertEqual(spec['reference_commit'], '3804ad93d2626137ca5295a7ecdae29d301a6274')
+
+    def test_ignored_private_files_are_rejected_without_printing_content(self):
+        source, patch, lock, apply = self.fixture()
+        (source / '.git/info/exclude').write_text('private-input\n')
+        (source / 'private-input').write_text('PRIVATE_SENTINEL')
+        with self.assertRaisesRegex(ConfigError, 'unexpected working-tree') as error:
+            apply(source, lock, Runner())
+        self.assertNotIn('PRIVATE_SENTINEL', str(error.exception))

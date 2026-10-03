@@ -118,7 +118,13 @@
       "version": "1.9.0"
     }
   ],
-  "osm_source_commit": "3804ad93d2626137ca5295a7ecdae29d301a6274",
+  "osm_source_commit": "019473f83210197b833c03e2efdda0fb290b9eed",
   "osm_source_url": "https://osm.etsi.org/gerrit/osm/devops",
-  "rancher": "2.15.1"
+  "rancher": "2.15.1",
+  "osm_source_patch": {
+    "path": "scripts/installer/patches/osm-v19-reference.patch",
+    "sha256": "4c90bf11f1ba55a2005b512887c5fab0043831d9ec7b672dc8b017ac0d43143e",
+    "tree": "42ddcbf52f27bcc967e6b72496349fffb73c97b3",
+    "reference_commit": "3804ad93d2626137ca5295a7ecdae29d301a6274"
+  }
 }
