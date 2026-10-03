@@ -282,3 +282,31 @@ and request data are suppressed. Catalog byte-provenance checks still run after
 onboarding and are not bypassed. The ingress API remains verified HTTPS, with
 an explicit HTTP upstream protocol to the NBI service at port 9999. The installer
 does not make direct HTTPS requests to that plain-HTTP service port.
+
+### Monitoring resume and diagnostics
+
+The healthy pinned monitoring Helm release is reused, never reinstalled or
+upgraded automatically. Kubernetes workload status must show the current
+observed generation, desired/updated/ready replicas, and availability before a
+redundant rollout check is skipped. StatefulSets are already checked individually
+inside release verification; the extra collection rollout has been removed.
+NodePort reconciliation first checks its type, selector and exact ports. An
+already matching service is left alone; missing/mismatched service state is
+applied and verified. PodMonitors and the two monitoring addons retain their
+existing idempotent apply paths.
+
+All monitoring namespace, workload discovery/rollout, NodePort, PodMonitor,
+AMF-discovery, addon ConfigMap/RBAC/Deployment and addon-rollout operations carry
+specific error context. Explicit safe reads/applies/rollout checks retry only
+recognized transient API failures or command timeouts, at most four attempts
+with 2/4/8-second backoff. Deterministic permission/configuration/resource failures
+remain fatal; failures are not suppressed merely because other pods are healthy.
+No Helm lifecycle command gains retries.
+
+Read-only reference inspection on 2026-10-03 found no
+`v1beta1.metrics.k8s.io` APIService and no metrics-server deployment.
+Kube-prometheus-stack does not establish that API. Missing HPA resource metrics
+are a separate platform gap; metrics-server is not installed by this fix.
+The original generic error cannot identify which command failed on the second
+machine. In particular, the unnamed StatefulSet rollout succeeds on the
+reference; new diagnostics avoid attributing the failure to it without evidence.

@@ -53,17 +53,18 @@ def stderr_summary(stderr):
 class Runner:
     stage = 'installer'
 
-    def run(self, args, data=None, check=True, timeout=1800, context=None, remote_fetch=False, fetch_timeout=120):
-        # Only explicitly classified read/fetch operations may retry. Never retry
-        # installation/lifecycle commands, whose side effects could be ambiguous.
-        attempts = 4 if remote_fetch and check else 1
+    def run(self, args, data=None, check=True, timeout=1800, context=None, remote_fetch=False, fetch_timeout=120, retry_network=False):
+        # Only explicitly classified fetch/read/idempotent apply operations retry.
+        # Never retry installation/lifecycle commands with ambiguous side effects.
+        retryable = remote_fetch or retry_network
+        attempts = 4 if retryable and check else 1
         label = self.stage + ': ' + (context or str(args[0]))
         for attempt in range(attempts):
             try:
                 result = subprocess.run([str(a) for a in args], input=data, capture_output=True,
                                         timeout=min(timeout, fetch_timeout) if remote_fetch else timeout)
             except subprocess.TimeoutExpired:
-                if remote_fetch and attempt + 1 < attempts:
+                if retryable and attempt + 1 < attempts:
                     time.sleep(2 ** (attempt + 1))
                     continue
                 raise ConfigError(label + ': failed after ' + str(attempt + 1) +
@@ -73,7 +74,7 @@ class Runner:
             if not check or not result.returncode:
                 return result
             summary, transient = stderr_summary(result.stderr)
-            if remote_fetch and transient and attempt + 1 < attempts:
+            if retryable and transient and attempt + 1 < attempts:
                 time.sleep(2 ** (attempt + 1))
                 continue
             raise ConfigError(label + ': failed after ' + str(attempt + 1) +
@@ -94,16 +95,22 @@ class Installer:
         self.directory = Path(cfg['RUNTIME_DIR'])
         self.registry = load_registry()
 
-    def kubectl(self, *args, workload=False, data=None, check=True):
+    def kubectl(self, *args, workload=False, data=None, check=True, context=None, retry_network=False):
         key = 'OSM_KUBECONFIG_PATH' if workload else 'KUBECONFIG_PATH'
-        return self.runner.run(['kubectl', '--kubeconfig', self.cfg[key], *args], data=data, check=check)
+        label = context or 'kubectl ' + str(args[0])
+        if context is None and args[0] in ('get', 'rollout', 'wait') and len(args) > 1:
+            label += ' ' + str(args[1])
+        safe = args[0] in ('get', 'apply') or args[:2] == ('rollout', 'status')
+        return self.runner.run(['kubectl', '--kubeconfig', self.cfg[key], *args], data=data, check=check,
+                               context=label, retry_network=retry_network and safe)
 
-    def kjson(self, *args, workload=False):
-        return json.loads(self.kubectl(*args, '-o', 'json', workload=workload).stdout)
+    def kjson(self, *args, workload=False, context=None, retry_network=False):
+        return json.loads(self.kubectl(*args, '-o', 'json', workload=workload, context=context, retry_network=retry_network).stdout)
 
-    def apply(self, document, workload=False):
+    def apply(self, document, workload=False, context=None, retry_network=False):
         return self.kubectl('apply', '-f', '-', workload=workload,
-                            data=yaml.safe_dump_all(document if isinstance(document, list) else [document]).encode())
+                            data=yaml.safe_dump_all(document if isinstance(document, list) else [document]).encode(),
+                            context=context, retry_network=retry_network)
 
     def snapshot(self):
         path = self.directory / 'installer-config.json'
@@ -123,7 +130,8 @@ class Installer:
                                context=context or 'Helm ' + ' '.join(str(a) for a in args[:2]), remote_fetch=remote)
 
     def release(self, name, namespace, chart, version, values=None, repo=None, wait=True):
-        self.apply({'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': namespace}})
+        self.apply({'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': namespace}},
+                   context=name + ' namespace apply', retry_network=name == 'kube-prometheus-stack')
         installed = json.loads(self.helm('list', '-n', namespace, '-a', '-o', 'json').stdout)
         existing = [r for r in installed if r['name'] == name]
         if existing:
@@ -160,9 +168,13 @@ class Installer:
                 if fetch_directory is not None:
                     fetch_directory.cleanup()
         for kind in ('deployment', 'statefulset', 'daemonset'):
-            items = self.kjson('get', kind, '-n', namespace)['items']
+            monitoring = name == 'kube-prometheus-stack'
+            items = self.kjson('get', kind, '-n', namespace, context=name + ' ' + kind + ' discovery', retry_network=monitoring)['items']
             for item in items:
-                self.kubectl('rollout', 'status', kind + '/' + item['metadata']['name'], '-n', namespace, '--timeout=600s')
+                if monitoring and self.monitoring_workload_ready(kind, item):
+                    continue
+                self.kubectl('rollout', 'status', kind + '/' + item['metadata']['name'], '-n', namespace, '--timeout=600s',
+                             context=name + ' rollout verification ' + kind + '/' + item['metadata']['name'], retry_network=monitoring)
 
     def kubernetes(self):
         path = Path(self.cfg['KUBECONFIG_PATH'])
@@ -657,28 +669,61 @@ class Installer:
                 validate_state(state, self.registry, self.context)
                 atomic_write(state_path, yaml.safe_dump(state).encode())
 
+    @staticmethod
+    def monitoring_workload_ready(kind, item):
+        status, spec = item.get('status', {}), item.get('spec', {})
+        generation = item.get('metadata', {}).get('generation')
+        if not isinstance(generation, int) or status.get('observedGeneration', -1) < generation:
+            return False
+        if kind == 'daemonset':
+            desired = status.get('desiredNumberScheduled', 0)
+            return desired > 0 and all(status.get(k, 0) == desired for k in ('currentNumberScheduled', 'updatedNumberScheduled', 'numberReady', 'numberAvailable')) and status.get('numberMisscheduled', 0) == 0
+        desired = spec.get('replicas', 1)
+        return desired > 0 and all(status.get(k, 0) == desired for k in ('replicas', 'readyReplicas', 'updatedReplicas')) and (kind != 'deployment' or status.get('availableReplicas', 0) == desired)
+
+    def monitoring_nodeport(self):
+        desired = next(yaml.safe_load_all(render_manifest(ROOT / 'monitoring/prometheus-nodeport.yaml', self.cfg)))
+        def matches():
+            services = self.kjson('get', 'services', '-n', 'monitoring', context='monitoring NodePort service verification', retry_network=True)['items']
+            found = [s for s in services if s['metadata']['name'] == desired['metadata']['name']]
+            if len(found) != 1:
+                return False
+            spec, expected = found[0]['spec'], desired['spec']
+            def ports(value):
+                return sorted((p.get('name', ''), p['port'], p.get('targetPort', p['port']), p.get('nodePort'), p.get('protocol', 'TCP')) for p in value)
+            return spec.get('type') == expected['type'] and spec.get('selector') == expected['selector'] and ports(spec.get('ports', [])) == ports(expected['ports'])
+        if matches():
+            return
+        self.apply(desired, context='monitoring NodePort apply', retry_network=True)
+        if not matches():
+            raise ConfigError('monitoring NodePort service verification failed: expected selector/ports not present')
+
     def monitoring(self):
         values = yaml.safe_load((ROOT / 'monitoring/kube-prometheus-stack-values.yaml').read_text())
         values.setdefault('grafana', {}).update({'adminPassword': self.cfg['GRAFANA_ADMIN_PASSWORD'],
                                                 'service': {'type': 'NodePort', 'nodePort': int(self.cfg['GRAFANA_NODEPORT'])}})
         self.release('kube-prometheus-stack', 'monitoring', 'kube-prometheus-stack', self.lock['monitoring_chart'],
                      values, 'https://prometheus-community.github.io/helm-charts')
-        self.kubectl('rollout', 'status', 'statefulset', '-n', 'monitoring', '--timeout=600s')
-        self.apply(list(yaml.safe_load_all(render_manifest(ROOT / 'monitoring/prometheus-nodeport.yaml', self.cfg))))
+        # release() already verifies every named workload; do not repeat the rollout.
+        self.monitoring_nodeport()
         for relative in ['monitoring/open5gs-podmonitor.yaml', 'monitoring/ran-exporter/podmonitor.yaml',
                          'monitoring/latency-probe/podmonitor.yaml']:
-            self.apply(list(yaml.safe_load_all(render_manifest(ROOT / relative, self.cfg))))
+            self.apply(list(yaml.safe_load_all(render_manifest(ROOT / relative, self.cfg))),
+                       context='monitoring PodMonitor apply ' + relative, retry_network=True)
         namespace = self.cfg['OSM_PROJECT_NAMESPACE']
-        services = self.kjson('get', 'services', '-n', namespace, workload=True)['items']
+        services = self.kjson('get', 'services', '-n', namespace, workload=True,
+                             context='monitoring AMF service discovery', retry_network=True)['items']
         amf = [s['metadata']['name'] for s in services if s['metadata']['name'].endswith('-amf-sbi')]
         if len(amf) != 1:
             raise ConfigError('AMF SBI discovery is missing or ambiguous')
         for component, script in [('ran-exporter', 'ran_exporter.py'), ('latency-probe', 'latency_probe.py')]:
             self.apply({'apiVersion': 'v1', 'kind': 'ConfigMap',
                         'metadata': {'name': component + '-script', 'namespace': namespace},
-                        'data': {script: (ROOT / 'monitoring' / component / script).read_text()}}, workload=True)
+                        'data': {script: (ROOT / 'monitoring' / component / script).read_text()}}, workload=True,
+                       context='monitoring ' + component + ' ConfigMap apply', retry_network=True)
             if component == 'ran-exporter':
-                self.apply(list(yaml.safe_load_all(render_manifest(ROOT / 'monitoring/ran-exporter/rbac.yaml', self.cfg))), workload=True)
+                self.apply(list(yaml.safe_load_all(render_manifest(ROOT / 'monitoring/ran-exporter/rbac.yaml', self.cfg))), workload=True,
+                           context='monitoring ran-exporter RBAC apply', retry_network=True)
             documents = list(yaml.safe_load_all(render_manifest(ROOT / 'monitoring' / component / 'deployment.yaml', self.cfg)))
             for d in documents:
                 if d and d['kind'] == 'Deployment':
@@ -690,8 +735,9 @@ class Installer:
                             e['value'] = 'app=cran-srsran-cu'
                     image = 'docker.io/library/python:3.12-slim'
                     c['image'] = image + '@' + self.lock['images'][image]
-            self.apply(documents, workload=True)
-            self.kubectl('rollout', 'status', 'deployment/' + component, '-n', namespace, '--timeout=600s', workload=True)
+            self.apply(documents, workload=True, context='monitoring ' + component + ' Deployment/Service apply', retry_network=True)
+            self.kubectl('rollout', 'status', 'deployment/' + component, '-n', namespace, '--timeout=600s', workload=True,
+                         context='monitoring ' + component + ' rollout verification', retry_network=True)
 
     def services(self):
         dashboard_active = self.runner.run(['systemctl', 'is-active', '--quiet', 'ran-selector'], check=False).returncode == 0

@@ -183,7 +183,8 @@ class ReferenceInstallerTests(unittest.TestCase):
             command=installer.helm.call_args_list[1].args
             self.assertNotIn('--wait',command)
             self.assertIn('19.0.0',command)
-            installer.kubectl.assert_called_once_with('rollout','status','deployment/nbi','-n','osm','--timeout=600s')
+            installer.kubectl.assert_called_once_with('rollout','status','deployment/nbi','-n','osm','--timeout=600s',
+                                                     context='osm rollout verification deployment/nbi', retry_network=False)
 
     def test_missing_core_workloads_cannot_be_ready(self):
         with tempfile.TemporaryDirectory() as t:
@@ -374,7 +375,8 @@ class OsmAcquisitionTests(unittest.TestCase):
                     raise ConfigError('OSM source clone: command timeout' if len(attempts) == 1 else 'OSM source clone: connection reset by peer')
             return original(args, **kwargs)
         self.installer.runner.run = run
-        with mock.patch('installer.install.time.sleep') as sleep:
+        with mock.patch('installer.install.time') as timing:
+            sleep = timing.sleep
             self.installer.acquire_osm_source()
         self.assertEqual(len(attempts), 3)
         self.assertEqual([c.args[0] for c in sleep.call_args_list], [2, 4])
@@ -843,3 +845,97 @@ class CoreInstantiationTests(unittest.TestCase):
         with mock.patch.object(c,'request',side_effect=request):
             onboard(c,[scenario],[artifacts])
             self.assertEqual(c.verify(scenario,artifacts),{'knf':self.ns,'ns':self.ns})
+
+
+class MonitoringResumeTests(unittest.TestCase):
+    def installer(self,t):
+        return Installer({'RUNTIME_DIR':t,'KUBECONFIG_PATH':'fixture','OSM_KUBECONFIG_PATH':'fixture',
+            'PROMETHEUS_NODEPORT':'30990','GRAFANA_NODEPORT':'30300','GRAFANA_ADMIN_PASSWORD':'SYNTHETIC',
+            'OSM_PROJECT_NAMESPACE':'fixture-project','OSM_BASE_DOMAIN':'example.invalid'})
+
+    def service(self):
+        return {'metadata':{'name':'kube-prometheus-stack-prometheus-nodeport'},'spec':{'type':'NodePort',
+            'selector':{'app.kubernetes.io/name':'prometheus','prometheus':'kube-prometheus-stack-prometheus'},
+            'clusterIP':'192.0.2.1','ports':[{'name':'web','port':9090,'targetPort':9090,'nodePort':30990,'protocol':'TCP'}]}}
+
+    def test_existing_nodeport_is_verified_without_apply(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t);i.kjson=mock.Mock(return_value={'items':[self.service()]});i.apply=mock.Mock()
+            i.monitoring_nodeport();i.monitoring_nodeport()
+            i.apply.assert_not_called()
+
+    def test_missing_nodeport_is_applied_then_verified(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t);i.kjson=mock.Mock(side_effect=[{'items':[]},{'items':[self.service()]}]);i.apply=mock.Mock()
+            i.monitoring_nodeport()
+            self.assertEqual(i.apply.call_count,1)
+            self.assertEqual(i.apply.call_args.kwargs['context'],'monitoring NodePort apply')
+            self.assertTrue(i.apply.call_args.kwargs['retry_network'])
+
+    def test_healthy_helm_release_rerun_never_reinstalls(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t);i.apply=mock.Mock();i.kjson=mock.Mock(return_value={'items':[]})
+            chart='kube-prometheus-stack-'+i.lock['monitoring_chart']
+            i.helm=mock.Mock(return_value=subprocess.CompletedProcess([],0,json.dumps([{'name':'kube-prometheus-stack','status':'deployed','chart':chart}]).encode(),b''))
+            for _ in range(2):i.release('kube-prometheus-stack','monitoring','kube-prometheus-stack',i.lock['monitoring_chart'],repo='https://example.invalid')
+            self.assertEqual([c.args[0] for c in i.helm.call_args_list],['list','list'])
+
+    def test_transient_verification_retries_and_preserves_timeout(self):
+        failure=subprocess.CompletedProcess([],1,b'',b'connection reset by peer')
+        success=subprocess.CompletedProcess([],0,b'{"items":[]}',b'')
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t);i.runner.stage='monitoring'
+            with mock.patch('subprocess.run',side_effect=[failure,success]) as run,mock.patch('installer.install.time.sleep') as sleep:
+                self.assertEqual(i.kjson('get','services',context='monitoring service verification',retry_network=True),{'items':[]})
+            self.assertEqual(run.call_count,2);sleep.assert_called_once_with(2)
+            self.assertEqual(run.call_args.kwargs['timeout'],1800)
+
+    def test_deterministic_failure_is_specific_and_not_retried(self):
+        failure=subprocess.CompletedProcess([],1,b'PRIVATE',b'forbidden PRIVATE')
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t);i.runner.stage='monitoring'
+            with mock.patch('subprocess.run',return_value=failure) as run,mock.patch('installer.install.time.sleep') as sleep:
+                with self.assertRaises(ConfigError) as error:i.kjson('get','services',context='monitoring NodePort service verification',retry_network=True)
+            self.assertIn('monitoring NodePort service verification',str(error.exception));self.assertIn('forbidden',str(error.exception))
+            self.assertNotIn('PRIVATE',str(error.exception));self.assertEqual(run.call_count,1);sleep.assert_not_called()
+
+    def test_lifecycle_commands_do_not_gain_retries(self):
+        failure=subprocess.CompletedProcess([],1,b'',b'connection reset by peer')
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t)
+            with mock.patch('subprocess.run',return_value=failure) as run,mock.patch('installer.install.time.sleep'):
+                with self.assertRaises(ConfigError):i.kubectl('delete','deployment/fixture',retry_network=True)
+            self.assertEqual(run.call_count,1)
+
+    def test_full_healthy_monitoring_path_has_no_false_failure(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t)
+            chart='kube-prometheus-stack-'+i.lock['monitoring_chart']
+            i.helm=mock.Mock(return_value=subprocess.CompletedProcess([],0,json.dumps([{'name':'kube-prometheus-stack','status':'deployed','chart':chart}]).encode(),b''))
+            i.apply=mock.Mock();i.kubectl=mock.Mock(return_value=subprocess.CompletedProcess([],0,b'',b''))
+            def kjson(*args,**kwargs):
+                if args[1]=='services':
+                    return {'items':[{'metadata':{'name':'open5gs-amf-sbi'}}]} if kwargs.get('workload') else {'items':[self.service()]}
+                return {'items':[{'metadata':{'name':'fixture-ready'}}]}
+            i.kjson=kjson
+            i.monitoring();i.monitoring()
+            self.assertEqual([c.args[0] for c in i.helm.call_args_list],['list','list'])
+            for call in i.kubectl.call_args_list:
+                self.assertIn('rollout verification',call.kwargs['context'])
+            self.assertFalse(any(c.kwargs.get('context')=='monitoring NodePort apply' for c in i.apply.call_args_list))
+
+    def test_ready_workloads_skip_redundant_rollout_verification(self):
+        with tempfile.TemporaryDirectory() as t:
+            i=self.installer(t);i.apply=mock.Mock();i.kubectl=mock.Mock()
+            chart='kube-prometheus-stack-'+i.lock['monitoring_chart']
+            i.helm=mock.Mock(return_value=subprocess.CompletedProcess([],0,json.dumps([{'name':'kube-prometheus-stack','status':'deployed','chart':chart}]).encode(),b''))
+            def kjson(*args,**kwargs):
+                if args[1]=='daemonset':
+                    status={'observedGeneration':1,'desiredNumberScheduled':1,'currentNumberScheduled':1,'updatedNumberScheduled':1,'numberReady':1,'numberAvailable':1}
+                else:
+                    status={'observedGeneration':1,'replicas':1,'readyReplicas':1,'updatedReplicas':1,'availableReplicas':1}
+                return {'items':[{'metadata':{'name':'healthy','generation':1},'spec':{'replicas':1},'status':status}]}
+            i.kjson=kjson
+            i.release('kube-prometheus-stack','monitoring','kube-prometheus-stack',i.lock['monitoring_chart'])
+            i.kubectl.assert_not_called()
+            self.assertFalse(i.monitoring_workload_ready('deployment',{'metadata':{'generation':2},'status':{'observedGeneration':1}}))
