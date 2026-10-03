@@ -6,6 +6,7 @@
 set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${REPO_ROOT}/scripts/common.sh"
+load_config --network
 
 FAILED=0
 WARNED=0
@@ -87,10 +88,10 @@ fi
 # ---- Kubernetes cluster (optional at preflight time — install.sh can bootstrap it) ----
 log_info "Checking for an existing Kubernetes cluster..."
 CLUSTER_REACHABLE=0
-if command_exists kubectl && kubectl version --client >/dev/null 2>&1; then
-  if kubectl cluster-info >/dev/null 2>&1; then
+if command_exists kubectl && p_kubectl version --client >/dev/null 2>&1; then
+  if p_kubectl cluster-info >/dev/null 2>&1; then
     CLUSTER_REACHABLE=1
-    K8S_VERSION="$(kubectl version -o json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("serverVersion",{}).get("gitVersion","unknown"))' 2>/dev/null || echo unknown)"
+    K8S_VERSION="$(p_kubectl version -o json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("serverVersion",{}).get("gitVersion","unknown"))' 2>/dev/null || echo unknown)"
     log_ok "Existing cluster reachable, server version: ${K8S_VERSION} — install.sh will reuse it, not reinstall"
   else
     log_info "kubectl installed but no cluster reachable yet — install.sh will bootstrap one with kubeadm"
@@ -147,8 +148,8 @@ if [ "$CLUSTER_REACHABLE" -eq 1 ]; then
 else
   check_port 6443 "the Kubernetes API server" "kube-apiserver|kubelet"
 fi
-check_port 8090 "ran-selector.service (the dashboard)" "python3"
-check_port 30843 "OSM's ingress" ""
+check_port "$DASHBOARD_PORT" "ran-selector.service (the dashboard)" "python3"
+check_port "$OSM_HTTPS_PORT" "OSM's ingress" ""
 
 # ---- Permissions ----
 log_info "Checking permissions..."

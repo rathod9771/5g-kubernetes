@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=PLACEHOLDER_USER
 WorkingDirectory=PLACEHOLDER_REPO_ROOT/ran-selector
-Environment=KUBECONFIG=PLACEHOLDER_KUBECONFIG_PATH
+# Runtime configuration is read from config/global.env by the dashboard.
 ExecStart=PLACEHOLDER_REPO_ROOT/ran-selector/venv/bin/python3 PLACEHOLDER_REPO_ROOT/ran-selector/backend.py
 Restart=always
 RestartSec=10

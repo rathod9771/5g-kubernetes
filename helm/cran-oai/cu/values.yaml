@@ -9,13 +9,13 @@ cu:
   tac: 1
   plmn: "20893"
   amf:
-    address: "10.100.50.249"
+    address: "" # Unused: startup resolves the top-level amf.address Service.
     port: 38412
   f1:
     port: 38472
 
 network:
-  masterIf: enp3s0
+  masterIf: "" # Unused by hostNetwork/RFSIM; external Multus must supply an interface.
 
 ran:
   type: cran

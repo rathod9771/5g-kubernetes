@@ -1,14 +1,15 @@
+# Runtime template: render with scripts/runtime_render.py manifest before applying.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: ran-exporter
-  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  namespace: PLACEHOLDER_NAMESPACE
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: ran-exporter-pod-reader
-  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  namespace: PLACEHOLDER_NAMESPACE
 rules:
 - apiGroups: [""]
   resources: ["pods", "pods/log"]
@@ -18,11 +19,11 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: ran-exporter-pod-reader
-  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  namespace: PLACEHOLDER_NAMESPACE
 subjects:
 - kind: ServiceAccount
   name: ran-exporter
-  namespace: c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c
+  namespace: PLACEHOLDER_NAMESPACE
 roleRef:
   kind: Role
   name: ran-exporter-pod-reader

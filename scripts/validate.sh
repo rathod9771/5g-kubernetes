@@ -13,7 +13,7 @@
 set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${REPO_ROOT}/scripts/common.sh"
-load_config
+load_config --require kubernetes
 
 VERBOSE=0
 [ "${1:-}" = "--verbose" ] && VERBOSE=1
@@ -41,25 +41,25 @@ echo "=================================================="
 echo ""
 
 # ---- 1. Kubernetes node ----
-if kubectl_available && k_ get nodes 2>/dev/null | grep -q " Ready"; then
+if kubectl_available && p_kubectl get nodes 2>/dev/null | grep -q " Ready"; then
   RESULT[k8s]="READY"
-  evidence "$(k_ get nodes --no-headers 2>/dev/null)"
+  evidence "$(p_kubectl get nodes --no-headers 2>/dev/null)"
 else
   RESULT[k8s]="DOWN"
 fi
 print_check "Kubernetes" "${RESULT[k8s]}"
 
 # ---- 2/3. Required namespaces + pods ----
-OSM_NS="osm"
+OSM_NS="$OSM_NAMESPACE"
 if namespace_exists "$OSM_NS" && pods_ready_in_namespace "$OSM_NS"; then
   RESULT[osm_pods]="READY"
 else
   RESULT[osm_pods]="DEGRADED"
-  evidence "$(k_ get pods -n "$OSM_NS" --no-headers 2>/dev/null | grep -v Running)"
+  evidence "$(p_kubectl get pods -n "$OSM_NS" --no-headers 2>/dev/null | grep -v Running)"
 fi
 
 # ---- 4/5. OSM NBI reachable ----
-OSM_URL="https://${OSM_BASE_DOMAIN:-localhost}:${OSM_HTTPS_PORT:-30843}"
+OSM_URL="$OSM_HOST"
 if service_reachable "${OSM_URL}/osm/admin/v1/tokens" 5 || service_reachable "$OSM_URL" 5; then
   RESULT[osm_nbi]="READY"
 else
@@ -72,11 +72,9 @@ print_check "OSM NBI (${OSM_URL})" "${RESULT[osm_nbi]}"
 # Find whichever open5gs release is currently live and check its pods.
 CORE_NS="${OSM_PROJECT_NAMESPACE:-}"
 if [ -z "$CORE_NS" ]; then
-  # Best-effort: the project namespace is a K8s namespace OSM created;
-  # look for one containing an amf-ngap-stable service.
-  CORE_NS="$(k_ get svc -A 2>/dev/null | awk '/amf-ngap-stable/{print $1; exit}')"
+  CORE_NS="$(python3 "${REPO_ROOT}/scripts/runtime_state.py" namespace)" || exit 1
 fi
-if [ -n "$CORE_NS" ] && namespace_exists "$CORE_NS"; then
+if [ -n "$CORE_NS" ] && ran_namespace_exists "$CORE_NS"; then
   CORE_PODS_TOTAL="$(k_ get pods -n "$CORE_NS" -l app.kubernetes.io/managed-by=Helm --no-headers 2>/dev/null | grep -cE 'amf|smf|upf|nrf|ausf|udm|udr|pcf' || true)"
   CORE_PODS_RUNNING="$(k_ get pods -n "$CORE_NS" --no-headers 2>/dev/null | grep -E 'amf|smf|upf|nrf|ausf|udm|udr|pcf' | grep -c Running || true)"
   if [ "${CORE_PODS_TOTAL:-0}" -gt 0 ] && [ "$CORE_PODS_TOTAL" -eq "$CORE_PODS_RUNNING" ]; then
@@ -169,7 +167,7 @@ print_check "UE Registration" "${RESULT[ue_reg]}"
 print_check "PDU Session" "${RESULT[ue_pdu]}"
 
 # ---- 15/16. Prometheus + Grafana ----
-PROM_URL="http://localhost:${PROMETHEUS_NODEPORT:-30990}"
+PROM_URL="$PROMETHEUS_URL"
 if service_reachable "${PROM_URL}/api/v1/query?query=up" 5; then
   RESULT[prometheus]="READY"
 else
@@ -177,7 +175,7 @@ else
 fi
 print_check "Prometheus" "${RESULT[prometheus]}"
 
-GRAFANA_URL="http://grafana-metrics.${OSM_BASE_DOMAIN:-localhost}:${GRAFANA_NODEPORT:-31998}"
+# GRAFANA_URL is supplied by the shared runtime contract.
 if service_reachable "$GRAFANA_URL" 5; then
   RESULT[grafana]="READY"
 else

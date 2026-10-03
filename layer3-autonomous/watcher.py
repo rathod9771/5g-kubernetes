@@ -11,20 +11,19 @@ from datetime import datetime, timezone
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [layer3] %(message)s")
 log = logging.getLogger("layer3-watcher")
 
-PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:30990")
-DASHBOARD_URL = os.environ.get("DASHBOARD_URL", "http://localhost:8090")
-CHECK_INTERVAL_SECONDS = float(os.environ.get("CHECK_INTERVAL_SECONDS", "10"))
-ACTION_COOLDOWN_SECONDS = float(os.environ.get("ACTION_COOLDOWN_SECONDS", "120"))
-
-BLER_THRESHOLD = float(os.environ.get("BLER_THRESHOLD", "0.05"))
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+from runtime_config import load_config
+_cfg = load_config(require=('watcher',))
+PROMETHEUS_URL = _cfg['PROMETHEUS_URL']
+DASHBOARD_URL = _cfg['DASHBOARD_URL']
+CHECK_INTERVAL_SECONDS = float(_cfg['LAYER3_CHECK_INTERVAL_SECONDS'])
+ACTION_COOLDOWN_SECONDS = float(_cfg['LAYER3_COOLDOWN_SECONDS'])
+BLER_THRESHOLD = float(_cfg['LAYER3_BLER_THRESHOLD'])
 BLER_QUERY = 'max(oai_gnb_ue_dl_bler_ratio) or max(oai_gnb_ue_ul_bler_ratio)'
-
-FAILOVER_SCENARIO = os.environ.get("FAILOVER_SCENARIO", "hcran-oai")
-
-ACTIONS_LOG_PATH = os.environ.get(
-    "ACTIONS_LOG_PATH",
-    os.path.expanduser("~/5g-kubernetes/layer3-autonomous/actions.log"),
-)
+FAILOVER_SCENARIO = _cfg['LAYER3_FAILOVER_SCENARIO']
+ACTIONS_LOG_PATH = _cfg['ACTIONS_LOG_PATH']
 
 last_action_time = 0.0
 
@@ -50,6 +49,7 @@ def record_action(kind, detail):
     line = json.dumps(entry)
     log.info(f"ACTION: {line}")
     try:
+        Path(ACTIONS_LOG_PATH).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with open(ACTIONS_LOG_PATH, "a") as f:
             f.write(line + "\n")
     except OSError as e:

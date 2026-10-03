@@ -1,3 +1,4 @@
+# Runtime template: render with scripts/runtime_render.py manifest before applying.
 apiVersion: v1
 kind: Service
 metadata:
@@ -11,5 +12,5 @@ spec:
   ports:
   - port: 9090
     targetPort: 9090
-    nodePort: 30990
+    nodePort: PLACEHOLDER_PROMETHEUS_NODEPORT
     name: web
