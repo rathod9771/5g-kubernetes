@@ -144,3 +144,11 @@ kubectl --kubeconfig "$HOME/.kube/config" get pods,pvc -A
 helm --kubeconfig "$HOME/.kube/config" list -A --all
 systemctl --failed
 ```
+
+Remote Helm chart pulls, repository operations and dependency downloads retry only
+recognized transient network failures, for at most four attempts with 2/4/8-second
+backoff and a 120-second timeout per fetch. Repository charts are downloaded at
+the pinned version before any release creation, then installed from that local
+archive. Install/upgrade, lint and other lifecycle/validation operations are not
+retried. Errors identify the stage/component and chart/version where applicable;
+final stderr is summarized using public error categories to avoid leaking secrets.

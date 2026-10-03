@@ -27,20 +27,62 @@ from osm_onboard import onboard
 from state_schema import validate_state
 
 
+# Summaries are fixed public phrases, never raw stderr (which can contain secrets).
+NETWORK_ERRORS = ('connection reset by peer', 'connection refused', 'temporary failure in name resolution',
+                  'no such host', 'network is unreachable', 'i/o timeout', 'context deadline exceeded',
+                  'tls handshake timeout', 'unexpected eof', 'service unavailable', 'bad gateway',
+                  'gateway timeout')
+DETERMINISTIC_ERRORS = ('failed to parse', 'parse error', 'yaml parse', 'execution error',
+                        'unknown flag', 'not found', 'unauthorized', 'forbidden', 'x509:',
+                        'certificate verify failed', 'invalid value')
+
+
+def stderr_summary(stderr):
+    text = (stderr or b'').decode('utf-8', errors='replace').lower()
+    for phrase in DETERMINISTIC_ERRORS:
+        if phrase in text:
+            return phrase, False
+    for phrase in NETWORK_ERRORS:
+        if phrase in text:
+            return phrase, True
+    return 'unclassified failure (private stderr suppressed)', False
+
+
 class Runner:
-    def run(self, args, data=None, check=True, timeout=1800):
-        # Command text/inputs/output may contain private kubeconfig/database data.
-        # Never echo it, even on failures. All commands use argument arrays.
-        result = subprocess.run([str(a) for a in args], input=data, capture_output=True, timeout=timeout)
-        if check and result.returncode:
-            raise ConfigError('Stage command failed: ' + str(args[0]) + '; inspect target service/resource status, then rerun')
-        return result
+    stage = 'installer'
+
+    def run(self, args, data=None, check=True, timeout=1800, context=None, remote_fetch=False):
+        # Only explicitly classified read/fetch operations may retry. Never retry
+        # installation/lifecycle commands, whose side effects could be ambiguous.
+        attempts = 4 if remote_fetch and check else 1
+        label = self.stage + ': ' + (context or str(args[0]))
+        for attempt in range(attempts):
+            try:
+                result = subprocess.run([str(a) for a in args], input=data, capture_output=True,
+                                        timeout=min(timeout, 120) if remote_fetch else timeout)
+            except subprocess.TimeoutExpired:
+                if remote_fetch and attempt + 1 < attempts:
+                    time.sleep(2 ** (attempt + 1))
+                    continue
+                raise ConfigError(label + ': failed after ' + str(attempt + 1) +
+                                  ' attempt(s); final stderr summary: command timeout (private output suppressed)') from None
+            except OSError:
+                raise ConfigError(label + ': unable to execute command; check executable availability and permissions') from None
+            if not check or not result.returncode:
+                return result
+            summary, transient = stderr_summary(result.stderr)
+            if remote_fetch and transient and attempt + 1 < attempts:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            raise ConfigError(label + ': failed after ' + str(attempt + 1) +
+                              ' attempt(s); final stderr summary: ' + summary +
+                              '; inspect target status and rerun')
 
     def json(self, args):
         try:
             return json.loads(self.run(args).stdout)
         except ValueError:
-            raise ConfigError('Invalid structured response from ' + str(args[0])) from None
+            raise ConfigError(self.stage + ': invalid structured response from ' + str(args[0])) from None
 
 
 class Installer:
@@ -68,12 +110,15 @@ class Installer:
 
     def stage(self, name, function):
         print('Installing/verifying ' + name, flush=True)
+        self.runner.stage = name
         function()
         print('READY: ' + name, flush=True)
 
-    def helm(self, *args, workload=False):
+    def helm(self, *args, workload=False, context=None):
         key = 'OSM_KUBECONFIG_PATH' if workload else 'KUBECONFIG_PATH'
-        return self.runner.run(['helm', '--kubeconfig', self.cfg[key], *args])
+        remote = args[0] == 'pull' or (args[0] == 'show' and '--repo' in args) or args[:2] in (('repo', 'add'), ('repo', 'update'), ('dependency', 'build'), ('dependency', 'update'))
+        return self.runner.run(['helm', '--kubeconfig', self.cfg[key], *args],
+                               context=context or 'Helm ' + ' '.join(str(a) for a in args[:2]), remote_fetch=remote)
 
     def release(self, name, namespace, chart, version, values=None, repo=None, wait=True):
         self.apply({'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': namespace}})
@@ -87,13 +132,31 @@ class Installer:
                     '--version', version, '--timeout', '20m']
             if wait:
                 args += ['--wait']
+            fetch_directory = None
             if repo:
-                args += ['--repo', repo]
+                # Complete remote fetching before any release creation. Installing
+                # a verified local chart avoids retrying a mutating Helm operation.
+                import tempfile
+                fetch_directory = tempfile.TemporaryDirectory(prefix='installer-chart-')
+                try:
+                    self.helm('pull', chart, '--repo', repo, '--version', version,
+                              '--destination', fetch_directory.name, context=name + ' chart ' + chart + '/' + version)
+                    archives = list(Path(fetch_directory.name).glob('*.tgz'))
+                    if len(archives) != 1:
+                        raise ConfigError(name + ': chart fetch did not produce exactly one archive')
+                    args[3] = str(archives[0])
+                except Exception:
+                    fetch_directory.cleanup()
+                    raise
             if values:
                 path = self.directory / (name + '-values.yaml')
                 atomic_write(path, yaml.safe_dump(values).encode())
                 args += ['-f', str(path)]
-            self.helm(*args)
+            try:
+                self.helm(*args, context=name + ' chart ' + chart + '/' + version)
+            finally:
+                if fetch_directory is not None:
+                    fetch_directory.cleanup()
         for kind in ('deployment', 'statefulset', 'daemonset'):
             items = self.kjson('get', kind, '-n', namespace)['items']
             for item in items:
@@ -186,8 +249,8 @@ class Installer:
                           ('grafana', 'https://grafana.github.io/helm-charts'),
                           ('prometheus-community', 'https://prometheus-community.github.io/helm-charts'),
                           ('apache-airflow', 'https://airflow.apache.org')]:
-            self.helm('repo', 'add', name, url, '--force-update')
-        self.helm('dependency', 'build', str(chart))
+            self.helm('repo', 'add', name, url, '--force-update', context='OSM 19.0.0 dependency repository ' + name)
+        self.helm('dependency', 'build', str(chart), context='OSM chart ' + self.lock['osm'] + ' pinned dependencies')
         for dependency in self.lock['osm_dependencies']:
             archive = chart / 'charts' / (dependency['name'] + '-' + dependency['version'] + '.tgz')
             if not archive.is_file() or hashlib.sha256(archive.read_bytes()).hexdigest() != dependency['sha256']:

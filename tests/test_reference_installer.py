@@ -243,3 +243,81 @@ class ReferenceInstallerTests(unittest.TestCase):
             self.assertTrue(events[3].endswith('--preflight'))
             self.assertEqual(events[4],'host')
             self.assertTrue(events[5].endswith('/scripts/installer/install.py'))
+
+    def test_transient_helm_fetch_retries_then_succeeds(self):
+        failure=subprocess.CompletedProcess(['helm'],1,b'',b'read: connection reset by peer')
+        success=subprocess.CompletedProcess(['helm'],0,b'chart',b'')
+        with mock.patch('subprocess.run',side_effect=[failure,success]) as run, mock.patch('installer.install.time.sleep') as sleep:
+            result=Runner().run(['helm','pull','ingress-nginx'],remote_fetch=True,context='ingress-nginx chart ingress-nginx/4.10.1')
+        self.assertEqual(result.stdout,b'chart');self.assertEqual(run.call_count,2);sleep.assert_called_once_with(2)
+
+    def test_helm_fetch_exhaustion_reports_context_without_secrets(self):
+        failure=subprocess.CompletedProcess(['helm'],1,b'PRIVATE_SUBSCRIBER_SENTINEL',b'password=PRIVATE_SENTINEL read: connection reset by peer')
+        runner=Runner();runner.stage='infrastructure'
+        with mock.patch('subprocess.run',return_value=failure) as run, mock.patch('installer.install.time.sleep') as sleep:
+            with self.assertRaises(ConfigError) as error:
+                runner.run(['helm','pull','ingress-nginx'],remote_fetch=True,context='ingress-nginx chart ingress-nginx/4.10.1')
+        self.assertEqual(run.call_count,4);self.assertEqual([c.args[0] for c in sleep.call_args_list],[2,4,8])
+        message=str(error.exception)
+        for public in ['infrastructure','ingress-nginx','4.10.1','4 attempt','connection reset by peer']:self.assertIn(public,message)
+        self.assertNotIn('PRIVATE',message);self.assertNotIn('password=',message)
+
+    def test_deterministic_failure_is_not_retried(self):
+        failure=subprocess.CompletedProcess(['helm'],1,b'',b'chart not found; private-token=PRIVATE_SENTINEL')
+        with mock.patch('subprocess.run',return_value=failure) as run, mock.patch('installer.install.time.sleep') as sleep:
+            with self.assertRaises(ConfigError) as error:
+                Runner().run(['helm','pull','ingress-nginx'],remote_fetch=True,context='ingress-nginx/4.10.1')
+        self.assertEqual(run.call_count,1);sleep.assert_not_called();self.assertNotIn('PRIVATE',str(error.exception))
+
+    def test_helm_install_and_lint_never_retry_network_looking_errors(self):
+        failure=subprocess.CompletedProcess(['helm'],1,b'',b'connection reset by peer')
+        with tempfile.TemporaryDirectory() as t:
+            installer=Installer({'RUNTIME_DIR':t,'KUBECONFIG_PATH':'synthetic'})
+            for command in [('upgrade','--install','ingress-nginx','local-chart'),('lint','local-chart')]:
+                with mock.patch('subprocess.run',return_value=failure) as run, mock.patch('installer.install.time.sleep') as sleep:
+                    with self.assertRaises(ConfigError):installer.helm(*command)
+                self.assertEqual(run.call_count,1);sleep.assert_not_called()
+
+    def test_generic_runner_failure_names_stage_and_hides_output(self):
+        runner=Runner();runner.stage='Open5GS'
+        failure=subprocess.CompletedProcess(['kubectl'],1,b'PRIVATE_SENTINEL',b'PRIVATE_SENTINEL')
+        with mock.patch('subprocess.run',return_value=failure):
+            with self.assertRaises(ConfigError) as error:runner.run(['kubectl','exec'],data=b'PRIVATE_SENTINEL')
+        self.assertIn('Open5GS: kubectl',str(error.exception));self.assertNotIn('PRIVATE',str(error.exception))
+
+    def test_release_prefetches_exact_chart_before_single_install(self):
+        with tempfile.TemporaryDirectory() as t:
+            installer=Installer({'RUNTIME_DIR':t})
+            installer.apply=mock.Mock();installer.kjson=mock.Mock(return_value={'items':[]})
+            commands=[]
+            def helm(*args,**kwargs):
+                commands.append((args,kwargs))
+                if args[0]=='pull':
+                    destination=args[args.index('--destination')+1]
+                    (Path(destination)/'ingress-nginx-4.10.1.tgz').write_bytes(b'synthetic archive')
+                return subprocess.CompletedProcess(['helm'],0,b'[]',b'')
+            installer.helm=helm
+            installer.release('ingress-nginx','ingress-nginx','ingress-nginx','4.10.1',repo='https://charts.invalid')
+            self.assertEqual([c[0][0] for c in commands],['list','pull','upgrade'])
+            self.assertIn('4.10.1',commands[1][0]);self.assertIn('4.10.1',commands[2][0])
+            self.assertTrue(commands[2][0][3].endswith('ingress-nginx-4.10.1.tgz'))
+            self.assertNotIn('--repo',commands[2][0])
+            self.assertIn('ingress-nginx/4.10.1',commands[2][1]['context'])
+
+    def test_fetch_timeout_is_bounded_and_partial_output_is_private(self):
+        timeout=subprocess.TimeoutExpired(['helm'],120,output=b'PRIVATE_SENTINEL',stderr=b'PRIVATE_SENTINEL')
+        with mock.patch('subprocess.run',side_effect=timeout) as run, mock.patch('installer.install.time.sleep'):
+            with self.assertRaises(ConfigError) as error:
+                Runner().run(['helm','pull','ingress-nginx'],remote_fetch=True,context='ingress-nginx/4.10.1')
+        self.assertEqual(run.call_count,4);self.assertIn('4 attempt',str(error.exception));self.assertNotIn('PRIVATE',str(error.exception))
+        self.assertEqual(run.call_args.kwargs['timeout'],120)
+
+    def test_repository_and_dependency_network_operations_retry(self):
+        failure=subprocess.CompletedProcess(['helm'],1,b'',b'i/o timeout')
+        success=subprocess.CompletedProcess(['helm'],0,b'',b'')
+        with tempfile.TemporaryDirectory() as t:
+            installer=Installer({'RUNTIME_DIR':t,'KUBECONFIG_PATH':'synthetic'})
+            for command in [('repo','add','test','https://charts.invalid'),('repo','update'),('dependency','build','local-chart')]:
+                with mock.patch('subprocess.run',side_effect=[failure,success]) as run, mock.patch('installer.install.time.sleep'):
+                    installer.helm(*command,context='OSM chart 19.0.0 dependencies')
+                self.assertEqual(run.call_count,2)
