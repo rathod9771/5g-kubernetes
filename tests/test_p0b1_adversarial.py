@@ -174,7 +174,7 @@ class AdversarialTests(unittest.TestCase):
     def test_malformed_nested_network_and_service_data_is_sanitized(self):
         with mock.patch.object(rc, 'command_json', side_effect=network()) as query:
             rc.discover_network('', '', query=query)
-            self.assertIn('-d', query.call_args_list[0].args[0])
+            self.assertEqual(query.call_args_list[0].args[0], ['ip', '-j', '-4', 'address', 'show'])
         for payload in [[None],[{'ifname':'eth-test','addr_info':[None]}],[{'ifname':'eth-test','addr_info':{},'linkinfo':{}}], [{'ifname':'eth-test','addr_info':[{'family':'inet','local':'bad','prefixlen':24}]}]]:
             with self.assertRaises(rc.ConfigError):rc.discover_network('','',lambda args:payload)
         for payload in [None,{}, {'items':[None]}, {'items':[{'metadata':None,'spec':{}}]}, {'items':[{'metadata':{'name':'svc','namespace':'ran'},'spec':{'ports':[None]}}]}]:

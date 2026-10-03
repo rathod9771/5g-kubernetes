@@ -435,5 +435,35 @@ class SourceSafetyTests(unittest.TestCase):
             self.assertNotIn(b'synthetic-runtime-secret', after['fran.provenance.json'])
             self.assertNotIn(OTHER.encode(), after['fran.provenance.json'])
 
+class RuntimeDiscoveryCommandTests(unittest.TestCase):
+    def test_address_and_route_discovery_do_not_use_details_flag(self):
+        query = mock.Mock(side_effect=ConfigurationTests.network())
+        host, interface = rc.discover_network('', '', query=query)
+        self.assertEqual((host, interface), ('192.0.2.10', 'eth-test'))
+        self.assertEqual(query.call_args_list, [
+            mock.call(['ip', '-j', '-4', 'address', 'show']),
+            mock.call(['ip', '-j', '-4', 'route', 'get', '1.1.1.1'])])
+        for call in query.call_args_list:
+            self.assertNotIn('-d', call.args[0])
+
+    def test_signal_diagnostic_does_not_expose_private_output_or_arguments(self):
+        args = ['ip', 'PRIVATE_ARGUMENT_SENTINEL']
+        failure = subprocess.CalledProcessError(-11, args,
+                    output='PRIVATE_STDOUT_SENTINEL', stderr='PRIVATE_STDERR_SENTINEL')
+        with mock.patch.object(rc.subprocess, 'run', side_effect=failure):
+            with self.assertRaises(rc.ConfigError) as error:
+                rc.command_json(args)
+        self.assertEqual(str(error.exception), 'Structured discovery command failed: ip terminated by signal 11')
+        self.assertNotIn('PRIVATE', str(error.exception))
+
+    def test_non_signal_failure_still_hides_private_output(self):
+        failure = subprocess.CalledProcessError(1, ['kubectl'],
+                    output='PRIVATE_STDOUT_SENTINEL', stderr='PRIVATE_STDERR_SENTINEL')
+        with mock.patch.object(rc.subprocess, 'run', side_effect=failure):
+            with self.assertRaises(rc.ConfigError) as error:
+                rc.command_json(['kubectl'])
+        self.assertEqual(str(error.exception), 'Structured discovery command failed: kubectl')
+
+
 if __name__ == '__main__':
     unittest.main()

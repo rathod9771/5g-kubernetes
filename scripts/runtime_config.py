@@ -143,6 +143,11 @@ def command_json(args):
     try:
         result = subprocess.run(args, check=True, capture_output=True, text=True, timeout=10)
         return json.loads(result.stdout)
+    except subprocess.CalledProcessError as error:
+        summary = 'Structured discovery command failed: ' + args[0]
+        if error.returncode < 0:
+            summary += ' terminated by signal ' + str(-error.returncode)
+        raise ConfigError(summary) from None
     except (OSError, subprocess.SubprocessError, ValueError):
         raise ConfigError('Structured discovery command failed: ' + args[0]) from None
 
@@ -153,7 +158,7 @@ def discovery_entries(value, kind):
 
 
 def discover_network(host, interface, query=command_json, with_subnet=False):
-    addresses = discovery_entries(query(['ip', '-j', '-d', '-4', 'address', 'show']), 'interface')
+    addresses = discovery_entries(query(['ip', '-j', '-4', 'address', 'show']), 'interface')
     pairs, prefixes, virtual = set(), {}, set()
     for entry in addresses:
         name = entry.get('ifname')
