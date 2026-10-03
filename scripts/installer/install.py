@@ -17,6 +17,7 @@ from urllib.parse import quote
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import yaml
 from installer.reference import ROOT, versions, adapt_osm_chart, osm_values, api_ingress, apply_osm_source_patch
+from installer.reference import management_credentials, validate_management_mount
 from installer.private_input import private_archive, import_decision, restore_command
 from local_safety import atomic_write, exclusive_lock
 from runtime_config import load_config, write_snapshot, discover_context, ConfigError, read_snapshot
@@ -335,9 +336,53 @@ class Installer:
                 time.sleep(5)
         raise ConfigError('OSM API/TLS readiness timed out; inspect target ingress/NBI/certificates')
 
+    def prepare_management_credentials(self):
+        namespace = self.cfg['OSM_NAMESPACE']
+        metadata = {'namespace': namespace, 'labels': {'app.kubernetes.io/managed-by': 'reference-installer'}}
+        account = 'osm-lcm-management'
+        self.apply([
+            {'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': namespace}},
+            {'apiVersion': 'v1', 'kind': 'ServiceAccount', 'metadata': dict(metadata, name=account)},
+            {'apiVersion': 'rbac.authorization.k8s.io/v1', 'kind': 'Role', 'metadata': dict(metadata, name=account),
+             'rules': [{'apiGroups': [''], 'resources': ['pods', 'services', 'configmaps'], 'verbs': ['get', 'list', 'watch']},
+                       {'apiGroups': ['apps'], 'resources': ['deployments', 'statefulsets'], 'verbs': ['get', 'list', 'watch']}]},
+            {'apiVersion': 'rbac.authorization.k8s.io/v1', 'kind': 'RoleBinding', 'metadata': dict(metadata, name=account),
+             'subjects': [{'kind': 'ServiceAccount', 'name': account, 'namespace': namespace}],
+             'roleRef': {'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'Role', 'name': account}},
+            {'apiVersion': 'v1', 'kind': 'Secret', 'type': 'kubernetes.io/service-account-token',
+             'metadata': dict(metadata, name=account + '-token', annotations={'kubernetes.io/service-account.name': account})}])
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            token = self.kjson('get', 'secret', account + '-token', '-n', namespace)
+            if token.get('data', {}).get('token') and token.get('data', {}).get('ca.crt'):
+                document = management_credentials(namespace, token['data'])
+                # Server-side apply avoids duplicating private data in last-applied annotations.
+                self.kubectl('apply', '--server-side', '--field-manager=reference-installer', '-f', '-',
+                             data=yaml.safe_dump(document).encode())
+                return
+            time.sleep(2)
+        raise ConfigError('OSM management service-account token provisioning failed; kubeconfig not created')
+
+    def validate_lcm_management(self, chart=None):
+        namespace = self.cfg['OSM_NAMESPACE']
+        keys = self.kubectl('get', 'secret', 'mgmtcluster-secret', '-n', namespace,
+                            '-o', 'go-template={{range $key,$value := .data}}{{$key}}{{"\\n"}}{{end}}', check=False)
+        if keys.returncode or 'kubeconfig' not in keys.stdout.decode().splitlines():
+            raise ConfigError('OSM LCM management kubeconfig missing: mgmtcluster-secret/kubeconfig')
+        deployment = self.kjson('get', 'deployment', 'lcm', '-n', namespace)
+        spec = deployment.get('spec', {}).get('template', {}).get('spec', {})
+        if chart is not None and not any(v.get('name') == 'mgmtcluster-kubeconfig' for v in spec.get('volumes', [])):
+            # Repair the already-installed pinned release without changing its values.
+            self.helm('upgrade', 'osm', str(chart), '-n', namespace, '--reuse-values', '--timeout', '20m',
+                      context='OSM LCM management kubeconfig mount reconciliation')
+            deployment = self.kjson('get', 'deployment', 'lcm', '-n', namespace)
+        validate_management_mount(deployment, keys.stdout.decode().splitlines())
+
     def osm(self):
         chart = self.osm_source()
+        self.prepare_management_credentials()
         self.release('osm', self.cfg['OSM_NAMESPACE'], str(chart), self.lock['osm'], osm_values(self.cfg, self.lock), wait=False)
+        self.validate_lcm_management(chart)
         self.kubectl('wait', 'certificate', '--all', '-n', self.cfg['OSM_NAMESPACE'], '--for=condition=Ready', '--timeout=600s')
         self.apply(api_ingress(self.cfg))
         ca = self.kjson('get', 'secret', 'osm-ca', '-n', self.cfg['OSM_NAMESPACE'])['data']['tls.crt']
@@ -380,6 +425,7 @@ class Installer:
         return matches[0]
 
     def registration(self):
+        self.validate_lcm_management()
         project = self.ensure_registration('/admin/v1/projects', self.cfg['OSM_PROJECT'], {'name': self.cfg['OSM_PROJECT']})
         self.cfg['OSM_PROJECT_ID'] = identifier(project['_id'])
         self.catalog.authenticate(self.cfg['OSM_USER'], self.cfg['OSM_PASSWORD'], self.cfg['OSM_PROJECT_ID'])

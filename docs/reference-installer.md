@@ -202,3 +202,34 @@ verifies the same tree without applying twice. Wrong bases, patch failures and
 unexpected changes stop installation. The public source cache remains pristine;
 existing repository-owned certificate adaptations still operate on the chart
 build copy after reconstruction.
+
+### LCM management kubeconfig
+
+Read-only reference inspection confirmed an Opaque `osm/mgmtcluster-secret`,
+key `kubeconfig`, mounted through `mgmtcluster-kubeconfig` at
+`/etc/osm/mgmtcluster-kubeconfig.yaml`, read-only with matching `subPath`.
+The reference uses mode 0644, pod fsGroup 1000 and LCM UID 1000. The upstream
+mount is gated by GitOps even though LCM initialization requires the file.
+The build-copy adaptation removes only those two mount/volume gates. GitOps
+stays disabled; mode 0640 with fsGroup 1000 limits credential readability.
+
+Before releasing OSM, the installer creates target-management-cluster service
+account `osm-lcm-management`, its token Secret and a namespace-scoped read-only
+Role/RoleBinding. The Role permits get/list/watch of pods, services, ConfigMaps,
+Deployments and StatefulSets in the OSM namespace; it grants neither cluster
+administration nor Secret access. This is the disabled-GitOps bootstrap scope,
+not authorization for enabling management provisioning workflows.
+
+The token controller supplies target-cluster credentials and CA. An in-cluster
+API endpoint and that dedicated identity produce the Opaque kubeconfig Secret.
+Credentials remain in memory and are sent to kubectl over stdin; server-side
+apply avoids last-applied credential annotations. No target kubeconfig is
+written to chart values, Git, generated archives or runtime JSON. Reapplying
+stable objects reuses the same service account/token identity.
+
+Before API/registration readiness, the installer checks Secret key names and
+the exact deployment mount/source/permissions, without printing credential
+values. Missing objects or wrong paths fail specifically. For an existing
+pinned release lacking the mount, a single Helm upgrade of the adapted chart
+with `--reuse-values` reconciles it; subsequent reruns do not repeat that repair.
+Existing timeouts remain unchanged. No reference-machine credentials are copied.

@@ -567,3 +567,111 @@ class OsmReferencePatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, 'unexpected working-tree') as error:
             apply(source, lock, Runner())
         self.assertNotIn('PRIVATE_SENTINEL', str(error.exception))
+
+
+class ManagementKubeconfigTests(unittest.TestCase):
+    def token(self):
+        import base64
+        return {'token': base64.b64encode(b'SYNTHETIC_PRIVATE_SENTINEL').decode(),
+                'ca.crt': base64.b64encode(b'SYNTHETIC_CA').decode()}
+
+    def deployment(self):
+        return {'spec': {'template': {'spec': {'securityContext': {'fsGroup': 1000},
+            'volumes': [{'name': 'mgmtcluster-kubeconfig', 'secret': {'secretName': 'mgmtcluster-secret', 'defaultMode': 416,
+                'items': [{'key': 'kubeconfig', 'path': 'mgmtcluster-kubeconfig.yaml'}]}}],
+            'containers': [{'name': 'lcm', 'volumeMounts': [{'name': 'mgmtcluster-kubeconfig',
+                'mountPath': '/etc/osm/mgmtcluster-kubeconfig.yaml', 'subPath': 'mgmtcluster-kubeconfig.yaml', 'readOnly': True}]}]}}}}
+
+    def test_target_service_account_kubeconfig_object(self):
+        import base64,yaml
+        from installer.reference import management_credentials
+        doc = management_credentials('target-osm', self.token())
+        self.assertEqual((doc['kind'],doc['type'],doc['metadata']['name']), ('Secret','Opaque','mgmtcluster-secret'))
+        config = yaml.safe_load(base64.b64decode(doc['data']['kubeconfig']))
+        self.assertEqual(config['clusters'][0]['cluster']['server'], 'https://kubernetes.default.svc')
+        self.assertEqual(config['users'][0]['name'], 'osm-lcm-management')
+        self.assertEqual(config['contexts'][0]['context']['namespace'], 'target-osm')
+        self.assertNotIn('/home/rclab', json.dumps(doc))
+
+    def test_target_creation_is_idempotent_private_and_scoped(self):
+        with tempfile.TemporaryDirectory() as t:
+            installer = Installer({'RUNTIME_DIR':t,'OSM_NAMESPACE':'target-osm'})
+            installer.apply = mock.Mock()
+            installer.kjson = mock.Mock(return_value={'data':self.token()})
+            installer.kubectl = mock.Mock()
+            installer.prepare_management_credentials()
+            installer.prepare_management_credentials()
+            first,second = installer.kubectl.call_args_list
+            self.assertEqual(first,second)
+            self.assertNotIn('SYNTHETIC_PRIVATE', str(first.args))
+            self.assertIn('--server-side', first.args)
+            documents = installer.apply.call_args_list[0].args[0]
+            self.assertNotIn('ClusterRoleBinding', [d['kind'] for d in documents])
+            role = next(d for d in documents if d['kind']=='Role')
+            self.assertEqual(role['metadata']['namespace'], 'target-osm')
+            for rule in role['rules']:
+                self.assertEqual(rule['verbs'], ['get','list','watch'])
+                self.assertNotIn('*', rule['resources'])
+                self.assertNotIn('secrets', rule['resources'])
+            self.assertEqual(documents, installer.apply.call_args_list[1].args[0])
+
+    def test_missing_credentials_do_not_leak(self):
+        from installer.reference import management_credentials
+        with self.assertRaises(ConfigError) as error:
+            management_credentials('osm', {'token':'SYNTHETIC_PRIVATE_INVALID'})
+        self.assertNotIn('SYNTHETIC_PRIVATE', str(error.exception))
+
+    def test_missing_object_fails_before_deployment_or_upgrade(self):
+        with tempfile.TemporaryDirectory() as t:
+            installer = Installer({'RUNTIME_DIR':t,'OSM_NAMESPACE':'osm'})
+            installer.kubectl = mock.Mock(return_value=subprocess.CompletedProcess([],1,b'',b'PRIVATE'))
+            installer.kjson = mock.Mock();installer.helm = mock.Mock()
+            with self.assertRaisesRegex(ConfigError,'kubeconfig missing'):installer.validate_lcm_management('chart')
+            installer.kjson.assert_not_called();installer.helm.assert_not_called()
+
+    def test_mount_path_and_permissions(self):
+        from installer.reference import validate_management_mount
+        deployment = self.deployment()
+        validate_management_mount(deployment, ['kubeconfig'])
+        mount = deployment['spec']['template']['spec']['containers'][0]['volumeMounts'][0]
+        mount['mountPath']='/wrong/path'
+        with self.assertRaisesRegex(ConfigError,'mismatch'):validate_management_mount(deployment,['kubeconfig'])
+        mount['mountPath']='/etc/osm/mgmtcluster-kubeconfig.yaml'
+        deployment['spec']['template']['spec']['volumes'][0]['secret']['defaultMode']=511
+        with self.assertRaisesRegex(ConfigError,'permissions'):validate_management_mount(deployment,['kubeconfig'])
+        with self.assertRaisesRegex(ConfigError,'missing'):validate_management_mount(deployment,[])
+
+    def test_existing_missing_mount_repaired_once_preserving_values(self):
+        with tempfile.TemporaryDirectory() as t:
+            installer=Installer({'RUNTIME_DIR':t,'OSM_NAMESPACE':'osm'})
+            installer.kubectl=mock.Mock(return_value=subprocess.CompletedProcess([],0,b'kubeconfig\n',b''))
+            installer.kjson=mock.Mock(side_effect=[{'spec':{'template':{'spec':{}}}},self.deployment(),self.deployment()])
+            installer.helm=mock.Mock()
+            installer.validate_lcm_management('patched-chart')
+            installer.validate_lcm_management('patched-chart')
+            installer.helm.assert_called_once()
+            self.assertIn('--reuse-values',installer.helm.call_args.args)
+
+    def test_preparation_precedes_release_and_readiness(self):
+        import inspect
+        source=inspect.getsource(Installer.osm)
+        self.assertLess(source.index('self.prepare_management_credentials()'),source.index('self.release('))
+        self.assertLess(source.index('self.validate_lcm_management(chart)'),source.index("self.kubectl('wait'"))
+
+    def test_chart_adaptation_removes_only_management_mount_gates(self):
+        fixture = '            {{- if .Values.global.gitops.enabled }}\n            - mountPath: /etc/osm/mgmtcluster-kubeconfig.yaml\n              name: mgmtcluster-kubeconfig\n              readOnly: true\n              subPath: mgmtcluster-kubeconfig.yaml\n            {{- end }}\n        {{- if .Values.global.gitops.enabled }}\n        - name: mgmtcluster-kubeconfig\n          secret:\n            defaultMode: 420\n            items:\n            - key: kubeconfig\n              path: mgmtcluster-kubeconfig.yaml\n            secretName: mgmtcluster-secret\n        {{- end }}\n'
+        with tempfile.TemporaryDirectory() as t:
+            chart = Path(t)
+            lcm = chart / 'templates/lcm/lcm-deployment.yaml'
+            lcm.parent.mkdir(parents=True)
+            lcm.write_text(fixture)
+            certificate = chart / 'templates/nbi-certificate.yaml'
+            certificate.write_text('    - \"client auth\"\n')
+            changes = adapt_osm_chart(chart)
+            self.assertIn('templates/lcm/lcm-deployment.yaml', changes)
+            text = lcm.read_text()
+            self.assertNotIn('global.gitops.enabled', text)
+            self.assertIn('/etc/osm/mgmtcluster-kubeconfig.yaml', text)
+            self.assertIn('secretName: mgmtcluster-secret', text)
+            self.assertIn('defaultMode: 416', text)
+            self.assertIn('readOnly: true', text)

@@ -63,7 +63,59 @@ def adapt_osm_chart(chart):
             changed.append(path.relative_to(chart).as_posix())
     if not changed:
         raise ValueError('Pinned OSM certificate patch no longer matches source')
+    deployment = chart / 'templates/lcm/lcm-deployment.yaml'
+    if deployment.exists():
+        text = deployment.read_text()
+        for indent, block in [
+            ('            ', '- mountPath: /etc/osm/mgmtcluster-kubeconfig.yaml\n              name: mgmtcluster-kubeconfig\n              readOnly: true\n              subPath: mgmtcluster-kubeconfig.yaml'),
+            ('        ', '- name: mgmtcluster-kubeconfig\n          secret:\n            defaultMode: 420\n            items:\n            - key: kubeconfig\n              path: mgmtcluster-kubeconfig.yaml\n            secretName: mgmtcluster-secret')]:
+            old = indent + '{{- if .Values.global.gitops.enabled }}\n' + indent + block + '\n' + indent + '{{- end }}'
+            if text.count(old) != 1:
+                raise ValueError('Pinned OSM management kubeconfig mount patch no longer matches source')
+            text = text.replace(old, indent + block)
+        deployment.write_text(text.replace('defaultMode: 420\n            items:\n            - key: kubeconfig', 'defaultMode: 416\n            items:\n            - key: kubeconfig'))
+        changed.append(deployment.relative_to(chart).as_posix())
     return changed
+
+
+def management_credentials(namespace, token_data):
+    """Private target-cluster kubeconfig; never write it to chart values/files."""
+    import base64
+    import yaml
+    from runtime_config import ConfigError
+    try:
+        token = base64.b64decode(token_data['token'], validate=True).decode()
+        ca = token_data['ca.crt']
+        if not token or not base64.b64decode(ca, validate=True):
+            raise ValueError()
+    except (KeyError, ValueError, UnicodeError, TypeError):
+        raise ConfigError('OSM management service-account credentials are missing or invalid') from None
+    document = {'apiVersion': 'v1', 'kind': 'Config',
+                'clusters': [{'name': 'management', 'cluster': {'server': 'https://kubernetes.default.svc', 'certificate-authority-data': ca}}],
+                'users': [{'name': 'osm-lcm-management', 'user': {'token': token}}],
+                'contexts': [{'name': 'management', 'context': {'cluster': 'management', 'user': 'osm-lcm-management', 'namespace': namespace}}],
+                'current-context': 'management'}
+    return {'apiVersion': 'v1', 'kind': 'Secret', 'type': 'Opaque',
+            'metadata': {'name': 'mgmtcluster-secret', 'namespace': namespace,
+                         'labels': {'app.kubernetes.io/managed-by': 'reference-installer'}},
+            'data': {'kubeconfig': base64.b64encode(yaml.safe_dump(document).encode()).decode()}}
+
+
+def validate_management_mount(deployment, secret_keys):
+    from runtime_config import ConfigError
+    if 'kubeconfig' not in secret_keys:
+        raise ConfigError('OSM LCM management kubeconfig missing: mgmtcluster-secret/kubeconfig')
+    spec = deployment.get('spec', {}).get('template', {}).get('spec', {})
+    volumes = [v for v in spec.get('volumes', []) if v.get('name') == 'mgmtcluster-kubeconfig']
+    containers = [c for c in spec.get('containers', []) if c.get('name') == 'lcm']
+    mounts = [m for c in containers for m in c.get('volumeMounts', []) if m.get('name') == 'mgmtcluster-kubeconfig']
+    if len(volumes) != 1 or len(mounts) != 1:
+        raise ConfigError('OSM LCM management kubeconfig mount missing')
+    secret = volumes[0].get('secret', {})
+    if secret.get('defaultMode') == 416 and spec.get('securityContext', {}).get('fsGroup') != 1000:
+        raise ConfigError('OSM LCM management kubeconfig permissions require fsGroup 1000')
+    if secret.get('secretName') != 'mgmtcluster-secret' or secret.get('optional', False) or secret.get('defaultMode') not in (416, 420) or secret.get('items') != [{'key': 'kubeconfig', 'path': 'mgmtcluster-kubeconfig.yaml'}] or mounts[0].get('mountPath') != '/etc/osm/mgmtcluster-kubeconfig.yaml' or mounts[0].get('subPath') != 'mgmtcluster-kubeconfig.yaml' or mounts[0].get('readOnly') is not True:
+        raise ConfigError('OSM LCM management kubeconfig mount path/source/permissions mismatch')
 
 
 def osm_values(cfg, lock):
