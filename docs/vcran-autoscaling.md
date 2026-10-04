@@ -1,10 +1,11 @@
 # vC-RAN/srsRAN resources and optional HPA
 
-Precision measured CU RSS around 522 MiB, above the old 512 MiB limit. The
-canonical vC-RAN CU profile now requests 250m CPU / 512Mi memory and limits
-500m CPU / 1Gi memory. Its `ran-type: vcran` pod metadata identifies the
-virtualized profile. C-RAN and Cloud-RAN resource/configuration defaults are
-unchanged. DU stays at one replica, requests 500m / 512Mi and limits 1 CPU / 1Gi.
+Precision kernel evidence showed both `srscu` and `srsdu` exhausting their
+1Gi memory cgroups at roughly 1,045,000 kB anonymous RSS. The canonical vC-RAN
+CU now requests 250m CPU / 1Gi memory and limits 500m CPU / 2Gi memory.
+DU stays at one replica, requests 500m / 1Gi and limits 1 CPU / 2Gi.
+The `ran-type: vcran` metadata identifies this virtualized profile. C-RAN and
+Cloud-RAN resource/configuration defaults are unchanged.
 
 The CU profile has an explicit optional policy:
 
@@ -54,7 +55,7 @@ This optional capability status does not change established RAN transport health
 A disabled profile has no HPA status line.
 
 **Recommended Precision setting: keep enabled=false, min=max=1.** First validate
-the 1Gi envelope under real operation; do not enable extra CU/DU replicas.
+the 2Gi envelope under real operation; do not enable extra CU/DU replicas.
 Enabling later requires an explicit profile change and normal deterministic
 package preparation/catalog synchronization before deploying the new package.
 Edit `helm/cran-srsran/cu/values-vcran.yaml`, not preserved legacy package files.

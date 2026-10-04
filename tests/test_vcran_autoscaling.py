@@ -37,7 +37,7 @@ class VCRANAutoscalingTests(unittest.TestCase):
         self.assertFalse(any(d['kind']=='HorizontalPodAutoscaler' for d in docs))
         self.assertEqual(deployment['spec']['replicas'],1)
         container=deployment['spec']['template']['spec']['containers'][0]
-        self.assertEqual(container['resources'],{'requests':{'cpu':'250m','memory':'512Mi'},'limits':{'cpu':'500m','memory':'1Gi'}})
+        self.assertEqual(container['resources'],{'requests':{'cpu':'250m','memory':'1Gi'},'limits':{'cpu':'500m','memory':'2Gi'}})
         self.assertEqual(deployment['spec']['template']['metadata']['labels']['ran-type'],'vcran')
 
     def test_enabled_safe_one_replica_cpu_policy_and_correct_target(self):
@@ -68,6 +68,8 @@ class VCRANAutoscalingTests(unittest.TestCase):
         docs=self.render(role='du',overrides={'autoscaling':{'enabled':True,'maxReplicas':2}})
         self.assertEqual(self.deployment(docs)['spec']['replicas'],1)
         self.assertFalse(any(d['kind']=='HorizontalPodAutoscaler' for d in docs))
+        container=self.deployment(docs)['spec']['template']['spec']['containers'][0]
+        self.assertEqual(container['resources'],{'requests':{'cpu':'500m','memory':'1Gi'},'limits':{'cpu':'1','memory':'2Gi'}})
 
     def test_cran_and_cloudran_remain_fixed_without_hpa(self):
         for scenario in ['cran-srsran','cloudran-srsran']:

@@ -1,13 +1,13 @@
 fullname: vcran-srsran-cu
 ranType: vcran
-# Virtualized, resource-isolated CU. Its measured RSS exceeds the old 512Mi limit.
+# Virtualized, resource-isolated CU. Precision startup RSS exhausted even the previous 1Gi limit.
 resources:
   requests:
     cpu: "250m"
-    memory: "512Mi"
+    memory: "1Gi"
   limits:
     cpu: "500m"
-    memory: "1Gi"
+    memory: "2Gi"
 # Optional Kubernetes HPA policy; disabled until Resource Metrics API is available.
 # One replica is the safe envelope for the existing stateful F1/NGAP CU.
 autoscaling:

@@ -1,14 +1,12 @@
 fullname: vcran-srsran-du
 cuFullname: vcran-srsran-cu
 ranType: vcran
-# Same 2x-the-CU resource ratio already established by the Cloud-RAN
-# profile (the DU carries the heavier PHY/RF workload), scaled down from
-# the vCRAN CU's tighter ceiling. No autoscaling, for the same reasons as
-# the CU profile: no metrics-server, and the DU holds per-pod F1/RF state.
+# Fixed one-replica DU: RF/F1 state is not validated for horizontal scaling.
+# CPU/memory isolation remains explicit; CU HPA does not scale this DU.
 resources:
   requests:
     cpu: "500m"
-    memory: "512Mi"
+    memory: "1Gi"
   limits:
     cpu: "1"
-    memory: "1Gi"
+    memory: "2Gi"

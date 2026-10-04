@@ -405,7 +405,12 @@ class AdversarialTests(unittest.TestCase):
                             if scenario['key']=='vcran-srsran' and chart['kdu']=='cu':
                                 self.assertEqual(before_container['resources']['requests']['memory'],'256Mi')
                                 self.assertEqual(before_container['resources']['limits']['memory'],'512Mi')
-                                expected={'requests':{'cpu':'250m','memory':'512Mi'},'limits':{'cpu':'500m','memory':'1Gi'}}
+                                expected={'requests':{'cpu':'250m','memory':'1Gi'},'limits':{'cpu':'500m','memory':'2Gi'}}
+                                self.assertEqual(after_container['resources'],expected)
+                                before_container['resources']=expected
+                            if scenario['key']=='vcran-srsran' and chart['kdu']=='du':
+                                self.assertEqual(before_container['resources'],{'requests':{'cpu':'500m','memory':'512Mi'},'limits':{'cpu':'1','memory':'1Gi'}})
+                                expected={'requests':{'cpu':'500m','memory':'1Gi'},'limits':{'cpu':'1','memory':'2Gi'}}
                                 self.assertEqual(after_container['resources'],expected)
                                 before_container['resources']=expected
 
