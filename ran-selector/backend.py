@@ -1048,7 +1048,7 @@ def latency():
 
 def _ue_status_payload():
     """Return the same live UE state used by /api/ue-status, without HTTP."""
-    _, pod, _ = run(f"kubectl get pods -n {_namespace()} -l app=oai-nr-ue -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
+    _, pod, _ = run(f"kubectl get pods -n {_namespace()} -l 'app in (oai-nr-ue,oai-nr-ue-cran)' -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
     pod = pod.strip().strip("'")
     registered = False
     pdu_session = False

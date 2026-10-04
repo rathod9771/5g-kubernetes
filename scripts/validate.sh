@@ -161,7 +161,7 @@ fi
 
 # ---- 10/11/12/13. UE registration + PDU session ----
 if [ -n "$CORE_NS" ]; then
-  UE_POD="$(k_ get pods -n "$CORE_NS" -l app=oai-nr-ue --no-headers 2>/dev/null | awk '{print $1; exit}')"
+  UE_POD="$(k_ get pods -n "$CORE_NS" -l "app in (oai-nr-ue,oai-nr-ue-cran)" --no-headers 2>/dev/null | awk '{print $1; exit}')"
   UERANSIM_POD="$(k_ get pods -n "$CORE_NS" -l component=ue --no-headers 2>/dev/null | awk '{print $1; exit}')"
   if [ -n "$UE_POD" ]; then
     UE_TUN="$(k_ exec -n "$CORE_NS" "$UE_POD" -- ip -4 -o addr show oaitun_ue1 2>/dev/null)"
