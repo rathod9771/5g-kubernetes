@@ -1435,7 +1435,78 @@ async function deployCombo(){
   runDeployCombo(comboKey,name,sub);
 }
 
+let switchInFlight=false;
+
+function waitForSwitch(comboKey, body, baseline){
+  // /api/deploy is synchronous; /api/status can confirm its atomic success
+  // even if the long-running POST response is lost by a proxy/browser.
+  return new Promise((resolve,reject)=>{
+    let settled=false, timer=null, readController=null;
+    const deadline=Date.now()+15*60*1000;
+    function finish(error,value){
+      if(settled)return;
+      settled=true;
+      clearTimeout(timer);
+      if(readController)readController.abort();
+      if(error)reject(error);else resolve(value);
+    }
+    async function poll(){
+      if(settled)return;
+      if(Date.now()>=deadline){
+        finish(new Error("Switch completion could not be confirmed; check runtime state before retrying."));return;
+      }
+      readController=new AbortController();
+      const readTimeout=setTimeout(()=>readController.abort(),10000);
+      try{
+        const response=await fetch("/api/status",{signal:readController.signal});
+        const state=await response.json();
+        if(response.ok && !state.error && baseline!==comboKey && state.active===comboKey){
+          finish(null,{status:"success",ran:state.active});return;
+        }
+      }catch(error){/* Retry only the read; never submit another deploy request. */}
+      finally{clearTimeout(readTimeout);}
+      if(!settled)timer=setTimeout(poll,2000);
+    }
+    fetch("/api/deploy",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+      .then(async response=>{
+        const result=await response.json();
+        if(!response.ok || result.status!=="success"){
+          finish(new Error(result.error||"Deployment failed"));
+        }else if(result.ran!==comboKey){
+          finish(new Error("Deployment returned a different scenario; refusing UI adoption."));
+        }else{finish(null,result);}
+      }).catch(()=>{/* Ambiguous transport failure: continue checking persisted state. */});
+    poll();
+  });
+}
+
+async function refreshSwitchedScenario(key,name,sub){
+  const response=await fetch("/api/scenarios");
+  if(!response.ok)throw new Error("Cannot refresh scenario catalog after switch");
+  const catalog=await response.json();
+  const scenario=catalog.scenarios.find(s=>s.key===key);
+  if(!scenario)throw new Error("Active scenario is absent from the canonical catalog");
+  lastDeployedCombo=scenario.key;
+  currentRAN=scenario.key;
+  const architecture=COMBO_DISPLAY[key] && COMBO_DISPLAY[key][0];
+  const stack=key.endsWith("-oai")?"oai":key.endsWith("-srsran")?"srsran":null;
+  document.querySelectorAll(".arch-btn").forEach(b=>b.classList.toggle("sel",b.dataset.arch===architecture));
+  document.querySelectorAll(".stack-btn").forEach(b=>b.classList.toggle("sel",b.dataset.stack===stack));
+  if(architecture)selectedArch={key:architecture,label:name,additive:!!scenario.additive};
+  selectedStack=stack?{key:stack,label:stack}:null;
+  showComboDeployedPanel(scenario.key,name,sub,stack);
+  document.getElementById("clean-badge").textContent="✓ Switch complete";
+  await Promise.allSettled([verifyClean(true),refreshLiveBar(),loadPods(),
+    fetchRuntime(scenario.key,"ranpbody","status")]);
+  // Runtime shares the client body: finish on the selected Recent Events tab.
+  await fetchClientEvents(scenario.key,"ranpbody");
+}
+
 async function runDeployCombo(comboKey,name,sub){
+  if(switchInFlight)return;
+  switchInFlight=true;
+  const baseline=lastDeployedCombo;
+  const requestBody={ran:comboKey,arch:selectedArch.key,stack:selectedStack?selectedStack.key:null};
   const badge=document.getElementById("clean-badge");
   badge.textContent="\u23f3 Switching...";
   badge.style.background="#2a1a0a";
@@ -1462,25 +1533,22 @@ async function runDeployCombo(comboKey,name,sub){
     </div>
   </div>`;
 
+  btn.disabled=true;
   try{
-    const r=await fetch("/api/deploy",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ran:comboKey,arch:selectedArch.key,stack:selectedStack.key})});
-    const d=await r.json();
-    if(d.status==="success"){
-      btn.className="deploy-btn deployed";
-      btn.textContent="\u2713 Deployed";
-      lastDeployedCombo=d.ran;
-      verifyClean();
-      showComboDeployedPanel(d.ran,name,sub,selectedStack.key);
-    }else{
-      btn.className="deploy-btn";
-      btn.textContent="\u25b6 Deploy";
-      alert("Deploy failed: "+(d.error||"Not yet implemented for this combination"));
-      blank();
-    }
-  }catch(e){
+    const result=await waitForSwitch(comboKey,requestBody,baseline);
+    await refreshSwitchedScenario(result.ran,name,sub);
+    btn.className="deploy-btn deployed";
+    btn.textContent="✓ Deployed";
+  }catch(error){
     btn.className="deploy-btn";
-    btn.textContent="\u25b6 Deploy";
+    btn.textContent="▶ Deploy";
+    badge.textContent="⚠ Switch failed / unconfirmed";
+    badge.style.color="#ff4444";
+    alert("Switch failed: "+error.message);
     blank();
+  }finally{
+    switchInFlight=false;
+    btn.disabled=false;
   }
 }
 
