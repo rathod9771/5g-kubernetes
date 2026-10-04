@@ -34,6 +34,7 @@ class PackageTests(unittest.TestCase):
         shutil.copytree(ROOT / "helm", self.root / "helm")
         (self.root / "config").mkdir()
         shutil.copy2(ROOT / "config/scenarios.json", self.root / "config/scenarios.json")
+        shutil.copy2(ROOT / 'config/reference-versions.json', self.root / 'config/reference-versions.json')
         legacy = self.scenario["reviewed_legacy"]["path"]
         shutil.copytree(ROOT / legacy, self.root / legacy)
         shutil.copy2(ROOT / (legacy + ".tar.gz"), self.root / (legacy + ".tar.gz"))
@@ -86,6 +87,34 @@ class PackageTests(unittest.TestCase):
         source.write_text(source.read_text() + "\n# new canonical revision\n")
         with self.assertRaisesRegex(packages.PackageError, "drift"):
             packages.validate_artifacts(self.root, self.output, self.scenario)
+
+    def test_image_lock_drift_remains_fatal_even_when_archive_bytes_match(self):
+        self.materialize()
+        path=self.root/'config/reference-versions.json'
+        data=json.loads(path.read_text())
+        data['ran_images']['components']['srsran']['source']['version']='unreviewed'
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(packages.PackageError,'Payload provenance drift: source_inputs'):
+            packages.validate_artifacts(self.root,self.output,self.scenario)
+
+    def test_explicit_prepare_can_publish_new_source_receipt_for_unchanged_payload(self):
+        target=packages.prepare(self.root,self.output,[self.scenario])
+        original=(target/'cran_srsran_knf.tar.gz').read_bytes()
+        path=self.root/'config/reference-versions.json';data=json.loads(path.read_text())
+        data['ran_images']['components']['srsran']['source']['strategy']='reviewed receipt change'
+        path.write_text(json.dumps(data))
+        with self.assertRaises(packages.PackageError):packages.validated_snapshot(self.root,self.output,self.scenario)
+        replacement=packages.prepare(self.root,self.output,[self.scenario])
+        self.assertNotEqual(target,replacement)
+        self.assertEqual(original,(replacement/'cran_srsran_knf.tar.gz').read_bytes())
+        packages.validated_snapshot(self.root,self.output,self.scenario)
+
+    def test_prepare_cannot_repair_falsified_stored_archive_hashes(self):
+        ProvenanceIdentityTests.published_fixture(self, lambda p:p['archives_sha256'].update({'cran_srsran_knf.tar.gz':'0'*64}))
+        pointer=(self.output/'CURRENT').read_bytes()
+        with self.assertRaisesRegex(packages.PackageError,'archives_sha256'):
+            packages.prepare(self.root,self.output,[self.scenario])
+        self.assertEqual((self.output/'CURRENT').read_bytes(),pointer)
 
     def test_stale_extra_embedded_chart_is_detected(self):
         self.materialize()

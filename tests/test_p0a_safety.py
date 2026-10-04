@@ -79,6 +79,7 @@ class PublicationTests(unittest.TestCase):
         shutil.copytree(ROOT / 'helm', self.root / 'helm')
         (self.root / 'config').mkdir()
         shutil.copy2(ROOT / 'config/scenarios.json', self.root / 'config/scenarios.json')
+        shutil.copy2(ROOT / 'config/reference-versions.json', self.root / 'config/reference-versions.json')
         registry = load_registry(self.root)
         self.scenarios = select_scenarios(registry, ['cran-srsran', 'fran'])
         for scenario in self.scenarios:
@@ -216,6 +217,7 @@ class BackendSafetyTests(unittest.TestCase):
         b = self.backend
         self.stack.enter_context(mock.patch.object(b, 'CONFIG_FILE', str(self.state)))
         self.stack.enter_context(mock.patch.object(b, 'validated_snapshot', return_value={}))
+        self.stack.enter_context(mock.patch.object(b, '_verify_ready_image'))
         self.stack.enter_context(mock.patch.object(b.osm_client, 'get_token', return_value='synthetic'))
         self.catalog = self.stack.enter_context(mock.patch.object(b, 'Catalog'))
         self.stack.enter_context(mock.patch.object(b, 'runtime_preflight', return_value=({'DEPLOYMENT_PROFILE': 'rfsim'}, self.context, self.catalog.return_value)))

@@ -142,6 +142,14 @@ def get_op_state(nslcmop_id):
     return _mapping(_request('GET', '/nslcm/v1/ns_lcm_op_occs/' + identifier(nslcmop_id))).get('operationState')
 
 
+def get_ns_instance(ns_instance_id):
+    return _mapping(_request('GET', '/nslcm/v1/ns_instances/' + identifier(ns_instance_id)))
+
+
+def get_operation(nslcmop_id):
+    return _mapping(_request('GET', '/nslcm/v1/ns_lcm_op_occs/' + identifier(nslcmop_id)))
+
+
 @runtime_operation
 def wait_for_op(nslcmop_id, timeout=180, interval=5):
     deadline = time.monotonic() + timeout

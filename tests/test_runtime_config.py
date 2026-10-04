@@ -418,6 +418,7 @@ class SourceSafetyTests(unittest.TestCase):
             (root / 'config').mkdir(parents=True)
             shutil.copytree(ROOT / 'helm', root / 'helm')
             shutil.copy2(ROOT / 'config/scenarios.json', root / 'config/scenarios.json')
+            shutil.copy2(ROOT / 'config/reference-versions.json', root / 'config/reference-versions.json')
             scenario = select_scenarios(load_registry(root), ['fran'])[0]
             legacy = scenario['reviewed_legacy']['path']
             shutil.copytree(ROOT / legacy, root / legacy)

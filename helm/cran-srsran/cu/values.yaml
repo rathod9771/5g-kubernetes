@@ -10,3 +10,6 @@ amf:
 # "same CU/DU implementation, different deployment profile" principle.
 fullname: cran-srsran-cu
 ranType: cran
+
+# Supplied by the central ready-image policy, after scenario profile values.
+image: {}

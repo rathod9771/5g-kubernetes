@@ -2,6 +2,12 @@
 # Run only on the target Ubuntu system. Never run this during static validation.
 set -euo pipefail
 case $- in *x*) set +x ;; esac
+if [[ "$#" -gt 0 ]]; then
+  [[ "$#" -eq 2 && "$1" == --srsran-image-archive && -n "$2" ]] || {
+    echo 'Usage: ./install.sh [--srsran-image-archive /path/to/approved-export.tar]' >&2
+    exit 2
+  }
+fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "$EUID" == 0 ]]; then
   echo 'ERROR: run install.sh as the intended service user with sudo available.' >&2
@@ -16,6 +22,6 @@ if ! python3 -c 'import yaml' >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1
 fi
 source "$REPO_ROOT/scripts/common.sh"
 load_config --network --require install --require watcher --require osm
-python3 -B "$REPO_ROOT/scripts/installer/install.py" --preflight
+python3 -B "$REPO_ROOT/scripts/installer/install.py" --preflight "$@"
 bash "$REPO_ROOT/scripts/installer/host.sh"
-python3 -B "$REPO_ROOT/scripts/installer/install.py"
+python3 -B "$REPO_ROOT/scripts/installer/install.py" "$@"

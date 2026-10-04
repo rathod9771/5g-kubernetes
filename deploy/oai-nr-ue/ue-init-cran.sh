@@ -2,7 +2,7 @@
 # C-RAN TEST VARIANT of ue-init.sh. A separate script so the shared,
 # working ConfigMap oai-nr-ue-config (and the file inside it) is never
 # modified. Subscriber values (imsi/key/opc/dnn/nssai) still come ONLY
-# from the existing oai-nr-ue-config ConfigMap, mounted read-only.
+# from the private oai-nr-ue-config Secret, mounted read-only.
 #
 # Frequency fix: the CU/DU-split C-RAN DU is configured for a different
 # carrier than the monolithic gNB the shared script was written for.
@@ -21,11 +21,7 @@ export POD_IP=$(awk 'END{print $1}' /etc/hosts)
 echo "OAI NR-UE: POD_IP=${POD_IP} connecting to gNB rfsim server at ${GNB_IP} (discovered fresh this start)"
 mkdir -p /tmp/conf
 cp /opt/oai-nr-ue/etc/ue.conf /tmp/conf/ue.conf
+# Subscriber settings already live in ue.conf; keep key material out of argv.
+chmod 600 /tmp/conf/ue.conf
 exec /opt/oai-nr-ue/bin/nr-uesoftmodem -O /tmp/conf/ue.conf --rfsim -r 106 --numerology 1 --band 78 \
-  -C 3450720000 --ssb 516 --rfsimulator.serveraddr "${GNB_IP}" \
-  --uicc0.imsi PLACEHOLDER_IMSI \
-  --uicc0.key PLACEHOLDER_KEY \
-  --uicc0.opc PLACEHOLDER_OPC \
-  --uicc0.dnn PLACEHOLDER_DNN \
-  --uicc0.nssai_sst PLACEHOLDER_SST \
-  --uicc0.nssai_sd 0xPLACEHOLDER_SD
+  -C 3450720000 --ssb 516 --rfsimulator.serveraddr "${GNB_IP}"

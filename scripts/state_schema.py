@@ -44,6 +44,8 @@ def validate_state(state, registry, context=None):
         else:
             identity(pending.get('id'))
             identity(pending.get('operation'))
+        if 'termination_operation' in pending:
+            identity(pending['termination_operation'])
     bound = state.get('context')
     has_instances = any(osm.get(k) for k in ('active_instance_id', 'core_instance_id', 'pending_instance', 'additive_instances'))
     if bound is not None:

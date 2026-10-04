@@ -1,13 +1,12 @@
 # OAI NR UE for the C-RAN CU/DU RFSIM test ONLY. Created at replicas: 0 --
 # nothing runs until it is scaled up deliberately.
 #
-# It shares IMSI 208930000000003 with the existing oai-nr-ue Deployment, so the
-# two must NEVER run at the same time: scale oai-nr-ue to 0 (and confirm the
+# It uses the private reference subscriber, so the two UE variants must NEVER
+# run at the same time: scale oai-nr-ue to 0 (and confirm the
 # pod is gone) before scaling this one to 1.
 #
-# Reused, NOT modified: ConfigMap oai-nr-ue-config (subscriber values are read
-# from it, so the key material is not copied anywhere new) and ServiceAccount
-# oai-nr-ue (its Role already allows get/list/watch on pods).
+# Render with scripts/prepare_simulated_ue.py. Private subscriber settings are
+# mounted from a Secret; repository templates contain no subscriber material.
 # New: ConfigMap oai-nr-ue-cran-discovery-script (from discover_gnb_cran.py).
 # New: ConfigMap oai-nr-ue-cran-init (from ue-init-cran.sh) -- runs the UE with
 # the carrier frequency this DU actually expects (-C 3450720000 --ssb 516,
@@ -37,8 +36,9 @@ spec:
       serviceAccountName: oai-nr-ue
       initContainers:
       - name: discover-gnb
-        image: python:3.12-slim
-        command: ["bash", "-c", "pip install --no-cache-dir --break-system-packages kubernetes >/tmp/pip.log 2>&1 && python3 /discovery/discover_gnb.py"]
+        image: APPROVED_UE_DISCOVERY_IMAGE
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "/discovery/discover_gnb.py"]
         env:
         - name: TARGET_NAMESPACE
           valueFrom:
@@ -55,7 +55,7 @@ spec:
           mountPath: /shared
       containers:
       - name: nr-ue
-        image: oaisoftwarealliance/oai-nr-ue:2026.w13
+        image: APPROVED_OAI_UE_IMAGE
         imagePullPolicy: IfNotPresent
         securityContext:
           privileged: true
@@ -79,9 +79,9 @@ spec:
           mountPath: /shared
       volumes:
       - name: ue-config
-        configMap:
-          name: oai-nr-ue-config
-          defaultMode: 0755
+        secret:
+          secretName: oai-nr-ue-config
+          defaultMode: 0400
       - name: cran-init
         configMap:
           name: oai-nr-ue-cran-init

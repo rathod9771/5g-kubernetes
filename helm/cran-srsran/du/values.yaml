@@ -4,3 +4,6 @@
 fullname: cran-srsran-du
 cuFullname: cran-srsran-cu
 ranType: cran
+
+# Supplied by the central ready-image policy, after scenario profile values.
+image: {}

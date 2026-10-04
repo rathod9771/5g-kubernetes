@@ -25,13 +25,19 @@
           "kdu": "cu",
           "release_name": "cran-srsran-cu",
           "source": "helm/cran-srsran/cu",
-          "values_files": []
+          "values_files": [],
+          "image_bindings": {
+            "image": "srsran"
+          }
         },
         {
           "kdu": "du",
           "release_name": "cran-srsran-du",
           "source": "helm/cran-srsran/du",
-          "values_files": []
+          "values_files": [],
+          "image_bindings": {
+            "image": "srsran"
+          }
         }
       ],
       "pods": [
@@ -74,13 +80,19 @@
           "kdu": "cu",
           "release_name": "cran-oai-cu",
           "source": "helm/cran-oai/cu",
-          "values_files": []
+          "values_files": [],
+          "image_bindings": {
+            "image": "oai-cu"
+          }
         },
         {
           "kdu": "du",
           "release_name": "cran-oai-du",
           "source": "helm/cran-oai/du",
-          "values_files": []
+          "values_files": [],
+          "image_bindings": {
+            "image": "oai-du"
+          }
         }
       ],
       "pods": [
@@ -210,7 +222,10 @@
           "source": "helm/cran-srsran/cu",
           "values_files": [
             "helm/cran-srsran/cu/values-cloudran.yaml"
-          ]
+          ],
+          "image_bindings": {
+            "image": "srsran"
+          }
         },
         {
           "kdu": "du",
@@ -218,7 +233,10 @@
           "source": "helm/cran-srsran/du",
           "values_files": [
             "helm/cran-srsran/du/values-cloudran.yaml"
-          ]
+          ],
+          "image_bindings": {
+            "image": "srsran"
+          }
         }
       ],
       "pods": [
@@ -263,7 +281,10 @@
           "source": "helm/cran-oai/cu",
           "values_files": [
             "helm/cran-oai/cu/values-cloudran.yaml"
-          ]
+          ],
+          "image_bindings": {
+            "image": "oai-cu"
+          }
         },
         {
           "kdu": "du",
@@ -271,7 +292,10 @@
           "source": "helm/cran-oai/du",
           "values_files": [
             "helm/cran-oai/du/values-cloudran.yaml"
-          ]
+          ],
+          "image_bindings": {
+            "image": "oai-du"
+          }
         }
       ],
       "pods": [
@@ -398,7 +422,10 @@
           "source": "helm/cran-srsran/cu",
           "values_files": [
             "helm/cran-srsran/cu/values-vcran.yaml"
-          ]
+          ],
+          "image_bindings": {
+            "image": "srsran"
+          }
         },
         {
           "kdu": "du",
@@ -406,7 +433,10 @@
           "source": "helm/cran-srsran/du",
           "values_files": [
             "helm/cran-srsran/du/values-vcran.yaml"
-          ]
+          ],
+          "image_bindings": {
+            "image": "srsran"
+          }
         }
       ],
       "pods": [
@@ -451,7 +481,10 @@
           "source": "helm/cran-oai/cu",
           "values_files": [
             "helm/cran-oai/cu/values-vcran.yaml"
-          ]
+          ],
+          "image_bindings": {
+            "image": "oai-cu"
+          }
         },
         {
           "kdu": "du",
@@ -459,7 +492,10 @@
           "source": "helm/cran-oai/du",
           "values_files": [
             "helm/cran-oai/du/values-vcran.yaml"
-          ]
+          ],
+          "image_bindings": {
+            "image": "oai-du"
+          }
         }
       ],
       "pods": [
@@ -502,7 +538,10 @@
           "kdu": "fran-edge",
           "release_name": "fran-edge",
           "source": "helm/fran-edge",
-          "values_files": []
+          "values_files": [],
+          "image_bindings": {
+            "edgeApp.image": "fran-edge"
+          }
         }
       ],
       "pods": [

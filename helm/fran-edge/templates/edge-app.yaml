@@ -27,7 +27,8 @@ spec:
     spec:
       containers:
       - name: app
-        image: {{ .Values.edgeApp.image }}
+        image: {{ required "Supply approved image values with scripts/runtime_images.py" .Values.edgeApp.image | quote }}
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
         resources:

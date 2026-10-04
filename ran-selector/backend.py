@@ -19,6 +19,7 @@ from local_safety import exclusive_lock, atomic_write
 from osm_catalog import Catalog, CatalogError
 from runtime_config import load_config, ConfigError
 from state_schema import validate_state
+from runtime_images import policy as image_policy, verify_imported_nodes
 DEFAULT_STATE_PATH = str(Path(REPO_PATH) / '.runtime/active-ran.yaml')
 CONFIG_FILE = DEFAULT_STATE_PATH
 
@@ -777,11 +778,84 @@ def _deploy_locked(key):
         g.runtime_config, g.runtime_context = cfg, context
         if CONFIG_FILE == DEFAULT_STATE_PATH and cfg['ACTIVE_STATE_PATH'] != g.runtime_state_path:
             raise ConfigError('Runtime state path changed during preflight; retry after configuration is stable')
+        _verify_ready_image(scenario)
         identities = catalog.verify(scenario, artifacts)
     except (PackageError, CatalogError, OSError, ValueError) as error:
         return jsonify({"error": "Replacement preflight failed: " + str(error)}), 409
     with osm_client.runtime_session(cfg):
         return _deploy_verified(key, registry, entries, scen, scenario, context, identities)
+
+
+def _verify_ready_image(scenario):
+    if scenario['implementation'] == 'srsRAN':
+        nodes = _kubectl_json(['get', 'nodes', '-o', 'json'])
+        if not isinstance(nodes, dict):
+            raise ConfigError('Cannot verify approved srsRAN image inventory before lifecycle operations')
+        verify_imported_nodes(nodes, image_policy()['components']['srsran'])
+
+
+@app.route('/api/reconcile-pending', methods=['POST'])
+def reconcile_pending():
+    """Explicit failed-instance cleanup; never selects an instance by guessed ID."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) != {'instance_id'} or not isinstance(body['instance_id'], str):
+        return jsonify({'error': 'Provide exactly the recorded pending instance_id'}), 400
+    try:
+        g.runtime_state_path = _state_path()
+        with exclusive_lock(Path(g.runtime_state_path).parent / '.lifecycle.lock'):
+            cfg, context, _ = runtime_preflight()
+            g.runtime_config, g.runtime_context = cfg, context
+            if CONFIG_FILE == DEFAULT_STATE_PATH and cfg['ACTIVE_STATE_PATH'] != g.runtime_state_path:
+                raise ConfigError('Runtime state path changed during reconciliation')
+            registry = load_registry()
+            state = yaml.safe_load(Path(_state_path()).read_text())
+            validate_state(state, registry, context)
+            with osm_client.runtime_session(cfg):
+                _reconcile_failed_pending(state, registry, body['instance_id'])
+        return jsonify({'status': 'success', 'reconciled_instance_id': body['instance_id']})
+    except (OSError, ValueError, RuntimeError, CatalogError) as error:
+        return jsonify({'error': str(error)}), 409
+
+
+def _reconcile_failed_pending(state, registry, requested_id):
+    osm = state['osm']
+    pending = osm.get('pending_instance')
+    if not pending or pending.get('id') != requested_id:
+        raise ValueError('Instance must match the recorded pending identity; requesting-stage ambiguity requires manual evidence')
+    protected = {osm.get('core_instance_id'), osm.get('active_instance_id'), *osm.get('additive_instances', {}).values()}
+    if requested_id in protected:
+        raise ValueError('Pending identity overlaps an active/core instance; refusing cleanup')
+    scenario = next(s for s in registry['scenarios'] if s['key'] == pending['scenario'])
+    scen = dashboard_scenarios(registry)[scenario['key']]
+    # A previous reconciliation may have deleted the NS before the atomic write.
+    if not osm_client.ns_instance_absent(requested_id):
+        instance = osm_client.get_ns_instance(requested_id)
+        if instance.get('name', instance.get('nsName')) != 'ran-' + scenario['key']:
+            raise ValueError('Pending NS name differs from installer-owned scenario')
+        operation = osm_client.get_operation(pending['operation'])
+        if operation.get('nsInstanceId') != requested_id:
+            raise ValueError('Pending OSM operation does not belong to recorded instance')
+        if operation.get('operationState') not in ('FAILED', 'FAILED_TEMP', 'PARTIALLY_COMPLETED'):
+            raise ValueError('Pending operation is not a confirmed failed terminal operation; refusing termination')
+        # On retry after a successful terminate, do not issue another termination.
+        status = instance.get('nsState')
+        if status not in ('NOT_INSTANTIATED',) or pending.get('termination_operation'):
+            op = pending.get('termination_operation')
+            if not op:
+                op = osm_client.terminate_ns(requested_id)
+                if op:
+                    pending['termination_operation'] = op
+                    atomic_write(_state_path(), yaml.safe_dump(state).encode())
+            if not op or osm_client.wait_for_op(op, timeout=180) != 'COMPLETED':
+                raise RuntimeError('Pending termination did not complete; pending state retained')
+        if not _wait_pods_gone(scen['pods'], scen.get('selector')):
+            raise RuntimeError('Pending RAN resources remain; pending state retained')
+        if not osm_client.delete_ns_instance(requested_id) or not osm_client.ns_instance_absent(requested_id):
+            raise RuntimeError('Pending NS deletion not confirmed; pending state retained')
+    if not _wait_pods_gone(scen['pods'], scen.get('selector')):
+        raise RuntimeError('Resources remain after pending NS removal; refusing to clear state')
+    osm.pop('pending_instance')
+    atomic_write(_state_path(), yaml.safe_dump(state).encode())
 
 
 def _deploy_verified(key, registry, entries, scen, scenario, context, identities):

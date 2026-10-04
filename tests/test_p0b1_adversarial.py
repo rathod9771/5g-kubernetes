@@ -376,8 +376,16 @@ class AdversarialTests(unittest.TestCase):
         def render(home,chart):
             args=['helm','template',chart['release_name'],str(home/chart['source']),'-n','review-namespace']
             for profile in chart['values_files']:args.extend(['-f',str(home/profile)])
+            if home == ROOT:
+                from runtime_images import chart_values
+                values=self.base/'approved-images.json'
+                values.write_text(json.dumps(chart_values(ROOT,chart)))
+                args.extend(['-f',str(values)])
             return list(yaml.safe_load_all(subprocess.check_output(args,text=True,stderr=subprocess.PIPE)))
-        expected_checksums={'cran-oai':('r1-49013ed9','r1-198c0f82'),'cloudran-oai':('r1-e7850648','r1-01d52d42'),'vcran-oai':('r1-d6326412','r1-9621e16f')}
+        # The CU checksum hashes all values, including the newly explicit
+        # approved image reference. Non-image/config resource content is still
+        # compared independently to the historical baseline below.
+        expected_checksums={'cran-oai':('r1-49013ed9','r1-44832321'),'cloudran-oai':('r1-e7850648','r1-b0a5a416'),'vcran-oai':('r1-d6326412','r1-459864ff')}
         charts=resources=changes=0
         for scenario in load_registry()['scenarios']:
             if scenario['generation_status']!='ready':continue
@@ -386,6 +394,20 @@ class AdversarialTests(unittest.TestCase):
                 charts+=1;resources+=len(after)
                 self.assertEqual(len(before),len(after))
                 for previous,current in zip(before,after):
+                    if current['kind']=='Deployment':
+                        before_container=previous['spec']['template']['spec']['containers'][0]
+                        after_container=current['spec']['template']['spec']['containers'][0]
+                        if scenario['implementation']=='srsRAN':
+                            self.assertEqual(before_container['image'],'ghcr.io/herlesupreeth/docker_srsran:master')
+                            self.assertEqual(after_container['image'],'localhost/5g-kubernetes/srsran:25.04.0-11c9bbabb6')
+                            self.assertEqual(after_container['imagePullPolicy'],'Never')
+                            before_container.update(image=after_container['image'],imagePullPolicy='Never')
+                        elif scenario['key']=='fran':
+                            self.assertEqual(before_container['image'],'nginx:alpine')
+                            self.assertEqual(after_container['image'],'docker.io/library/nginx@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2')
+                            before_container.update(image=after_container['image'],imagePullPolicy='IfNotPresent')
+                        else:
+                            self.assertEqual(after_container['image'],'oaisoftwarealliance/oai-gnb:'+('2026.w13' if chart['kdu']=='cu' else '2026.w25'))
                     if previous!=current:
                         self.assertEqual(current['kind'],'Deployment')
                         self.assertEqual(chart['kdu'],'cu')

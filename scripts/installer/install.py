@@ -27,6 +27,8 @@ from osm_packages import prepare, validated_snapshot, DEFAULT_OUTPUT
 from scenario_registry import load_registry, select_scenarios
 from osm_onboard import onboard
 from state_schema import validate_state
+from srsran_image import inspect_archive, installed, import_image
+from runtime_images import policy as image_policy
 
 
 # Summaries are fixed public phrases, never raw stderr (which can contain secrets).
@@ -653,7 +655,7 @@ class Installer:
             raise ConfigError('Reference subscriber existence check failed')
 
     def baseline(self):
-        self.packages(['cran-srsran'])
+        self.packages([s['key'] for s in self.registry['scenarios'] if s['generation_status'] == 'ready'])
         state_path = Path(self.cfg['ACTIVE_STATE_PATH'])
         with exclusive_lock(self.directory / '.lifecycle.lock'):
             if state_path.exists():
@@ -669,6 +671,9 @@ class Installer:
                 state = {'active': 'none', 'osm': {'core_instance_id': self.core_id}, 'context': self.context}
                 validate_state(state, self.registry, self.context)
                 atomic_write(state_path, yaml.safe_dump(state).encode())
+
+    def ready_ran_image(self):
+        import_image(getattr(self, 'srsran_archive', None), self.directory, self.runner.run)
 
     @staticmethod
     def monitoring_workload_ready(kind, item):
@@ -794,10 +799,11 @@ class Installer:
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         with exclusive_lock(self.directory / '.installer.lock'):
             self.snapshot()
-            for label, action in [('Kubernetes', self.kubernetes), ('infrastructure', self.infrastructure),
+            for label, action in [('Kubernetes', self.kubernetes), ('approved srsRAN image', self.ready_ran_image),
+                                  ('infrastructure', self.infrastructure),
                                   ('OSM', self.osm), ('Open5GS', self.core),
                                   ('private subscriber input', self.subscribers),
-                                  ('C-RAN/srsRAN packages and runtime state', self.baseline),
+                                  ('ready RAN packages and runtime state', self.baseline),
                                   ('monitoring', self.monitoring), ('services', self.services)]:
                 self.stage(label, action)
 
@@ -837,11 +843,20 @@ def preflight(cfg):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preflight', action='store_true')
+    parser.add_argument('--srsran-image-archive', type=Path,
+                        help='Approved Docker export; verified before bootstrap and imported into target containerd')
     args = parser.parse_args()
     cfg = resume_config(load_config(network=True, require=('install', 'watcher', 'osm')))
     preflight(cfg)
+    image = image_policy()['components']['srsran']
+    if args.srsran_image_archive:
+        inspect_archive(args.srsran_image_archive, image)
+    elif not shutil.which('ctr') or not installed(image, Runner().run):
+        raise ConfigError('Supply --srsran-image-archive with the approved reference export before bootstrap')
     if not args.preflight:
-        Installer(cfg).run()
+        installer = Installer(cfg)
+        installer.srsran_archive = args.srsran_image_archive
+        installer.run()
 
 
 if __name__ == '__main__':

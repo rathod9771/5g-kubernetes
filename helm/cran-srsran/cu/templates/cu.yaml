@@ -53,8 +53,8 @@ spec:
     spec:
       containers:
       - name: cu
-        image: ghcr.io/herlesupreeth/docker_srsran:master
-        imagePullPolicy: IfNotPresent
+        image: {{ required "Supply approved image values with scripts/runtime_images.py" .Values.image.reference | quote }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
         securityContext:
           privileged: true
         {{- with .Values.resources }}

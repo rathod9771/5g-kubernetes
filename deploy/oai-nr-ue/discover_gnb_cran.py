@@ -28,7 +28,11 @@ import os
 import sys
 import time
 
-from kubernetes import client, config
+import json
+import ssl
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 NAMESPACE = os.environ.get("TARGET_NAMESPACE", "")
 OUTPUT_FILE = os.environ.get("OUTPUT_FILE", "/shared/gnb-ip.txt")
@@ -49,13 +53,42 @@ def find_gnb_ip(v1):
     return chosen.status.pod_ip
 
 
+class PodReader:
+    """Use the mounted Kubernetes service-account credentials; no pip at startup."""
+    def list_namespaced_pod(self, namespace, label_selector):
+        from types import SimpleNamespace
+        if not namespace or not all(c.isalnum() or c == '-' for c in namespace):
+            raise ValueError('Invalid discovery namespace')
+        directory = Path('/var/run/secrets/kubernetes.io/serviceaccount')
+        host = os.environ['KUBERNETES_SERVICE_HOST']
+        port = os.environ.get('KUBERNETES_SERVICE_PORT_HTTPS', '443')
+        # Service host is supplied by Kubernetes, and may be an IPv6 literal.
+        if ':' in host:
+            host = '[' + host + ']'
+        query = urlencode({'labelSelector': label_selector})
+        req = Request(f'https://{host}:{port}/api/v1/namespaces/{namespace}/pods?{query}',
+                      headers={'Authorization': 'Bearer ' + (directory / 'token').read_text().strip()})
+        with urlopen(req, context=ssl.create_default_context(cafile=str(directory / 'ca.crt')), timeout=10) as response:
+            data = json.load(response)
+        pods = []
+        for pod in data['items']:
+            pods.append(SimpleNamespace(
+                status=SimpleNamespace(phase=pod.get('status', {}).get('phase'), pod_ip=pod.get('status', {}).get('podIP')),
+                metadata=SimpleNamespace(name=pod['metadata']['name'], labels=pod['metadata'].get('labels', {}))))
+        return SimpleNamespace(items=pods)
+
+
 def main():
-    config.load_incluster_config()
-    v1 = client.CoreV1Api()
+    v1 = PodReader()
 
     waited = 0
     while waited < MAX_WAIT_SECONDS:
-        ip = find_gnb_ip(v1)
+        try:
+            ip = find_gnb_ip(v1)
+        except Exception:
+            # Never print requests/headers or private HTTP response bodies.
+            print('Kubernetes pod discovery unavailable; retrying safely', file=sys.stderr)
+            ip = None
         if ip:
             with open(OUTPUT_FILE, "w") as f:
                 f.write(ip)

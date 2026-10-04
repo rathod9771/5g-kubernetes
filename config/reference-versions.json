@@ -131,5 +131,77 @@
     "gitBaseUrl": "http://git.127.0.0.1.nip.io",
     "fleetRepoUrl": "https://github.com/example/example.git",
     "swcatalogsRepoUrl": "https://github.com/example/example.git"
+  },
+  "ran_images": {
+    "schema_version": 1,
+    "components": {
+      "srsran": {
+        "repository": "localhost/5g-kubernetes/srsran",
+        "tag": "25.04.0-11c9bbabb6",
+        "digest": "sha256:e34a0ef3aa0649b0ba0e4b4d136867084371b780e55ec859c601a2987041fc59",
+        "platform": "linux/amd64",
+        "pull_policy": "Never",
+        "acquisition": "verified-import",
+        "archive_sha256": "sha256:110ebdaf346a85b3ceeebe6184cf58b698ca009afa0e2bfb16e7eec10fcc0754",
+        "archive_size": 3606001152,
+        "config_digest": "sha256:8a156365eb292ce9d5b03ba69a2901fa997490196b6a89becaf31c55194e514d",
+        "source": {
+          "repository": "https://github.com/herlesupreeth/srsRAN_Project.git",
+          "commit": "11c9bbabb69873752500d676f55e0034f6caa5c5",
+          "version": "25.04.0",
+          "strategy": "preserved-working-binaries; OCI conversion does not rebuild",
+          "cmake": [
+            "-DENABLE_EXPORT=ON",
+            "-DENABLE_ZEROMQ=ON"
+          ]
+        },
+        "runtime_reference": "local-tag"
+      },
+      "oai-cu": {
+        "repository": "oaisoftwarealliance/oai-gnb",
+        "tag": "2026.w13",
+        "digest": null,
+        "digest_status": "deferred-reference-cache-verification",
+        "platform": "linux/amd64",
+        "pull_policy": "IfNotPresent",
+        "acquisition": "registry"
+      },
+      "oai-du": {
+        "repository": "oaisoftwarealliance/oai-gnb",
+        "tag": "2026.w25",
+        "digest": null,
+        "digest_status": "deferred-reference-cache-verification",
+        "platform": "linux/amd64",
+        "pull_policy": "IfNotPresent",
+        "acquisition": "registry"
+      },
+      "fran-edge": {
+        "repository": "docker.io/library/nginx",
+        "tag": "alpine",
+        "digest": "sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2",
+        "platform": "linux/amd64",
+        "pull_policy": "IfNotPresent",
+        "acquisition": "registry"
+      },
+      "oai-ue": {
+        "repository": "oaisoftwarealliance/oai-nr-ue",
+        "tag": "2026.w13",
+        "digest": "sha256:e4e1b50b83c167128996e0b3e2d2dd3ebfe10fb823da1a1314e3978edd87365f",
+        "platform": "linux/amd64",
+        "pull_policy": "IfNotPresent",
+        "acquisition": "registry",
+        "source": {
+          "evidence": "reference-node cached repo digest equals registry index"
+        }
+      },
+      "ue-discovery": {
+        "repository": "docker.io/library/python",
+        "tag": "3.12-slim",
+        "digest": "sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9",
+        "platform": "linux/amd64",
+        "pull_policy": "IfNotPresent",
+        "acquisition": "registry"
+      }
+    }
   }
 }

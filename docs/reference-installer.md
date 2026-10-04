@@ -16,7 +16,7 @@ umask 077
 cp config/global.env.example config/global.env
 chmod 600 config/global.env
 ${EDITOR:-nano} config/global.env
-./install.sh
+./install.sh --srsran-image-archive /private/path/srsran-reference-working.tar
 ```
 
 Set private `OSM_USER`, `OSM_PASSWORD`, `OSM_PROJECT`, `OSM_VIM_NAME`,
@@ -70,9 +70,16 @@ working DNS resolution to the discovered target host.
    reintroduce historical Helm seeding. Verify existence of exactly one reference
    IMSI without reading authentication fields. Bind the private import receipt to
    the discovered context, PVC UID and input hash; reruns verify rather than merge.
-6. Prepare/validate/onboard and verify C-RAN/srsRAN packages using P0-A. Bind core
+6. Prepare/validate/onboard and verify all seven ready RAN packages using P0-A. Bind core
    identity to the P0-B1 atomic runtime state. Preserve the dashboard deployment
    workflow: **installation does not instantiate a RAN automatically**.
+
+The approved srsRAN export is an additional required input for a clean host.
+It is verified before bootstrap and converted/imported into containerd after
+Kubernetes bootstrap. All ready srsRAN profiles use its local immutable OCI
+verified local tag with a separate manifest digest lock and pull policy `Never`. See [ready RAN acceptance](ready-ran-acceptance.md)
+for identity, transfer/import, failed-instance reconciliation and simulated UE
+steps. OAI release tags are preserved with digest binding explicitly deferred.
 7. Install monitoring, PodMonitors, exporter/probe script ConfigMaps and portable
    deployments; install the P0-B1 dashboard, watcher and Rancher forwarding units.
 

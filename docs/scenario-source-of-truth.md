@@ -195,3 +195,12 @@ PyYAML 6.0.1 build metadata validates with PyYAML 6.0.3 when all payloads match.
 Explicit prepare also reuses an unchanged scenario's original provenance, so
 audit-only changes do not republish identical payloads. Validation and replacement
 preflight do not silently prepare packages or fabricate refreshed build history.
+# Ready image policy
+
+`config/reference-versions.json:ran_images` owns ready runtime identities.
+Scenario charts bind policy components through `image_bindings`. Packaging
+applies approved image values after profiles, records selected policy component
+hashes, and validates actual rendered images/pull policies. Direct Helm rendering
+must supply values from `scripts/runtime_images.py values SCENARIO KDU`.
+See [ready RAN acceptance](ready-ran-acceptance.md) for verified local srsRAN
+import, preserved OAI version pairing, F-RAN digest and Precision validation.

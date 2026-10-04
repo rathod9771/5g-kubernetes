@@ -67,6 +67,11 @@ def load_registry(root=REPO_ROOT):
             raise RegistryError(f"Ready scenario has no canonical charts: {key}")
         kdus = set()
         for chart in scenario["charts"] + scenario.get("observed_releases", []):
+            if status == 'ready' and scenario in data['scenarios']:
+                bindings = chart.get('image_bindings')
+                if not isinstance(bindings, dict) or not bindings or any(
+                        k not in ('image', 'edgeApp.image') or not isinstance(v, str) for k, v in bindings.items()):
+                    raise RegistryError('Ready chart needs approved image bindings: ' + key)
             kdu = chart["kdu"]
             if not NAME.fullmatch(kdu) or kdu in kdus:
                 raise RegistryError(f"Duplicate/invalid KDU in {key}: {kdu}")

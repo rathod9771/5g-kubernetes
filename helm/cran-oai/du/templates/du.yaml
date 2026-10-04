@@ -210,7 +210,7 @@ spec:
     spec:
       containers:
       - name: du
-        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        image: {{ required "Supply approved image values with scripts/runtime_images.py" .Values.image.reference | quote }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         securityContext:
           privileged: true

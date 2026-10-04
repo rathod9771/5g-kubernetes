@@ -19,6 +19,7 @@ from local_safety import exclusive_lock, atomic_write
 from pathlib import Path
 
 import yaml
+from runtime_images import LOCK_PATH, chart_values, verify_rendered, policy as image_policy
 
 from scenario_registry import (
     REPO_ROOT, RegistryError, load_registry, repository_path, select_scenarios,
@@ -199,6 +200,14 @@ def chart_files(root, chart):
         content = repository_path(root, relative).read_bytes()
         inputs[relative] = sha256(content)
         profiles.append(content)
+    if chart.get('image_bindings'):
+        # Record the exact approved component, rather than unrelated OSM/core
+        # version settings sharing the central file. Snapshot still captures and
+        # checks the complete file atomically before any generation.
+        approved = image_policy(root)['components']
+        for component in sorted(set(chart['image_bindings'].values())):
+            inputs[LOCK_PATH + '#ran_images/components/' + component] = sha256(json_bytes(approved[component]))
+        profiles.append(json_bytes(chart_values(root, chart)))
     packaged = helm_packaged_files(files, chart.get("reviewed_inputs"))
     if "Chart.yaml" not in packaged or not any(n.startswith("templates/") for n in packaged):
         raise PackageError("Helm exclusions removed required chart files")
@@ -317,7 +326,8 @@ def expected_artifacts(root, scenario):
         "registry_sha256": sha256((Path(root) / "config/scenarios.json").read_bytes()),
         "generator": {"version": "2", "implementation_sha256": {
             name: sha256((REPO_ROOT / "scripts" / name).read_bytes())
-            for name in ("osm_packages.py", "scenario_registry.py", "local_safety.py")}},
+            for name in (("osm_packages.py", "scenario_registry.py", "local_safety.py") +
+                         (("runtime_images.py",) if any(c.get('image_bindings') for c in scenario['charts']) else ()))}},
         "toolchain": {"helm": helm_run(["version", "--short"]).strip(),
                       "python": platform.python_version(), "zlib": zlib.ZLIB_RUNTIME_VERSION, "pyyaml": yaml.__version__,
                       "compression": "gzip-deflate-9", "archive": "USTAR"},
@@ -400,7 +410,10 @@ def compare_provenance(stored_bytes, expected_bytes):
         if not isinstance(generator, dict) or set(generator) != {'version', 'implementation_sha256'} or generator['version'] != '2':
             raise PackageError('Unknown provenance generator schema/version')
         implementation = generator['implementation_sha256']
-        if not isinstance(implementation, dict) or set(implementation) != {'local_safety.py', 'osm_packages.py', 'scenario_registry.py'} or not all(digest(v) for v in implementation.values()):
+        required = {'local_safety.py', 'osm_packages.py', 'scenario_registry.py'}
+        if (not isinstance(implementation, dict) or set(implementation) not in (required, required | {'runtime_images.py'})
+                or set(implementation) != set(expected.get('generator', {}).get('implementation_sha256', {}))
+                or not all(digest(v) for v in implementation.values())):
             raise PackageError('Missing or unknown generator implementation schema')
         toolchain = provenance['toolchain']
         if not isinstance(toolchain, dict) or set(toolchain) != {'helm', 'python', 'zlib', 'pyyaml', 'compression', 'archive'} or not all(isinstance(v, str) and v for v in toolchain.values()):
@@ -487,6 +500,10 @@ def check_helm(root, scenario, expected):
         for chart in scenario["charts"]:
             source = repository_path(root, chart["source"])
             profiles = [repository_path(root, p) for p in chart["values_files"]]
+            if chart.get('image_bindings'):
+                image_values = temporary / (chart['kdu'] + '-images.json')
+                image_values.write_bytes(json_bytes(chart_values(root, chart)))
+                profiles.append(image_values)
             canonical = render(source, chart["release_name"], profiles)
             prefix = f"{knf}/helm-chart-v3s/{chart['kdu']}/"
             destination = temporary / chart["kdu"]
@@ -496,6 +513,7 @@ def check_helm(root, scenario, expected):
                     file.parent.mkdir(parents=True, exist_ok=True)
                     file.write_bytes(data)
             generated = render(destination, chart["release_name"])
+            verify_rendered(root, chart, generated)
             if canonical != generated:
                 raise PackageError(f"{scenario['key']}/{chart['kdu']}: baked profile changes Helm rendering")
             deployments = [d for d in generated if d["kind"] == "Deployment"]
@@ -539,6 +557,8 @@ def source_snapshot(root, scenarios, destination):
     """Capture bytes once; reject changes during capture, then use only the copy."""
     root, destination = Path(root), Path(destination)
     inputs = {"config/scenarios.json": (root / "config/scenarios.json").read_bytes()}
+    if any(c.get('image_bindings') for s in scenarios for c in s['charts']):
+        inputs[LOCK_PATH] = repository_path(root, LOCK_PATH).read_bytes()
     for scenario in scenarios:
         for chart in scenario["charts"]:
             tree = read_tree(repository_path(root, chart["source"]))
@@ -596,9 +616,23 @@ def _build_locked(root, output, scenarios):
                 if prior_payload == payload:
                     if provenance_name not in previous:
                         raise PackageError('Missing required stored provenance')
-                    compare_provenance(previous[provenance_name], expected[provenance_name])
-                    # Keep the original audit record and publication identity.
-                    combined[provenance_name] = previous[provenance_name]
+                    # Explicit prepare may capture a changed canonical input
+                    # whose rendered/archive bytes happen to stay identical.
+                    # Validate stored schema and payload hashes before allowing
+                    # a new source receipt; validation itself remains strict.
+                    compare_provenance(previous[provenance_name], previous[provenance_name])
+                    prior_record = json.loads(previous[provenance_name])
+                    new_record = json.loads(expected[provenance_name])
+                    source_fields = {'source_inputs', 'profile_sha256', 'scenario_sha256'}
+                    source_changed = any(prior_record[k] != new_record[k] for k in source_fields)
+                    comparison = dict(prior_record)
+                    if source_changed:
+                        for field in source_fields:
+                            comparison[field] = new_record[field]
+                    compare_provenance(json_bytes(comparison), expected[provenance_name])
+                    if not source_changed:
+                        # Keep the original audit record and publication identity.
+                        combined[provenance_name] = previous[provenance_name]
             combined = previous | combined
         digest = tree_digest(combined)
         releases = output / "releases"

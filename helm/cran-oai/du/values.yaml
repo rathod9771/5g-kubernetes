@@ -1,7 +1,5 @@
-image:
-  repository: oaisoftwarealliance/oai-gnb
-  tag: 2026.w25
-  pullPolicy: IfNotPresent
+# Image identity is supplied by config/reference-versions.json.
+image: {}
 
 du:
   mcc: "208"

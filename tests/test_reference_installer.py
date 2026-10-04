@@ -116,7 +116,7 @@ class ReferenceInstallerTests(unittest.TestCase):
     def test_installer_dependency_order_without_lifecycle_execution(self):
         with tempfile.TemporaryDirectory() as t:
             installer=Installer({'RUNTIME_DIR':t})
-            names=['kubernetes','infrastructure','osm','core','subscribers','baseline','monitoring','services']
+            names=['kubernetes','ready_ran_image','infrastructure','osm','core','subscribers','baseline','monitoring','services']
             calls=[]
             installer.snapshot=lambda: None
             for name in names:
