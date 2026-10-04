@@ -38,7 +38,10 @@ metadata:
     ran-type: {{ .Values.ranType | default "cran" }}
     component: cu
 spec:
+  {{- $autoscaling := .Values.autoscaling | default dict }}
+  {{- if not (and (eq .Values.ranType "vcran") ($autoscaling.enabled | default false)) }}
   replicas: 1
+  {{- end }}
   selector:
     matchLabels:
       app: {{ .Values.fullname }}

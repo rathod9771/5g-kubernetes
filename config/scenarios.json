@@ -460,7 +460,7 @@
       "source_decision": "Shared CU/DU implementation and profiles from commit 6dbf6b2; older monolithic/forked packages are preserved as audit references. vCRAN intentionally has no HPA.",
       "validation_policy": {
         "split_ran": true,
-        "forbid_hpa": true
+        "forbid_hpa": false
       }
     },
     {

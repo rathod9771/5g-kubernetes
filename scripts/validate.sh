@@ -136,6 +136,29 @@ else
 fi
 print_check "RAN (gNB <-> AMF)" "${RESULT[ran]}"
 
+# Optional vC-RAN HPA capability is separate from transport health. Rendering
+# an HPA does not prove the Resource Metrics API or its controller is working.
+VCRAN_AUTOSCALING=""
+if [ -n "$CORE_NS" ]; then
+  VCRAN_HPAS="$(k_ get hpa -n "$CORE_NS" -l ran-type=vcran,component=cu -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)"
+  if [ -n "$VCRAN_HPAS" ]; then
+    VCRAN_AUTOSCALING="AVAILABLE"
+    if ! k_ get --raw /apis/metrics.k8s.io/v1beta1 >/dev/null 2>&1; then
+      VCRAN_AUTOSCALING="UNAVAILABLE"
+      evidence "vC-RAN HPA requires a working metrics.k8s.io Resource Metrics API"
+    else
+      for hpa in $VCRAN_HPAS; do
+        SCALING_ACTIVE="$(k_ get hpa "$hpa" -n "$CORE_NS" -o jsonpath='{.status.conditions[?(@.type=="ScalingActive")].status}' 2>/dev/null)"
+        if [ "$SCALING_ACTIVE" != "True" ]; then
+          VCRAN_AUTOSCALING="UNAVAILABLE"
+          evidence "vC-RAN HPA $hpa has not confirmed ScalingActive=True"
+        fi
+      done
+    fi
+    print_check "vC-RAN HPA capability" "$VCRAN_AUTOSCALING"
+  fi
+fi
+
 # ---- 10/11/12/13. UE registration + PDU session ----
 if [ -n "$CORE_NS" ]; then
   UE_POD="$(k_ get pods -n "$CORE_NS" -l app=oai-nr-ue --no-headers 2>/dev/null | awk '{print $1; exit}')"
@@ -227,6 +250,7 @@ if [ "${1:-}" = "--kv" ] || [ "${2:-}" = "--kv" ]; then
   echo "STATUS_KV:OSM=${RESULT[osm_nbi]:-UNKNOWN}"
   echo "STATUS_KV:CORE=${RESULT[core]:-UNKNOWN}"
   echo "STATUS_KV:RAN=${RESULT[ran]:-UNKNOWN}"
+  echo "STATUS_KV:VCRAN_AUTOSCALING=${VCRAN_AUTOSCALING}"
   echo "STATUS_KV:UE_STACK=${RESULT[ue_stack]:-UNKNOWN}"
   echo "STATUS_KV:UE_REGISTRATION=${RESULT[ue_reg]:-UNKNOWN}"
   echo "STATUS_KV:PDU_SESSION=${RESULT[ue_pdu]:-UNKNOWN}"

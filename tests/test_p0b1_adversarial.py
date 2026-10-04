@@ -402,6 +402,13 @@ class AdversarialTests(unittest.TestCase):
                             self.assertEqual(after_container['image'],'localhost/5g-kubernetes/srsran:25.04.0-11c9bbabb6')
                             self.assertEqual(after_container['imagePullPolicy'],'Never')
                             before_container.update(image=after_container['image'],imagePullPolicy='Never')
+                            if scenario['key']=='vcran-srsran' and chart['kdu']=='cu':
+                                self.assertEqual(before_container['resources']['requests']['memory'],'256Mi')
+                                self.assertEqual(before_container['resources']['limits']['memory'],'512Mi')
+                                expected={'requests':{'cpu':'250m','memory':'512Mi'},'limits':{'cpu':'500m','memory':'1Gi'}}
+                                self.assertEqual(after_container['resources'],expected)
+                                before_container['resources']=expected
+
                         elif scenario['key']=='fran':
                             self.assertEqual(before_container['image'],'nginx:alpine')
                             self.assertEqual(after_container['image'],'docker.io/library/nginx@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2')
