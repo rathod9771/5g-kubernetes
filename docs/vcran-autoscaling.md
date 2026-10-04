@@ -1,11 +1,20 @@
 # vC-RAN/srsRAN resources and optional HPA
 
-Precision kernel evidence showed both `srscu` and `srsdu` exhausting their
-1Gi memory cgroups at roughly 1,045,000 kB anonymous RSS. The canonical vC-RAN
-CU now requests 250m CPU / 1Gi memory and limits 500m CPU / 2Gi memory.
-DU stays at one replica, requests 500m / 1Gi and limits 1 CPU / 2Gi.
-The `ran-type: vcran` metadata identifies this virtualized profile. C-RAN and
-Cloud-RAN resource/configuration defaults are unchanged.
+Precision runtime evidence showed the pinned `srscu` and `srsdu` processes
+consuming memory up to their cgroup ceilings and being OOM-killed with hard
+limits of 512Mi, 1Gi and 2Gi, while the node had ample free memory. The same
+image and startup implementation worked as C-RAN without a resource block.
+Hard memory limits are therefore intentionally omitted for vC-RAN/srsRAN.
+This observation does not prove that cgroup limits size the allocator: the
+pinned source initializes a default 2GiB byte-buffer pool per process before
+other overhead, so lower ceilings can kill initialization partway through.
+
+CU requests 250m CPU / 1Gi memory and limits CPU to 500m. DU requests 500m CPU /
+1Gi memory and limits CPU to 1. Both retain explicit scheduling requests,
+existing monitoring and fixed default replica counts. A memory request is a
+scheduling reservation, not a usage cap; node-level memory capacity must support
+the actual working set. The `ran-type: vcran` metadata identifies this profile.
+C-RAN and Cloud-RAN resource/configuration defaults are unchanged.
 
 The CU profile has an explicit optional policy:
 
@@ -55,7 +64,7 @@ This optional capability status does not change established RAN transport health
 A disabled profile has no HPA status line.
 
 **Recommended Precision setting: keep enabled=false, min=max=1.** First validate
-the 2Gi envelope under real operation; do not enable extra CU/DU replicas.
+the memory working set under real operation; do not enable extra CU/DU replicas.
 Enabling later requires an explicit profile change and normal deterministic
 package preparation/catalog synchronization before deploying the new package.
 Edit `helm/cran-srsran/cu/values-vcran.yaml`, not preserved legacy package files.

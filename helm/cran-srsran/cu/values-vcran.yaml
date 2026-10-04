@@ -1,13 +1,14 @@
 fullname: vcran-srsran-cu
 ranType: vcran
-# Virtualized, resource-isolated CU. Precision startup RSS exhausted even the previous 1Gi limit.
+# Virtualized CU: keep scheduling requests and CPU isolation.
+# Omit hard memory ceilings: pinned srsRAN OOMed at 512Mi, 1Gi and 2Gi
+# on Precision despite ample node memory (see docs/vcran-autoscaling.md).
 resources:
   requests:
     cpu: "250m"
     memory: "1Gi"
   limits:
     cpu: "500m"
-    memory: "2Gi"
 # Optional Kubernetes HPA policy; disabled until Resource Metrics API is available.
 # One replica is the safe envelope for the existing stateful F1/NGAP CU.
 autoscaling:

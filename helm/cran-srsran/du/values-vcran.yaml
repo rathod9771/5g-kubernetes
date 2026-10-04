@@ -2,11 +2,11 @@ fullname: vcran-srsran-du
 cuFullname: vcran-srsran-cu
 ranType: vcran
 # Fixed one-replica DU: RF/F1 state is not validated for horizontal scaling.
-# CPU/memory isolation remains explicit; CU HPA does not scale this DU.
+# Keep memory requests and CPU isolation; omit the OOM-inducing memory ceiling.
+# CU HPA does not scale this DU (see docs/vcran-autoscaling.md).
 resources:
   requests:
     cpu: "500m"
     memory: "1Gi"
   limits:
     cpu: "1"
-    memory: "2Gi"
