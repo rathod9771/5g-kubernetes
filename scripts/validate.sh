@@ -92,30 +92,45 @@ print_check "5G Core (open5gs)" "${RESULT[core]}"
 
 # ---- 8/9. RAN healthy + gNB connected to AMF ----
 if [ -n "$CORE_NS" ]; then
-  # RAN pod naming varies by scenario: monolithic gNB charts use
-  # "*-gnb", H-CRAN uses "*-macro"/"*-small", O-RAN/vCRAN split uses
-  # "*-cu"/"*-du". Match any of them rather than assuming one pattern.
-  GNB_POD="$(k_ get pods -n "$CORE_NS" --no-headers 2>/dev/null | grep -E -- '-gnb-|-macro-|-small-|-cu-|-du-' | awk '{print $1; exit}')"
-  if [ -n "$GNB_POD" ]; then
-    GNB_RUNNING="$(k_ get pod "$GNB_POD" -n "$CORE_NS" -o jsonpath='{.status.phase}' 2>/dev/null)"
-    if [ "$GNB_RUNNING" = "Running" ]; then
-      SCTP_STATE="$(k_ exec -n "$CORE_NS" "$GNB_POD" -- ss -a 2>/dev/null | grep ":38412" | head -1)"
-      if grep -q "ESTAB" <<< "$SCTP_STATE"; then
-        RESULT[ran]="READY"
-        evidence "Live SCTP association to AMF: ${SCTP_STATE}"
-      elif [ -n "$SCTP_STATE" ]; then
-        RESULT[ran]="DEGRADED"
-        evidence "SCTP socket to AMF exists but not ESTAB: ${SCTP_STATE}"
+  SRSRAN_HEALTH="$(k_ get pods -n "$CORE_NS" -o json 2>/dev/null |
+    python3 -B "${REPO_ROOT}/scripts/ran_health.py" --namespace "$CORE_NS" --kubeconfig "$OSM_KUBECONFIG_PATH")"
+  SRSRAN_RESULT="${SRSRAN_HEALTH%%$'\n'*}"
+  case "$SRSRAN_RESULT" in
+    READY|DEGRADED|DOWN)
+      RESULT[ran]="$SRSRAN_RESULT"
+      evidence "${SRSRAN_HEALTH#*$'\n'}"
+      ;;
+    NOT_APPLICABLE)
+      # RAN pod naming varies by scenario: monolithic gNB charts use
+      # "*-gnb", H-CRAN uses "*-macro"/"*-small", O-RAN/vCRAN split uses
+      # "*-cu"/"*-du". Match any of them rather than assuming one pattern.
+      GNB_POD="$(k_ get pods -n "$CORE_NS" --no-headers 2>/dev/null | grep -E -- '-gnb-|-macro-|-small-|-cu-|-du-' | awk '{print $1; exit}')"
+      if [ -n "$GNB_POD" ]; then
+        GNB_RUNNING="$(k_ get pod "$GNB_POD" -n "$CORE_NS" -o jsonpath='{.status.phase}' 2>/dev/null)"
+        if [ "$GNB_RUNNING" = "Running" ]; then
+          SCTP_STATE="$(k_ exec -n "$CORE_NS" "$GNB_POD" -- ss -a 2>/dev/null | grep ":38412" | head -1)"
+          if grep -q "ESTAB" <<< "$SCTP_STATE"; then
+            RESULT[ran]="READY"
+            evidence "Live SCTP association to AMF: ${SCTP_STATE}"
+          elif [ -n "$SCTP_STATE" ]; then
+            RESULT[ran]="DEGRADED"
+            evidence "SCTP socket to AMF exists but not ESTAB: ${SCTP_STATE}"
+          else
+            RESULT[ran]="DEGRADED"
+            evidence "No SCTP association to AMF (port 38412) found — known failure mode after a core redeploy (see docs/troubleshooting.md)"
+          fi
+        else
+          RESULT[ran]="DOWN"
+        fi
       else
-        RESULT[ran]="DEGRADED"
-        evidence "No SCTP association to AMF (port 38412) found — known failure mode after a core redeploy (see docs/troubleshooting.md)"
+        RESULT[ran]="NOT CONFIGURED"
       fi
-    else
-      RESULT[ran]="DOWN"
-    fi
-  else
-    RESULT[ran]="NOT CONFIGURED"
-  fi
+      ;;
+    *)
+      RESULT[ran]="DEGRADED"
+      evidence "srsRAN runtime health inspection failed"
+      ;;
+  esac
 else
   RESULT[ran]="NOT CONFIGURED"
 fi
