@@ -770,7 +770,7 @@ async function deployRAN(key,name,sub){
     if(d.status==="success"){
       btn.className="deploy-btn deployed";
       btn.textContent="✓ Deployed";
-      showDeployedPanel(key,name,sub);
+      showDeployedPanel(d.ran,name,sub);
     }else{
       btn.className="deploy-btn";
       btn.textContent="▶ Deploy";
@@ -787,7 +787,7 @@ async function deployRAN(key,name,sub){
 }
 
 function showDeployedPanel(key,name,sub){
-  const podLabel=lastDeployedCombo || key;
+  const podLabel=key;
   const m=document.getElementById("main");
   m.innerHTML=`<div class="content-area">
     <div class="panel ran-client-panel" id="ran-client-panel">
@@ -1468,9 +1468,9 @@ async function runDeployCombo(comboKey,name,sub){
     if(d.status==="success"){
       btn.className="deploy-btn deployed";
       btn.textContent="\u2713 Deployed";
-      lastDeployedCombo=comboKey;
+      lastDeployedCombo=d.ran;
       verifyClean();
-      showComboDeployedPanel(comboKey,name,sub,selectedStack.key);
+      showComboDeployedPanel(d.ran,name,sub,selectedStack.key);
     }else{
       btn.className="deploy-btn";
       btn.textContent="\u25b6 Deploy";
@@ -1485,26 +1485,10 @@ async function runDeployCombo(comboKey,name,sub){
 }
 
 function showComboDeployedPanel(comboKey,name,sub,stackKey){
-  const podLabel=comboKey;
-  const m=document.getElementById("main");
-  m.innerHTML=`<div class="content-area">
-    <div class="panel">
-      <div class="panel-hdr">
-        <div style="display:flex;align-items:center">
-          <div><div class="panel-title">${name}</div><div class="panel-sub">${sub}</div></div>
-          <div class="panel-status ok"><span class="pulse"></span>Running on Kubernetes</div>
-        </div>
-        <button class="close-btn" onclick="blank()">\u2715</button>
-      </div>
-      ${wfHTML(["done","done","done","done","done"])}
-      ${tabsHTML(podLabel,stackKey,"")}
-      <div class="panel-body" id="pbody">
-        <div class="log-terminal" id="lterm"><div class="loading-txt">Loading live logs...</div></div>
-      </div>
-    </div>
-  </div>`;
-  startLiveLogs(podLabel,"lterm","ran");
+  // The successful deployment's canonical key identifies every client tab.
+  showDeployedPanel(comboKey,name,sub);
 }
+
 </script>
 
 <script>
@@ -1575,14 +1559,16 @@ const COMBO_DISPLAY = {
 };
 async function restoreDeployedState(){
   try{
-    const r = await fetch("/api/verify-clean");
+    const [r, catalogResponse] = await Promise.all([fetch("/api/verify-clean"), fetch("/api/scenarios")]);
     const d = await r.json();
+    const catalog = await catalogResponse.json();
     if(d.active_combos && d.active_combos.length === 1){
       const combo = d.active_combos[0];
+      const scenario = catalog.scenarios.find(s => s.key === combo);
       const disp = COMBO_DISPLAY[combo];
-      if(disp && typeof showDeployedPanel === "function"){
+      if(scenario && typeof showDeployedPanel === "function"){
         lastDeployedCombo = combo;  // arm the already-deployed guard
-        showDeployedPanel(disp[0], disp[1], disp[2]);
+        showDeployedPanel(scenario.key, disp ? disp[1] : scenario.name, disp ? disp[2] : scenario.name);
       }
     }
   }catch(e){ console.log("state restore failed", e); }

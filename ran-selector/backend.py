@@ -320,6 +320,8 @@ def _live_processes(p):
 @app.route("/api/runtime/<key>")
 def runtime(key):
     """Single live source for logs/process/status panels."""
+    if key in ("cran", "vcran", "cloudran"):
+        return jsonify({"error": "Architecture-only key; provide a canonical scenario key from /api/scenarios"}), 400
     if not _known_component(key):
         return jsonify({"error": "Unknown component"}), 400
     targets = _runtime_targets(key)
@@ -601,6 +603,8 @@ def _client_events(key):
 
 @app.route("/api/events/<key>")
 def client_events(key):
+    if key in ("cran", "vcran", "cloudran"):
+        return jsonify({"error": "Architecture-only key; provide a canonical scenario key from /api/scenarios"}), 400
     if not _known_component(key):
         return jsonify({"error": "Unknown component"}), 400
     return jsonify(_client_events(ALIASES.get(key, key)))
@@ -973,7 +977,7 @@ def _deploy_verified(key, registry, entries, scen, scenario, context, identities
     if scen.get("additive"):
         config["osm"].setdefault("additive_instances", {})[key] = ns_id
     else:
-        config["osm"].update(active_instance_id=ns_id, active_scenario=key)
+        config["osm"].update(active_instance_id=ns_id, active_scenario=key, active_operation_id=op_id)
         config["active"] = key
     config["osm"].pop("pending_instance", None)
     atomic_write(_state_path(), yaml.safe_dump(config).encode())
