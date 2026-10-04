@@ -86,6 +86,22 @@ class VCRANAutoscalingTests(unittest.TestCase):
             self.assertEqual(self.deployment(docs)['spec']['replicas'],1)
             self.assertFalse(any(d['kind']=='HorizontalPodAutoscaler' for d in docs))
 
+    def test_cloudran_memory_requests_cpu_limits_and_profile_identity(self):
+        for role,expected in [('cu',{'requests':{'cpu':'500m','memory':'512Mi'},'limits':{'cpu':'1'}}),
+                              ('du',{'requests':{'cpu':'1','memory':'1Gi'},'limits':{'cpu':'2'}})]:
+            docs=self.render(scenario='cloudran-srsran',role=role)
+            deployment=self.deployment(docs)
+            resources=deployment['spec']['template']['spec']['containers'][0]['resources']
+            self.assertEqual(resources,expected)
+            self.assertNotIn('memory',resources['limits'])
+            self.assertEqual(deployment['metadata']['name'],'cloud-ran-srsran-'+role)
+            self.assertEqual(deployment['spec']['template']['metadata']['labels']['ran-type'],'cloud-ran')
+            self.assertEqual(deployment['spec']['replicas'],1)
+            self.assertFalse(any(d['kind']=='HorizontalPodAutoscaler' for d in docs))
+            self.assertNotEqual(resources,self.deployment(self.render(role=role))['spec']['template']['spec']['containers'][0]['resources'])
+            self.assertNotIn('resources',self.deployment(self.render(scenario='cran-srsran',role=role))['spec']['template']['spec']['containers'][0])
+            self.assertEqual(self.render(scenario='cloudran-srsran',role=role,command='lint').returncode,0)
+
     def status(self,mode):
         text=(ROOT/'scripts/validate.sh').read_text()
         block=text[text.index('# Optional vC-RAN HPA'):text.index('# ---- 10/11/12/13.')]

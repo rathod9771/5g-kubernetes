@@ -1,9 +1,10 @@
 fullname: cloud-ran-srsran-cu
 ranType: cloud-ran
+# Keep scheduling requests and CPU isolation; omit hard memory ceilings.
+# Precision Cloud-RAN CU repeatedly OOMed with the pinned image at its 1Gi ceiling.
 resources:
   requests:
     cpu: "500m"
     memory: "512Mi"
   limits:
     cpu: "1"
-    memory: "1Gi"

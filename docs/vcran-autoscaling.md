@@ -14,7 +14,8 @@ CU requests 250m CPU / 1Gi memory and limits CPU to 500m. DU requests 500m CPU /
 existing monitoring and fixed default replica counts. A memory request is a
 scheduling reservation, not a usage cap; node-level memory capacity must support
 the actual working set. The `ran-type: vcran` metadata identifies this profile.
-C-RAN and Cloud-RAN resource/configuration defaults are unchanged.
+C-RAN is unchanged. Cloud-RAN/srsRAN uses the same request-only memory policy
+with its distinct CPU/request envelope, documented below.
 
 The CU profile has an explicit optional policy:
 
@@ -69,3 +70,21 @@ Enabling later requires an explicit profile change and normal deterministic
 package preparation/catalog synchronization before deploying the new package.
 Edit `helm/cran-srsran/cu/values-vcran.yaml`, not preserved legacy package files.
 No Kubernetes resources or OSM instances are changed by the local chart tests.
+
+## Cloud-RAN/srsRAN memory policy
+
+Precision subsequently showed Cloud-RAN `srscu` repeatedly OOMKilled around
+1.045GiB RSS with its existing 1Gi hard limit, preventing stable CU/DU readiness
+and causing dashboard deployment to time out after 200 seconds. On the same
+host and pinned image, removing vC-RAN memory ceilings had already produced
+CU/DU 1/1 Running, NGAP and F1 SCTP ST=3, and gNB READY. These are observed
+vC-RAN results, not a claim of Cloud-RAN acceptance after this change.
+
+Cloud-RAN/srsRAN therefore also omits hard memory limits for CU and DU. Its
+existing requests and CPU limits remain: CU 500m/512Mi requested, CPU limit 1;
+DU 1 CPU/1Gi requested, CPU limit 2. Cloud-RAN keeps its distinct deployment
+names and `ran-type: cloud-ran` metadata, fixed replicas and existing no-HPA
+behavior. No allocator, F1/NGAP, image, network or lifecycle settings change.
+Memory requests are scheduling hints, not limits on the actual working set;
+monitor actual memory use and ensure sufficient node capacity. Cloud-RAN
+runtime stability still needs validation on Precision using the new package.

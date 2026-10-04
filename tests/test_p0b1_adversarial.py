@@ -413,6 +413,14 @@ class AdversarialTests(unittest.TestCase):
                                 expected={'requests':{'cpu':'500m','memory':'1Gi'},'limits':{'cpu':'1'}}
                                 self.assertEqual(after_container['resources'],expected)
                                 before_container['resources']=expected
+                            if scenario['key']=='cloudran-srsran':
+                                expected=({'requests':{'cpu':'500m','memory':'512Mi'},'limits':{'cpu':'1'}}
+                                          if chart['kdu']=='cu' else
+                                          {'requests':{'cpu':'1','memory':'1Gi'},'limits':{'cpu':'2'}})
+                                historical={**expected,'limits':dict(expected['limits'],memory='1Gi' if chart['kdu']=='cu' else '2Gi')}
+                                self.assertEqual(before_container['resources'],historical)
+                                self.assertEqual(after_container['resources'],expected)
+                                before_container['resources']=expected
 
                         elif scenario['key']=='fran':
                             self.assertEqual(before_container['image'],'nginx:alpine')
