@@ -247,3 +247,23 @@ kubectl -n srsran-image-acceptance get pod local-image-check -o jsonpath='{.spec
 Success proves the exact rendered name starts a container with `Never`; this
 check does not claim RAN radio/CPU acceptance. Delete only this test namespace
 when finished: `kubectl delete namespace srsran-image-acceptance`.
+
+### Adopt a completed pending deployment after a client timeout
+
+A client timeout does not prove OSM instantiation failed. If the exact recorded
+pending operation completed and its NS is READY/running, use the separate
+`POST /api/adopt-pending` endpoint with both recorded identifiers:
+
+```json
+{"instance_id":"<recorded pending id>","operation_id":"<recorded pending operation>"}
+```
+
+The endpoint takes the shared lifecycle lock, validates current runtime context,
+and checks the NS/operation IDs, scenario-owned NS name, instantiate operation
+type and COMPLETED/READY/running states. It performs no OSM lifecycle action.
+The atomic write promotes the pending scenario/instance to active, stores
+`osm.active_operation_id`, and removes pending state. Core identity and context
+remain intact. Repeated identical requests revalidate OSM and return
+`already_adopted: true` without rewriting state. Stale or conflicting requests
+are rejected. `/api/reconcile-pending` continues to handle failed-instance
+cleanup only; successful operations are never terminated by adoption.

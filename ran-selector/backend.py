@@ -794,6 +794,75 @@ def _verify_ready_image(scenario):
         verify_imported_nodes(nodes, image_policy()['components']['srsran'])
 
 
+@app.route('/api/adopt-pending', methods=['POST'])
+def adopt_pending():
+    """Adopt only a recorded, successfully instantiated NS; never run lifecycle calls."""
+    body = request.get_json(silent=True)
+    if (not isinstance(body, dict) or set(body) != {'instance_id', 'operation_id'} or
+            any(not isinstance(v, str) or not v for v in body.values())):
+        return jsonify({'error': 'Provide exactly the recorded instance_id and operation_id'}), 400
+    try:
+        g.runtime_state_path = _state_path()
+        with exclusive_lock(Path(g.runtime_state_path).parent / '.lifecycle.lock'):
+            cfg, context, _ = runtime_preflight()
+            g.runtime_config, g.runtime_context = cfg, context
+            if CONFIG_FILE == DEFAULT_STATE_PATH and cfg['ACTIVE_STATE_PATH'] != g.runtime_state_path:
+                raise ConfigError('Runtime state path changed during adoption')
+            registry = load_registry()
+            state = yaml.safe_load(Path(_state_path()).read_text())
+            validate_state(state, registry, context)
+            with osm_client.runtime_session(cfg):
+                already_adopted = _adopt_successful_pending(state, registry, body['instance_id'], body['operation_id'])
+        return jsonify({'status': 'success', 'adopted_instance_id': body['instance_id'],
+                        'already_adopted': already_adopted})
+    except (OSError, ValueError, RuntimeError, CatalogError) as error:
+        return jsonify({'error': str(error)}), 409
+
+
+def _adopt_successful_pending(state, registry, requested_id, requested_operation):
+    osm = state['osm']
+    pending = osm.get('pending_instance')
+    already_adopted = pending is None
+    if already_adopted:
+        if (osm.get('active_instance_id') != requested_id or
+                osm.get('active_operation_id') != requested_operation or
+                state.get('active') != osm.get('active_scenario')):
+            raise ValueError('No exact recorded pending/adopted instance and operation pair')
+        key = osm['active_scenario']
+    else:
+        if (pending.get('id') != requested_id or pending.get('operation') != requested_operation or
+                pending.get('stage') or pending.get('termination_operation')):
+            raise ValueError('Adoption must match the exact pending instance and instantiate operation')
+        if state.get('active', 'none') != 'none' or osm.get('active_instance_id') or osm.get('active_scenario'):
+            raise ValueError('Active state conflicts with pending adoption')
+        key = pending['scenario']
+    protected = {osm.get('core_instance_id'), *osm.get('additive_instances', {}).values()}
+    if requested_id in protected:
+        raise ValueError('Pending identity overlaps a core/additive instance; refusing adoption')
+    scenario = next((s for s in registry['scenarios'] if s['key'] == key), None)
+    if not scenario or scenario['generation_status'] != 'ready' or scenario.get('additive'):
+        raise ValueError('Pending scenario is not an unambiguous ready replacement scenario')
+    operation = osm_client.get_operation(requested_operation)
+    instance = osm_client.get_ns_instance(requested_id)
+    if (not isinstance(operation, dict) or not isinstance(instance, dict) or
+            operation.get('_id', operation.get('id')) != requested_operation or
+            instance.get('_id', instance.get('id')) != requested_id or
+            operation.get('nsInstanceId') != requested_id or
+            str(operation.get('lcmOperationType', '')).upper() != 'INSTANTIATE' or
+            instance.get('name', instance.get('nsName')) != 'ran-' + key):
+        raise ValueError('OSM identities, instantiate operation or owned NS name do not match adoption')
+    if (operation.get('operationState') != 'COMPLETED' or instance.get('nsState') != 'READY' or
+            instance.get('operational-status') != 'running'):
+        raise ValueError('Adoption requires operation COMPLETED and NS READY/running')
+    if not already_adopted:
+        state['active'] = key
+        osm.update(active_instance_id=requested_id, active_scenario=key,
+                   active_operation_id=requested_operation)
+        osm.pop('pending_instance')
+        atomic_write(_state_path(), yaml.safe_dump(state).encode())
+    return already_adopted
+
+
 @app.route('/api/reconcile-pending', methods=['POST'])
 def reconcile_pending():
     """Explicit failed-instance cleanup; never selects an instance by guessed ID."""

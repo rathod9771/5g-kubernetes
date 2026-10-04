@@ -14,7 +14,7 @@ def validate_state(state, registry, context=None):
     def identity(value):
         if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value):
             raise ConfigError('Invalid runtime instance/operation identity')
-    for field in ('active_instance_id', 'core_instance_id'):
+    for field in ('active_instance_id', 'core_instance_id', 'active_operation_id'):
         if field in osm:
             identity(osm[field])
     if 'active_scenario' in osm:
