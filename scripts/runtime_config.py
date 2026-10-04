@@ -248,6 +248,12 @@ def load_config(root=ROOT, environ=None, home=None, network=False, require=(), q
             fallback[field] = str(Path(cfg['RUNTIME_DIR']) / 'actions.log')
         value = cfg[field] or fallback.get(field, '')
         cfg[field] = str(safe_path(value, root, home)) if value else ''
+    # Installer-owned target CA is shared by all clients, including those loading
+    # global.env directly instead of the installer/service configuration snapshot.
+    if not cfg['OSM_CA_CERT_PATH']:
+        ca_path = Path(cfg['RUNTIME_DIR']) / 'osm-ca.crt'
+        if ca_path.exists():
+            cfg['OSM_CA_CERT_PATH'] = str(safe_path(str(ca_path), root, home))
     for field in ['SRSRAN_BINARY', 'IMS_CONFIG_PATH', 'IMS_MYSQL_DATA_PATH']:
         if cfg[field] and not Path(cfg[field]).exists():
             raise ConfigError(field + ' must reference an existing external dependency')

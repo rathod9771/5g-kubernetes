@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import secrets
+import re
+import ssl
 import shutil
 import subprocess
 import sys
@@ -417,6 +419,29 @@ class Installer:
         if not matches():
             raise ConfigError('OSM LCM reference GitOps configuration missing after reconciliation; readiness refused')
 
+    def export_osm_ca(self):
+        """Export only the target cluster's public CA; never request its private key."""
+        result = self.kubectl('get', 'secret', 'osm-ca', '-n', self.cfg['OSM_NAMESPACE'],
+                              '-o', 'jsonpath={.data.tls\\.crt}',
+                              context='OSM TLS trust: read osm-ca tls.crt', retry_network=True)
+        try:
+            certificate = base64.b64decode(result.stdout.strip(), validate=True)
+            # A certificate-only PEM bundle rejects keys and unrelated Secret data.
+            pattern = rb'(?:\s*-----BEGIN CERTIFICATE-----\s+[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----\s*)+'
+            if not re.fullmatch(pattern, certificate):
+                raise ValueError()
+            trust = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            trust.load_verify_locations(cadata=certificate.decode('ascii'))
+            if not trust.get_ca_certs():
+                raise ValueError()
+        except (ValueError, UnicodeError, ssl.SSLError):
+            raise ConfigError('OSM TLS trust: osm-ca tls.crt is missing or invalid public certificate material') from None
+        ca_path = self.directory / 'osm-ca.crt'
+        atomic_write(ca_path, certificate)
+        self.cfg['OSM_CA_CERT_PATH'] = str(ca_path.resolve())
+        self.snapshot()
+        return ca_path
+
     def osm(self):
         chart = self.osm_source()
         self.prepare_management_credentials()
@@ -425,12 +450,7 @@ class Installer:
         self.validate_lcm_management(chart)
         self.kubectl('wait', 'certificate', '--all', '-n', self.cfg['OSM_NAMESPACE'], '--for=condition=Ready', '--timeout=600s')
         self.apply(api_ingress(self.cfg))
-        ca = self.kjson('get', 'secret', 'osm-ca', '-n', self.cfg['OSM_NAMESPACE'])['data']['tls.crt']
-        certificate = base64.b64decode(ca, validate=True)
-        ca_path = self.directory / 'osm-ca.crt'
-        atomic_write(ca_path, certificate)
-        self.cfg['OSM_CA_CERT_PATH'] = str(ca_path)
-        self.snapshot()
+        ca_path = self.export_osm_ca()
         self.catalog = Catalog(self.cfg['OSM_HOST'], ca_file=str(ca_path))
         try:
             self.authenticate_ready(self.cfg['OSM_PASSWORD'])
