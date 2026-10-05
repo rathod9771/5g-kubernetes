@@ -28,6 +28,7 @@ const sandbox={document,window:{},console,AbortController,DOMException,Date,Prom
  setInterval:f=>{const id=++next;intervals.set(id,f);return id;},clearInterval:id=>intervals.delete(id),
  setTimeout:f=>{const id=++next;timeouts.set(id,f);return id;},clearTimeout:id=>timeouts.delete(id),
  fetch:async(url)=>{calls.push(url);if(fail)throw Error('synthetic failure');return {ok:true,json:async()=>
+ url.startsWith('/api/embed-policy/')?{allowed:true,reason:'allowed'}:
  url==='/api/config'?{osm:'https://osm.invalid',rancher:'https://rancher.invalid',grafana:'https://grafana.invalid',prometheus:'https://prometheus.invalid'}:
  url==='/api/osm/status'?{pods:{total:1,ready:1},flux:[]}:
  url==='/api/ue-status'?{pod:'oai-nr-ue-cran-hash',registered:true,pdu_session:true,tun:'10.45.0.2'}:
@@ -68,7 +69,7 @@ for(const key of ['osm','rancher','grafana','prometheus']){
  const p=W.panels.get(key),frame=p.body.querySelector('iframe'),src=frame.src,body=p.body;
  W.minimizePanel(key);const timers=intervals.size;calls=[];await W.refreshPanel(key);
  assert.equal(p.body,body);assert(p.minimized);assert.equal(frame.src,src);assert.equal(intervals.size,timers);
- assert.deepEqual(calls,key==='osm'?['/api/osm/status']:[]);
+ assert.deepEqual(calls,key==='osm'?['/api/osm/status','/api/embed-policy/osm','https://osm.invalid']:['/api/embed-policy/'+key,'https://'+key+'.invalid']);
  const total=W.panels.size;await sandbox.showExternalPanel(button,key);assert.equal(W.panels.size,total);
 }
 ''')
@@ -142,3 +143,32 @@ const dock=ran.dockButton;W.closePanel('ran');assert(!W.dock.contains(dock));ass
         self.assertIn('width:34px;height:34px',source)
         self.assertNotIn('margin-bottom:12px;background:var(--surface,#101020)',source)
         self.assertNotIn('requestFullscreen',source)
+
+    def test_surgical_internal_navigation_terminal_and_grafana(self):
+        self.run_browser('''
+let tabs=0;sandbox.window.open=(url,target,features)=>{tabs++;assert.equal(target,'_blank');assert.equal(features,'noopener,noreferrer');};
+sandbox.showDeployedPanel('vcran-oai','vC-RAN OAI','sub');const ran=W.panels.get('ran');
+for(const view of ['logs','process','status','events']){sandbox.doTab({classList:{add(){}}},view,'vcran-oai','vcran-oai','ran');await new Promise(setImmediate);const p=W.panels.get('ran-'+view+'-vcran-oai');assert(p);assert(p.body.classList.contains('workspace-terminal'));assert.equal(W.panels.get('ran'),ran);assert(p.zIndex>ran.zIndex);}
+assert.equal(tabs,0);
+await sandbox.showLayer2Panel(button);const layer=W.panels.get('layer2');await sandbox.showExternalPanel(button,'grafana');const grafana=W.panels.get('grafana');assert(grafana.zIndex>layer.zIndex);const frame=grafana.body.querySelector('iframe');await sandbox.showExternalPanel(button,'grafana');assert.equal(W.panels.get('grafana'),grafana);assert.equal(grafana.body.querySelector('iframe'),frame);assert.equal(tabs,0);
+grafana.header.querySelector('.external-new-tab').onclick();assert.equal(tabs,1);
+''')
+
+    def test_clean_embed_fallback_and_explicit_link(self):
+        self.run_browser('''
+const original=sandbox.fetch;let tabs=0;sandbox.window.open=(url,target,features)=>{tabs++;assert.equal(target,'_blank');assert(features.includes('noreferrer'));};
+sandbox.fetch=async url=>url.startsWith('/api/embed-policy/')?{ok:true,json:async()=>({allowed:false,reason:'blocked'})}:original(url);
+for(const key of ['osm','rancher','grafana','prometheus']){await sandbox.showExternalPanel(button,key);const p=W.panels.get(key);assert(!p.body.querySelector('iframe'));const content=p.body.querySelector('.external-embed');assert.equal(content.children[0].textContent,'This service does not permit embedded display.');assert.equal(tabs,0);}
+W.panels.get('grafana').header.querySelector('.external-new-tab').onclick();assert.equal(tabs,1);
+''')
+
+    def test_terminal_css_and_navigation_scope(self):
+        html=(ROOT/'ran-selector/index.html').read_text()
+        navigation=html[html.index('<div class="topbar"'):html.index('<div class="layout"')]
+        self.assertNotIn("showExternalPanel(this,'grafana')",navigation)
+        self.assertIn("showExternalPanel(this,'grafana')",html[html.index('async function showLayer2Panel'):html.index('async function refreshLayer2Panel')])
+        self.assertIn('.workspace-terminal{display:flex;flex-direction:column;overflow:hidden}',html)
+        self.assertIn('flex:1;min-height:0;width:100%;box-sizing:border-box',html)
+        internal=html[html.index('function openRANView('):html.index('const NF_LIST=')]
+        for forbidden in ('window.open','_blank','location.href'):
+            self.assertNotIn(forbidden,internal)

@@ -517,8 +517,8 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
 .workspace-controls button:hover{background:#8882}.workspace-controls button:focus-visible{outline:2px solid #00aaff;outline-offset:-2px}.workspace-controls .window-close:hover{background:#dc2626;color:white}
 .workspace-focused{border-color:#00aaff88;box-shadow:0 12px 38px #0004}.workspace-focused>.workspace-header{color:var(--text)}.workspace-focused .workspace-title::before{color:#00aaff}
 .workspace-body{flex:1;min-height:0;overflow:auto;position:relative}.workspace-body .content-area{padding:0;min-height:100%}.workspace-body>.content-area>.panel>.panel-hdr>.close-btn{display:none}
-.workspace-error{flex-shrink:0;padding:4px 12px;color:#dc2626;font-size:12px}.workspace-error[hidden]{display:none}.workspace-body iframe{height:100%;min-height:360px;display:block}.workspace-external{display:flex;flex-direction:column}.workspace-external iframe{flex:1;min-height:0;height:auto}
-.workspace-dock{position:absolute;inset:auto 0 0;height:44px;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--surface-2);border-top:1px solid var(--border);overflow-x:auto;z-index:1000000}
+.workspace-error{flex-shrink:0;padding:4px 12px;color:#dc2626;font-size:12px}.workspace-error[hidden]{display:none}.workspace-body iframe{height:100%;min-height:360px;display:block}.workspace-terminal{display:flex;flex-direction:column;overflow:hidden}.workspace-terminal>.log-terminal,.workspace-terminal>.ran-client-body{flex:1;min-height:0;width:100%;box-sizing:border-box;border-radius:0;margin:0;padding:12px 14px;overflow:auto}.workspace-external{display:flex;flex-direction:column}.workspace-external iframe{flex:1;min-height:0;height:auto}
+.workspace-controls .external-new-tab{width:auto;font-size:12px;padding:0 8px}.external-embed{flex:1;min-height:0;display:flex;flex-direction:column}.external-embed>p,.external-embed>button{align-self:center;margin:20px 12px}.workspace-dock{position:absolute;inset:auto 0 0;height:44px;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--surface-2);border-top:1px solid var(--border);overflow-x:auto;z-index:1000000}
 .workspace-dock button{height:32px;flex-shrink:0;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 12px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-size:12px}.workspace-dock button:hover{border-color:#00aaff}.workspace-dock .dock-minimized{opacity:.7}.workspace-dock .dock-active{border-bottom:2px solid #00aaff}
 .workspace-iframe-shield{position:absolute;inset:46px 0 0;z-index:2;background:transparent;cursor:pointer}.workspace-focused>.workspace-iframe-shield{display:none}
 @keyframes window-refresh-spin{to{transform:rotate(360deg)}}.workspace-controls .refreshing{animation:window-refresh-spin .8s linear infinite}
@@ -546,7 +546,7 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
     <button class="top-btn" id="btn-verify" onclick="manualVerifyClean()">Verify Clean</button>
     <span id="clean-badge" style="font-size:10px;padding:4px 10px;border-radius:6px;font-weight:600"></span>
     <button class="top-btn" onclick="showExternalPanel(this,'rancher')">🐄 Rancher ↗</button>
-    <button class="top-btn" onclick="showExternalPanel(this,'prometheus')">Prometheus</button><button class="top-btn" onclick="showExternalPanel(this,'grafana')">Grafana</button>
+    <button class="top-btn" onclick="showExternalPanel(this,'prometheus')">Prometheus</button>
     <button class="top-btn" id="btn-osm" onclick="showExternalPanel(this,'osm')">📡 OSM</button>
     <button class="top-btn" id="btn-layer2" onclick="showLayer2Panel(this)">📊 Layer 2</button>
     <button class="top-btn purple" id="btn-layer3" onclick="showLayer3Panel(this)">🤖 Layer 3</button>
@@ -682,6 +682,7 @@ function openRANView(view,podLabel,key){
   const title={events:'Recent Events',logs:'Technical Logs',process:'Processes',status:'Runtime'}[view];
   const refresh=()=>view==='events'?fetchClientEvents(key,bodyId):view==='logs'?fetchLogs(podLabel,bodyId):fetchRuntime(key,bodyId,view);
   const canvas=panelCanvas(id,title+' — '+key,refresh);if(!canvas)return;
+  canvas.classList.add('workspace-terminal');
   const content=document.createElement('div');content.id=bodyId;content.className=view==='logs'?'log-terminal':'ran-client-body';canvas.appendChild(content);
   refresh();panelTimer(id,setInterval(refresh,view==='logs'?3000:5000));
 }
@@ -1102,7 +1103,7 @@ async function showLayer2Panel(btn){
             <div style="font-size:16px;font-weight:700;color:#1d4ed8">📊 Full Grafana Dashboards</div>
             
           </div>
-          <button class="top-btn" onclick="showExternalPanel(this,'grafana')">Open Grafana ↗</button>
+          <button class="top-btn" onclick="showExternalPanel(this,'grafana')">Open Grafana</button>
         </div>
       </div>
     </div>
@@ -1271,26 +1272,56 @@ async function runtimeLinks(){
   return await response.json();
 }
 async function openRuntimeLink(key){
-  try { const links = await runtimeLinks(); if(links[key]) window.open(links[key], '_blank', 'noopener'); }
+  try { const links = await runtimeLinks(); if(links[key]) window.open(links[key], '_blank', 'noopener,noreferrer'); }
   catch(error) { alert(error.message); }
 }
 async function showExternalPanel(btn,key){
   if(Workspace.isPanelOpen(key)){Workspace.focusPanel(key);return;}
   let links;try{links=await runtimeLinks();}catch(error){alert(error.message);return;}
-  // A second click may finish endpoint discovery after the first opened it.
   const p=EXTERNAL_PANELS[key];
   const body=panelCanvas(key,p.label,async()=>{
     if(key==='osm')await loadOsmStatus();
-    const frame=Workspace.panels.get(key)?.body.querySelector('iframe');
-    if(frame)frame.src=frame.src;
+    await refreshExternalEmbed(key,links[key]);
   });if(!body)return;
   body.classList.add('workspace-external');
-  const link=document.createElement('a');link.textContent='Open in new tab ↗';link.href=links[key];link.target='_blank';link.rel='noopener';body.appendChild(link);
+  const link=document.createElement('button');link.type='button';link.textContent='↗ Open in new tab';link.title='Open '+p.label+' in new tab';
+  link.onclick=()=>window.open(links[key],'_blank','noopener,noreferrer');
+  Workspace.panels.get(key).header.querySelector('.workspace-controls').prepend(link);
+  link.className='external-new-tab';
   if(key==='osm'){const status=document.createElement('div');status.id='osm-status';body.appendChild(status);}
-  const frame=document.createElement('iframe');frame.src=links[key];frame.style.width='100%';frame.style.border='0';
-  frame.setAttribute('sandbox','allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation');body.appendChild(frame);
-  const shield=document.createElement('div');shield.className='workspace-iframe-shield';shield.title='Focus '+p.label;shield.onclick=()=>Workspace.focusPanel(key);Workspace.panels.get(key).node.appendChild(shield);
+  const content=document.createElement('div');content.className='external-embed';content.textContent='Checking embedded display…';body.appendChild(content);
   if(key==='osm')loadOsmStatus();
+  await refreshExternalEmbed(key,links[key]);
+}
+function externalEmbedFallback(key,reason){
+  const panel=Workspace.panels.get(key);if(!panel)return;
+  const content=panel.body.querySelector('.external-embed');content.innerHTML='';
+  const message=document.createElement('p');message.textContent=reason==='blocked'?'This service does not permit embedded display.':'Embedded display could not be verified.';
+  content.appendChild(message);
+  const button=document.createElement('button');button.type='button';button.textContent='↗ Open '+EXTERNAL_PANELS[key].label+' in new tab';
+  button.onclick=panel.header.querySelector('.external-new-tab').onclick;content.appendChild(button);
+  panel.node.querySelector('.workspace-iframe-shield')?.remove();
+}
+async function refreshExternalEmbed(key,url){
+  const panel=Workspace.panels.get(key);if(!panel)return;
+  try{
+    const policy=await Workspace.request(key,'/api/embed-policy/'+key);
+    if(!policy.allowed){externalEmbedFallback(key,policy.reason);return;}
+    // Verify reachability using this browser's own certificate trust before
+    // allowing its iframe to render a certificate/network error page.
+    const controller=new AbortController();panel.controllers.add(controller);
+    const timeout=setTimeout(()=>controller.abort(),10000);
+    try{await fetch(url,{mode:'no-cors',credentials:'omit',signal:controller.signal});}
+    finally{clearTimeout(timeout);panel.controllers.delete(controller);}
+    if(Workspace.panels.get(key)!==panel)return;
+    const content=panel.body.querySelector('.external-embed');
+    let frame=content.querySelector('iframe');
+    if(frame){frame.src=frame.src;return;}
+    content.innerHTML='';frame=document.createElement('iframe');frame.src=url;frame.style.width='100%';frame.style.border='0';
+    frame.setAttribute('sandbox','allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation');
+    frame.onerror=()=>externalEmbedFallback(key,'unverified');content.appendChild(frame);
+    const shield=document.createElement('div');shield.className='workspace-iframe-shield';shield.title='Focus '+EXTERNAL_PANELS[key].label;shield.onclick=()=>Workspace.focusPanel(key);panel.node.appendChild(shield);
+  }catch(error){if(error.name!=='AbortError'){externalEmbedFallback(key,'unverified');panelError(key,error);}}
 }
 
 let _extKey=null;

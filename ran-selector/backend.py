@@ -5,6 +5,7 @@ import time
 import sys
 from pathlib import Path
 import osm_client
+import embed_policy
 
 app = Flask(__name__)
 REPO_PATH = str(Path(__file__).resolve().parents[1])
@@ -65,6 +66,14 @@ def public_config():
     return jsonify({key: cfg[field] for key, field in
                     [('rancher', 'RANCHER_URL'), ('osm', 'OSM_HOST'),
                      ('grafana', 'GRAFANA_URL'), ('prometheus', 'PROMETHEUS_URL')]})
+
+
+@app.route('/api/embed-policy/<key>')
+def external_embed_policy(key):
+    if key not in embed_policy.FIELDS:
+        return jsonify({'error': 'Unknown external application'}), 400
+    cfg = load_config(network='auto')
+    return jsonify(embed_policy.inspect(cfg, key, request.host_url))
 
 
 SCENARIO_SPEC = load_registry()
