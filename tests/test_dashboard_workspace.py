@@ -63,9 +63,9 @@ for(const p of W.panels.values()){assert.equal(p.header.querySelectorAll('.works
 
     def test_external_application_refresh_is_independent(self):
         self.run_browser('''
-for(const key of ['osm','rancher','grafana','prometheus'])await sandbox.showExternalPanel(button,key);
-assert.equal(W.panels.size,4);
-for(const key of ['osm','rancher','grafana','prometheus']){
+for(const key of ['osm','rancher','prometheus'])await sandbox.showExternalPanel(button,key);
+assert.equal(W.panels.size,3);
+for(const key of ['osm','rancher','prometheus']){
  const p=W.panels.get(key),frame=p.body.querySelector('iframe'),src=frame.src,body=p.body;
  W.minimizePanel(key);const timers=intervals.size;calls=[];await W.refreshPanel(key);
  assert.equal(p.body,body);assert(p.minimized);assert.equal(frame.src,src);assert.equal(intervals.size,timers);
@@ -86,7 +86,7 @@ assert.equal(document.getElementById('uei-reg').textContent,'REGISTERED');assert
 const ueIntervals=intervals.size;for(let i=0;i<3;i++){sandbox.doTab({classList:{add(){}}},'logs','UE','UE','');}assert.equal(intervals.size,ueIntervals);
 const btn={classList:{add(){}}};
 for(const [view,url] of [['events','/api/events/cloudran-oai'],['logs','/api/logs/cloudran-oai?lines=100'],['status','/api/runtime/cloudran-oai']]){
- sandbox.doTab(btn,view,'cloudran-oai','cloudran-oai','ran');await new Promise(setImmediate);const count=intervals.size;calls=[];await W.refreshPanel('ran-'+view+'-cloudran-oai');
+ sandbox.doTab(btn,view,'cloudran-oai','cloudran-oai','ran');await new Promise(setImmediate);const count=intervals.size;calls=[];await W.refreshPanel('ran');
  assert(calls.includes(url));assert.equal(intervals.size,count);assert.equal(W.panels.get('ran').scenario,'cloudran-oai');
  assert(!calls.some(u=>/^\\/api\\/(events|runtime)\\/cloudran$/.test(u)));
 }
@@ -144,31 +144,31 @@ const dock=ran.dockButton;W.closePanel('ran');assert(!W.dock.contains(dock));ass
         self.assertNotIn('margin-bottom:12px;background:var(--surface,#101020)',source)
         self.assertNotIn('requestFullscreen',source)
 
-    def test_surgical_internal_navigation_terminal_and_grafana(self):
+    def test_internal_ran_views_and_direct_external_grafana(self):
         self.run_browser('''
-let tabs=0;sandbox.window.open=(url,target,features)=>{tabs++;assert.equal(target,'_blank');assert.equal(features,'noopener,noreferrer');};
-sandbox.showDeployedPanel('vcran-oai','vC-RAN OAI','sub');const ran=W.panels.get('ran');
-for(const view of ['logs','process','status','events']){sandbox.doTab({classList:{add(){}}},view,'vcran-oai','vcran-oai','ran');await new Promise(setImmediate);const p=W.panels.get('ran-'+view+'-vcran-oai');assert(p);assert(p.body.classList.contains('workspace-terminal'));assert.equal(W.panels.get('ran'),ran);assert(p.zIndex>ran.zIndex);}
-assert.equal(tabs,0);
-await sandbox.showLayer2Panel(button);const layer=W.panels.get('layer2');await sandbox.showExternalPanel(button,'grafana');const grafana=W.panels.get('grafana');assert(grafana.zIndex>layer.zIndex);const frame=grafana.body.querySelector('iframe');await sandbox.showExternalPanel(button,'grafana');assert.equal(W.panels.get('grafana'),grafana);assert.equal(grafana.body.querySelector('iframe'),frame);assert.equal(tabs,0);
-grafana.header.querySelector('.external-new-tab').onclick();assert.equal(tabs,1);
+let tabs=[];sandbox.window.open=(url,target,features)=>tabs.push({url,target,features});
+sandbox.showDeployedPanel('vcran-oai','vC-RAN OAI','sub');const ran=W.panels.get('ran'),count=W.panels.size,dockCount=W.dock.children.length;
+for(const view of ['logs','process','status','events','operational']){sandbox.doTab({classList:{add(){}}},view,'vcran-oai','vcran-oai','ran');await new Promise(setImmediate);assert.equal(W.panels.get('ran'),ran);assert.equal(ran.view,view);assert.equal(ran.scenario,'vcran-oai');assert.equal(W.panels.size,count);assert.equal(W.dock.children.length,dockCount);assert(!ran.views.get(view).hidden);assert.equal(intervals.size,1);}
+const logs=ran.views.get('logs');logs.scrollTop=123;sandbox.doTab({classList:{add(){}}},'status','vcran-oai','vcran-oai','ran');sandbox.doTab({classList:{add(){}}},'logs','vcran-oai','vcran-oai','ran');await new Promise(setImmediate);assert.equal(ran.views.get('logs'),logs);assert.equal(logs.scrollTop,123);
+assert.equal(tabs.length,0);
+await sandbox.showLayer2Panel(button);const layer=W.panels.get('layer2'),before=W.dock.children.length;await sandbox.openRuntimeLink('grafana');assert.equal(tabs.length,1);assert.equal(tabs[0].url,'https://grafana.invalid');assert.equal(tabs[0].target,'_blank');assert.equal(tabs[0].features,'noopener,noreferrer');assert(!W.isPanelOpen('grafana'));assert.equal(W.dock.children.length,before);assert.equal(W.panels.get('layer2'),layer);
 ''')
 
     def test_clean_embed_fallback_and_explicit_link(self):
         self.run_browser('''
 const original=sandbox.fetch;let tabs=0;sandbox.window.open=(url,target,features)=>{tabs++;assert.equal(target,'_blank');assert(features.includes('noreferrer'));};
 sandbox.fetch=async url=>url.startsWith('/api/embed-policy/')?{ok:true,json:async()=>({allowed:false,reason:'blocked'})}:original(url);
-for(const key of ['osm','rancher','grafana','prometheus']){await sandbox.showExternalPanel(button,key);const p=W.panels.get(key);assert(!p.body.querySelector('iframe'));const content=p.body.querySelector('.external-embed');assert.equal(content.children[0].textContent,'This service does not permit embedded display.');assert.equal(tabs,0);}
-W.panels.get('grafana').header.querySelector('.external-new-tab').onclick();assert.equal(tabs,1);
+for(const key of ['osm','rancher','prometheus']){await sandbox.showExternalPanel(button,key);const p=W.panels.get(key);assert(!p.body.querySelector('iframe'));const content=p.body.querySelector('.external-embed');assert.equal(content.children[0].textContent,'This service does not permit embedded display.');assert.equal(tabs,0);}
+W.panels.get('osm').header.querySelector('.external-new-tab').onclick();assert.equal(tabs,1);
 ''')
 
     def test_terminal_css_and_navigation_scope(self):
         html=(ROOT/'ran-selector/index.html').read_text()
         navigation=html[html.index('<div class="topbar"'):html.index('<div class="layout"')]
         self.assertNotIn("showExternalPanel(this,'grafana')",navigation)
-        self.assertIn("showExternalPanel(this,'grafana')",html[html.index('async function showLayer2Panel'):html.index('async function refreshLayer2Panel')])
+        self.assertIn("openRuntimeLink('grafana')",html[html.index('async function showLayer2Panel'):html.index('async function refreshLayer2Panel')])
         self.assertIn('.workspace-terminal{display:flex;flex-direction:column;overflow:hidden}',html)
         self.assertIn('flex:1;min-height:0;width:100%;box-sizing:border-box',html)
-        internal=html[html.index('function openRANView('):html.index('const NF_LIST=')]
+        internal=html[html.index('function selectRANView('):html.index('const NF_LIST=')]
         for forbidden in ('window.open','_blank','location.href'):
             self.assertNotIn(forbidden,internal)

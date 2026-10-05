@@ -90,14 +90,14 @@ const vm=require('vm'),assert=require('assert');const input=JSON.parse(require('
    fetch:async url=>{urls.push(url);return {json:async()=>url==='/api/scenarios'?input.catalog:url==='/api/verify-clean'?{active_combos:[key]}:{logs:''}};}};
   sandbox.Workspace={panels:new Map(),closePanel(id){this.panels.delete(id)},focusPanel(){},setRefresh(){},request:async(id,url)=>{const r=await sandbox.fetch(url);return r.json();}};
   sandbox.panelCanvas=(id)=>{sandbox.Workspace.panels.set(id,{timers:new Set()});return element('main')};
-  sandbox.panelTimer=(id,timer)=>timer;sandbox.liveOwner=()=>'';sandbox.panelForTarget=()=>"ran";sandbox.openRANView=(view,pod,key)=>{if(view==='events')sandbox.fetchClientEvents(key,'ranpbody');else if(view==='logs')sandbox.fetchLogs(pod,'ranlterm');else sandbox.fetchRuntime(key,'ranruntimebody',view);};sandbox.refreshLiveView=()=>{};sandbox.panelError=()=>{};
+  sandbox.panelTimer=(id,timer)=>timer;sandbox.liveOwner=()=>'';sandbox.panelForTarget=()=>"ran";sandbox.selectRANView=(view,pod,key)=>{if(view==='events'||view==='operational')sandbox.fetchClientEvents(key,'ranpbody');else if(view==='logs')sandbox.fetchLogs(pod,'ranlterm');else sandbox.fetchRuntime(key,'ranruntimebody',view);};sandbox.refreshLiveView=()=>{};sandbox.panelError=()=>{};
   vm.createContext(sandbox);vm.runInContext(input.source,sandbox);
   for(const restore of [true,false]){
    urls=[];timers=[];
    if(restore)await sandbox.restoreDeployedState();else sandbox.showComboDeployedPanel(key,'display','sub','oai');
    const tabHTML=element('main').innerHTML;
    const matches=[...tabHTML.matchAll(/doTab\(this,'([^']+)','([^']+)','([^']+)','ran'\)/g)];
-   assert.equal(matches.length,4);
+   assert.equal(matches.length,5);
    for(const match of matches){assert.equal(match[2],key);assert.equal(match[3],key);
     sandbox.doTab({classList:{add(){}}},match[1],match[2],match[3],'ran');
    }

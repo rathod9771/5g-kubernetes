@@ -25,7 +25,7 @@ for(const mode of ['success','failed','lost']){
  const buttons=[{dataset:{arch:'cloudran'},classList:{toggle(name,value){this.selected=value;}}}];
  const sandbox={document:{getElementById:element,querySelectorAll:selector=>selector==='.arch-btn'?buttons:[]},
   selectedArch:{key:'cloudran'},selectedStack:{key:'oai'},lastDeployedCombo:'cran-srsran',currentRAN:'cran-srsran',
-  Workspace:{completeSwitchRender:render=>render()},
+  Workspace:{completeSwitchRender:render=>render(),refreshPanel:async()=>{urls.push("/api/runtime/cloudran-oai");urls.push("/api/events/cloudran-oai");}},
   panelCanvas:()=>element('main'),
   COMBO_DISPLAY:{'cloudran-oai':['cloudran']},clearTop(){},wfHTML:()=>'',blank(){},alert:m=>alerts.push(m),
   AbortController,Date,Promise,console,setTimeout:(f,ms)=>{const id=++next;jobs.set(id,{f,ms});return id;},clearTimeout:id=>jobs.delete(id),

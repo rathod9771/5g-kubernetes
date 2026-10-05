@@ -517,7 +517,7 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
 .workspace-controls button:hover{background:#8882}.workspace-controls button:focus-visible{outline:2px solid #00aaff;outline-offset:-2px}.workspace-controls .window-close:hover{background:#dc2626;color:white}
 .workspace-focused{border-color:#00aaff88;box-shadow:0 12px 38px #0004}.workspace-focused>.workspace-header{color:var(--text)}.workspace-focused .workspace-title::before{color:#00aaff}
 .workspace-body{flex:1;min-height:0;overflow:auto;position:relative}.workspace-body .content-area{padding:0;min-height:100%}.workspace-body>.content-area>.panel>.panel-hdr>.close-btn{display:none}
-.workspace-error{flex-shrink:0;padding:4px 12px;color:#dc2626;font-size:12px}.workspace-error[hidden]{display:none}.workspace-body iframe{height:100%;min-height:360px;display:block}.workspace-terminal{display:flex;flex-direction:column;overflow:hidden}.workspace-terminal>.log-terminal,.workspace-terminal>.ran-client-body{flex:1;min-height:0;width:100%;box-sizing:border-box;border-radius:0;margin:0;padding:12px 14px;overflow:auto}.workspace-external{display:flex;flex-direction:column}.workspace-external iframe{flex:1;min-height:0;height:auto}
+.workspace-error{flex-shrink:0;padding:4px 12px;color:#dc2626;font-size:12px}.workspace-error[hidden]{display:none}.workspace-body iframe{height:100%;min-height:360px;display:block}.workspace-body:has(#ran-client-panel){display:flex;flex-direction:column;overflow:hidden}.workspace-body:has(#ran-client-panel)>.content-area{flex:1;min-height:0;display:flex;flex-direction:column}.ran-view-host{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:0}.ran-view-host>div{flex:1;min-height:0;width:100%;box-sizing:border-box;overflow:auto;border-radius:0;padding:12px 14px}.ran-view-host>div[hidden]{display:none!important}.workspace-terminal{display:flex;flex-direction:column;overflow:hidden}.workspace-terminal>.log-terminal,.workspace-terminal>.ran-client-body{flex:1;min-height:0;width:100%;box-sizing:border-box;border-radius:0;margin:0;padding:12px 14px;overflow:auto}.workspace-external{display:flex;flex-direction:column}.workspace-external iframe{flex:1;min-height:0;height:auto}
 .workspace-controls .external-new-tab{width:auto;font-size:12px;padding:0 8px}.external-embed{flex:1;min-height:0;display:flex;flex-direction:column}.external-embed>p,.external-embed>button{align-self:center;margin:20px 12px}.workspace-dock{position:absolute;inset:auto 0 0;height:44px;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--surface-2);border-top:1px solid var(--border);overflow-x:auto;z-index:1000000}
 .workspace-dock button{height:32px;flex-shrink:0;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 12px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-size:12px}.workspace-dock button:hover{border-color:#00aaff}.workspace-dock .dock-minimized{opacity:.7}.workspace-dock .dock-active{border-bottom:2px solid #00aaff}
 .workspace-iframe-shield{position:absolute;inset:46px 0 0;z-index:2;background:transparent;cursor:pointer}.workspace-focused>.workspace-iframe-shield{display:none}
@@ -677,14 +677,19 @@ function panelForTarget(id){
   for(const panel of Workspace.panels.values())if(target && panel.body.contains(target))return panel.id;
   return id.startsWith('ran')?'ran':id.startsWith('nf')?'core':'ue';
 }
-function openRANView(view,podLabel,key){
-  const id='ran-'+view+'-'+key,bodyId=id+'-body';
-  const title={events:'Recent Events',logs:'Technical Logs',process:'Processes',status:'Runtime'}[view];
-  const refresh=()=>view==='events'?fetchClientEvents(key,bodyId):view==='logs'?fetchLogs(podLabel,bodyId):fetchRuntime(key,bodyId,view);
-  const canvas=panelCanvas(id,title+' — '+key,refresh);if(!canvas)return;
-  canvas.classList.add('workspace-terminal');
-  const content=document.createElement('div');content.id=bodyId;content.className=view==='logs'?'log-terminal':'ran-client-body';canvas.appendChild(content);
-  refresh();panelTimer(id,setInterval(refresh,view==='logs'?3000:5000));
+function selectRANView(view,podLabel,key){
+  const panel=Workspace.panels.get('ran');if(!panel||panel.scenario!==key)return;
+  // Remove obsolete detached subviews if an older caller left one open.
+  for(const id of [...Workspace.panels.keys()])if(/^ran-(logs|process|status|events)-/.test(id))Workspace.closePanel(id);
+  panel.views=panel.views||new Map();
+  for(const content of panel.views.values())content.hidden=true;
+  let content=panel.views.get(view);
+  if(!content){content=document.createElement('div');content.id='ran-view-'+view;content.className=view==='logs'?'log-terminal':'ran-client-body';document.getElementById('ranpbody').appendChild(content);panel.views.set(view,content);}
+  content.hidden=false;panel.view=view;
+  const refresh=()=>view==='logs'?fetchLogs(podLabel,content.id):view==='process'||view==='status'?fetchRuntime(key,content.id,view):fetchClientEvents(key,content.id);
+  Workspace.setRefresh('ran',refresh);
+  stopLiveTimer('ran');refresh();window._liveTimers=window._liveTimers||{};
+  window._liveTimers.ran=panelTimer('ran',setInterval(refresh,view==='logs'?3000:5000));
 }
 function refreshLiveView(pfx,view,podLabel,key){
   const id=pfx==='ran'?'ran':pfx==='nf'?'core':'ue';
@@ -759,10 +764,11 @@ function tabsHTML(podLabel,key,pfx){
     <button class="tab" onclick="doTab(this,'status','${podLabel}','${key}','${pfx}')">Status</button>
   </div>`;
   return `<div class="ran-client-tabs" id="ran-client-tabs">
-    <button class="ran-client-tab active" onclick="doTab(this,'events','${podLabel}','${key}','ran')">Recent Events</button>
+    <button class="ran-client-tab active" onclick="doTab(this,'operational','${podLabel}','${key}','ran')">Operational Status</button>
     <button class="ran-client-tab" onclick="doTab(this,'logs','${podLabel}','${key}','ran')">Technical Logs</button>
     <button class="ran-client-tab" onclick="doTab(this,'process','${podLabel}','${key}','ran')">Processes</button>
     <button class="ran-client-tab" onclick="doTab(this,'status','${podLabel}','${key}','ran')">Runtime</button>
+    <button class="ran-client-tab" onclick="doTab(this,'events','${podLabel}','${key}','ran')">Recent Events</button>
   </div>`;
 }
 
@@ -774,6 +780,7 @@ async function fetchLogs(podLabel,tid){
     if(!d.logs||!d.logs.trim()){
       el.innerHTML='<div class="ran-empty">'+(d.pod?'No technical logs available yet.':'No running pod found.')+'</div>'; return;
     }
+    const position=el.scrollTop||0;const followTail=!el.children.length||el.scrollHeight-el.clientHeight-position<32;
     const lines=d.logs.trim().split("\n").slice(-100); el.innerHTML="";
     lines.forEach(line=>{
       if(!line.trim())return;
@@ -784,7 +791,7 @@ async function fetchLogs(podLabel,tid){
       const cls=isErr?"log-err":isOk?"log-ok":isWarn?"log-warn":"log-info";
       div.innerHTML=`<span class="${cls}">${escHtml(line)}</span>`; el.appendChild(div);
     });
-    el.scrollTop=el.scrollHeight;
+    el.scrollTop=followTail?el.scrollHeight:position;
   }catch(e){panelError(panelForTarget(tid),e);}
 }
 
@@ -854,7 +861,7 @@ function doTab(btn,view,podLabel,key,pfx){
   const scope=document.getElementById("ran-client-tabs")?.parentElement||document;
   scope.querySelectorAll(".ran-client-tab").forEach(t=>t.classList.remove("active")); btn.classList.add("active");
   // Each live view has its own persistent DOM, refresh control and interval.
-  openRANView(view,podLabel,key);
+  selectRANView(view,podLabel,key);
 }
 
 async function deployRAN(key,name,sub){
@@ -926,13 +933,10 @@ function showDeployedPanel(key,name,sub){
         <button class="close-btn" onclick="blank()">✕</button>
       </div>
       ${tabsHTML(podLabel,key,"ran")}
-      <div class="ran-client-body" id="ranpbody"><div class="loading-txt">Reading live RAN events...</div></div>
+      <div class="ran-view-host" id="ranpbody"></div>
     </div>
   </div>`;
-  fetchClientEvents(key,"ranpbody");
-  window._liveTimers=window._liveTimers||{};
-  stopLiveTimer("ran");
-  window._liveTimers.ran=panelTimer('ran',setInterval(()=>fetchClientEvents(key,"ranpbody"),5000));
+  selectRANView("operational",key,key);
 }
 
 function showCorePanel(btn){
@@ -1103,11 +1107,12 @@ async function showLayer2Panel(btn){
             <div style="font-size:16px;font-weight:700;color:#1d4ed8">📊 Full Grafana Dashboards</div>
             
           </div>
-          <button class="top-btn" onclick="showExternalPanel(this,'grafana')">Open Grafana</button>
+          <button class="top-btn" onclick="openRuntimeLink('grafana')">Open Grafana</button>
         </div>
       </div>
     </div>
   </div>`;
+  runtimeLinks().catch(()=>{}); // Prepare the external URL before the launch click.
   refreshLayer2Panel();
   window._l2interval && clearInterval(window._l2interval);
   window._l2interval = panelTimer('layer2',setInterval(refreshLayer2Panel, 8000));
@@ -1261,21 +1266,23 @@ function manualVerifyClean(){ verifyClean(false); }
 
 const EXTERNAL_PANELS = {
   rancher: { url: "", label: "Rancher" },
-  grafana: { url: "", label: "Grafana" },
   prometheus: { url: "", label: "Prometheus" },
   osm:     { url: "", label: "OSM 19 (Open Source MANO)" }
 };
 
+let runtimeLinkCache={};
 async function runtimeLinks(){
   const response = await fetch('/api/config');
   if(!response.ok) throw new Error('Runtime endpoints are not configured');
-  return await response.json();
+  runtimeLinkCache=await response.json();return runtimeLinkCache;
 }
 async function openRuntimeLink(key){
-  try { const links = await runtimeLinks(); if(links[key]) window.open(links[key], '_blank', 'noopener,noreferrer'); }
+  if(key==='grafana')Workspace.closePanel('grafana');
+  try { const links=runtimeLinkCache[key]?runtimeLinkCache:await runtimeLinks();if(links[key])window.open(links[key], '_blank', 'noopener,noreferrer'); }
   catch(error) { alert(error.message); }
 }
 async function showExternalPanel(btn,key){
+  if(key==='grafana'){await openRuntimeLink('grafana');return;}
   if(Workspace.isPanelOpen(key)){Workspace.focusPanel(key);return;}
   let links;try{links=await runtimeLinks();}catch(error){alert(error.message);return;}
   const p=EXTERNAL_PANELS[key];
@@ -1588,9 +1595,7 @@ async function refreshSwitchedScenario(key,name,sub){
   Workspace.completeSwitchRender(()=>showComboDeployedPanel(scenario.key,name,sub,stack));
   document.getElementById("clean-badge").textContent="✓ Switch complete";
   await Promise.allSettled([verifyClean(true),refreshLiveBar(),loadPods(),
-    fetchRuntime(scenario.key,"ranpbody","status")]);
-  // Runtime shares the client body: finish on the selected Recent Events tab.
-  await fetchClientEvents(scenario.key,"ranpbody");
+    Workspace.refreshPanel("ran")]);
 }
 
 async function runDeployCombo(comboKey,name,sub){
