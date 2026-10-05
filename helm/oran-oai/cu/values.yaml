@@ -1,6 +1,12 @@
 # Image identity is supplied by config/reference-versions.json.
 image: {}
 
+identity:
+  gnbId: "0xe00"
+  duId: "0xe00"
+  nrCellId: 12345678
+  physCellId: 0
+
 cu:
   mcc: "208"
   mnc: "93"

@@ -37,20 +37,20 @@ data:
     gNBs =
     (
      {
-        gNB_ID = 0xe00;
-        gNB_DU_ID = 0xe00;
+        gNB_ID = {{ .Values.identity.gnbId }};
+        gNB_DU_ID = {{ .Values.identity.duId }};
         gNB_name  =  "du-rfsim";
 
         tracking_area_code  =  1;
         plmn_list = ({ mcc = 208; mnc = 93; mnc_length = 2; snssaiList = ({ sst = 1; sd = 0x010203; }) });
 
-        nr_cellid = 12345678L;
+        nr_cellid = {{ .Values.identity.nrCellId | int64 }}L;
 
         min_rxtxtime = 4;
 
         servingCellConfigCommon = (
         {
-          physCellId                                               = 0;
+          physCellId                                               = {{ .Values.identity.physCellId | int }};
 
           absoluteFrequencySSB                                      = 630048;
           dl_frequencyBand                                          = 78;

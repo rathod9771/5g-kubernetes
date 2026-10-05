@@ -30,12 +30,14 @@ class ChartTests(unittest.TestCase):
     def setUpClass(cls):
         cls.scenario = select_scenarios(load_registry(), ['oran-oai'])[0]
 
-    def render(self, role, e2=False, address='10.107.153.48', resources=None):
+    def render(self, role, e2=False, address='10.107.153.48', resources=None, identity=None):
         chart = next(c for c in self.scenario['charts'] if c['kdu'] == role)
         with tempfile.TemporaryDirectory() as d:
             values = chart_values(ROOT, chart)
             if resources:
                 values['resources'] = resources
+            if identity is not None:
+                values['identity'] = identity
             path = Path(d) / 'approved.yaml'
             path.write_text(yaml.safe_dump(values))
             command = [os.environ.get('HELM_BIN', 'helm'), 'template', chart['release_name'], str(ROOT / chart['source']), '-f', str(path)]
@@ -45,6 +47,38 @@ class ChartTests(unittest.TestCase):
             result = subprocess.run(command, capture_output=True, text=True,
                                     env=dict(os.environ, KUBECONFIG='/dev/null'), timeout=20)
             return result, chart
+
+    def test_identity_defaults_preserve_existing_config(self):
+        for role in ('cu', 'du'):
+            result, _ = self.render(role)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            config = next(d for d in yaml.safe_load_all(result.stdout) if d['kind'] == 'ConfigMap')['data']['gnb.conf']
+            self.assertIn('gNB_ID = 0xe00;', config)
+            self.assertIn('nr_cellid = 12345678L;', config)
+            if role == 'du':
+                self.assertIn('gNB_DU_ID = 0xe00;', config)
+                self.assertRegex(config, r'physCellId\s*= 0;')
+
+    def test_shared_custom_identity_changes_only_identity_config_fields(self):
+        identity = {'gnbId': '0xe10', 'duId': '0xe10', 'nrCellId': 12345794, 'physCellId': 16}
+        for role in ('cu', 'du'):
+            baseline, _ = self.render(role)
+            result, chart = self.render(role, identity=identity)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            docs = list(yaml.safe_load_all(result.stdout))
+            verify_rendered(ROOT, chart, docs)
+            config = next(d for d in docs if d['kind'] == 'ConfigMap')['data']['gnb.conf']
+            original = next(d for d in yaml.safe_load_all(baseline.stdout) if d['kind'] == 'ConfigMap')['data']['gnb.conf']
+            self.assertIn('gNB_ID = 0xe10;', config)
+            self.assertIn('nr_cellid = 12345794L;', config)
+            if role == 'du':
+                self.assertIn('gNB_DU_ID = 0xe10;', config)
+                self.assertRegex(config, r'physCellId\s*= 16;')
+            normalized = config.replace('0xe10', '0xe00').replace('12345794L', '12345678L')
+            if role == 'du':
+                import re
+                normalized = re.sub(r'(physCellId\s*= )16;', r'\g<1>0;', normalized)
+            self.assertEqual(normalized, original)
 
     def test_default_is_canonical_rfsim_without_e2_dependency(self):
         catalog = dashboard_scenarios(load_registry())['oran-oai']
