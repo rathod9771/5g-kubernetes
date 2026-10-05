@@ -84,7 +84,7 @@ class ReferenceInstallerTests(unittest.TestCase):
 
     def test_core_registry_does_not_become_dashboard_scenario(self):
         registry=load_registry()
-        self.assertEqual(len(select_scenarios(registry,ready=True)),7)
+        self.assertEqual(len(select_scenarios(registry,ready=True)),8)
         self.assertNotIn('open5gs',dashboard_scenarios(registry))
         core=select_scenarios(registry,['open5gs'])[0]
         self.assertEqual(core['charts'][0]['source'],'osm-packages/open5gs_knf/helm-chart-v3s/open5gs')

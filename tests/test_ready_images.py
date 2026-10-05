@@ -61,7 +61,7 @@ class ImagePolicyTests(unittest.TestCase):
         self.assertEqual(len(set(refs)), 1)
 
     def test_blocked_scenarios_cannot_be_selected(self):
-        for key in ['oran-srsran', 'oran-oai', 'hcran-srsran', 'hcran-oai']:
+        for key in ['oran-srsran', 'hcran-srsran', 'hcran-oai']:
             with self.assertRaisesRegex(ValueError, 'BLOCKED'):
                 select_scenarios(load_registry(), [key])
 
@@ -352,7 +352,7 @@ class PendingReconciliationTests(unittest.TestCase):
     def test_blocked_dashboard_keys_stop_before_package_or_cluster_work(self):
         b=self.backend
         with mock.patch.object(b,'CONFIG_FILE',str(self.path)),mock.patch.object(b,'validated_snapshot') as snapshot:
-            for key in ['oran-srsran','oran-oai','hcran-srsran','hcran-oai']:
+            for key in ['oran-srsran','hcran-srsran','hcran-oai']:
                 self.assertEqual(b.app.test_client().post('/api/deploy',json={'ran':key}).status_code,409)
             snapshot.assert_not_called()
 

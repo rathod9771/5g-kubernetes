@@ -1,7 +1,5 @@
-image:
-  repository: oaisoftwarealliance/oai-gnb
-  tag: 2026.w13
-  pullPolicy: IfNotPresent
+# Image identity is supplied by config/reference-versions.json.
+image: {}
 
 cu:
   mcc: "208"
@@ -32,6 +30,6 @@ amf:
 # once FlexRIC is deployed and its Service address is known.
 e2:
   enabled: false
-  ricAddress: "REPLACE_WITH_FLEXRIC_SERVICE_IP"
+  ricAddress: ""
 
 configRevision: 1

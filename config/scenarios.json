@@ -164,45 +164,56 @@
       "ran_type": "oran",
       "implementation": "OAI",
       "deployment_mechanism": "osm",
-      "generation_status": "blocked",
-      "blocked_reason": "Authority between helm/oai and helm/oran-oai is unresolved; packaged helm/oai CU also has an AMF discovery fix absent from that source.",
+      "generation_status": "ready",
+      "blocked_reason": null,
       "knf_package": "oran_oai_knf",
       "nsd_package": "oran_oai_ns",
       "descriptor_version": "1.0",
-      "charts": [],
-      "pods": [
-        "oai-cu",
-        "oai-du"
-      ],
-      "selector": "ran-type=oran",
-      "additive": false,
-      "observed_releases": [
+      "charts": [
         {
           "kdu": "cu",
-          "release_name": "oai-cu",
-          "source": "helm/oai/cu",
-          "values_files": []
+          "release_name": "oran-oai-cu",
+          "source": "helm/oran-oai/cu",
+          "values_files": [],
+          "image_bindings": {
+            "image": "oai-cu"
+          }
         },
         {
           "kdu": "du",
-          "release_name": "oai-du",
-          "source": "helm/oai/du",
-          "values_files": []
+          "release_name": "oran-oai-du",
+          "source": "helm/oran-oai/du",
+          "values_files": [
+            "helm/oran-oai/du/values-rfsim.yaml"
+          ],
+          "image_bindings": {
+            "image": "oai-du"
+          }
         }
       ],
-      "candidate_sources": [
-        "helm/oai/cu",
-        "helm/oai/du",
-        "helm/oran-oai/cu",
-        "helm/oran-oai/du"
+      "pods": [
+        "oran-oai-cu",
+        "oran-oai-du"
       ],
+      "selector": "ran-type=oran",
+      "additive": false,
       "reviewed_legacy": {
         "path": "osm-packages/oran_oai_knf",
         "tree_sha256": "7f96dcc06c944aa1159f36876bc3d8eb1225c8ec189a906434710e60e6e59eb9",
         "archive_sha256": "063946b0e8d87b557403ff779e364e19459b628be2cd5048855baeef2fa18aea"
       },
       "member_id": "oran-oai",
-      "preserved_fixes": []
+      "preserved_fixes": [
+        "AMF discovery via amf-ngap-stable",
+        "Pod-IP bind/advertise substitution",
+        "Explicit slice SST 1 / SD 010203",
+        "Istio injection disabled on RAN pods"
+      ],
+      "source_decision": "Dedicated helm/oran-oai CU/DU charts are authoritative. Legacy helm/oai releases oai-cu/oai-du and osm-packages/oran_oai_knf remain audit references; the package-only stable-AMF discovery fix is present in the chosen CU. RFSIM and E2 disabled are the initial defaults; optional E2 exposes only KPM/RC. Generation readiness does not claim runtime acceptance.",
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": true
+      }
     },
     {
       "key": "cloudran-srsran",

@@ -47,13 +47,13 @@ class PackageTests(unittest.TestCase):
             target.write_bytes(data)
         return artifacts
 
-    def test_registry_keys_aliases_and_unresolved_oai_authority(self):
+    def test_registry_keys_aliases_and_canonical_oran_authority(self):
         entries = dashboard_scenarios(self.registry)
         self.assertEqual(len(entries), 12)
         self.assertEqual(select_scenarios(self.registry, ["srsran"])[0]["key"], "cran-srsran")
         oran = next(s for s in self.registry["scenarios"] if s["key"] == "oran-oai")
-        self.assertEqual(oran["charts"], [])
-        self.assertIn("helm/oran-oai/cu", oran["candidate_sources"])
+        self.assertEqual([c["source"] for c in oran["charts"]], ["helm/oran-oai/cu", "helm/oran-oai/du"])
+        self.assertEqual(oran["pods"], ["oran-oai-cu", "oran-oai-du"])
         self.assertEqual(entries["cran-srsran"]["nsd_package"], "cran_srsran_ns")
 
     def test_every_blocked_selection_fails_before_output(self):
@@ -247,7 +247,8 @@ class DashboardTests(unittest.TestCase):
         result = client.get("/api/scenarios").get_json()["scenarios"]
         self.assertEqual(len(result), 11)
         by_key = {entry["key"]: entry for entry in result}
-        self.assertEqual(by_key["oran-oai"]["generation_status"], "blocked")
+        self.assertEqual(by_key["oran-oai"]["generation_status"], "ready")
+        self.assertEqual(by_key["oran-oai"]["releases"], ["oran-oai-cu", "oran-oai-du"])
         self.assertEqual(by_key["cran-oai"]["releases"], ["cran-oai-cu", "cran-oai-du"])
 
     def test_blocked_or_missing_packages_never_reach_lifecycle(self):
@@ -258,7 +259,7 @@ class DashboardTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         client = self.backend.app.test_client()
         with mock.patch.object(self.backend.osm_client, "terminate_ns", side_effect=AssertionError("lifecycle invoked")), mock.patch.object(self.backend.osm_client, "instantiate_ns", side_effect=AssertionError("lifecycle invoked")), mock.patch.object(self.backend, "run", side_effect=AssertionError("command invoked")):
-            response = client.post("/api/deploy", json={"ran": "oran-oai"})
+            response = client.post("/api/deploy", json={"ran": "oran-srsran"})
             self.assertEqual(response.status_code, 409)
             with mock.patch.object(self.backend, "DEFAULT_OUTPUT", ROOT / "build/osm-packages/missing-packages"):
                 response = client.post("/api/deploy", json={"ran": "srsran"})

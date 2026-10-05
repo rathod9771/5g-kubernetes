@@ -1,3 +1,14 @@
+{{- if .Values.e2.enabled }}
+{{- $address := required "E2 requires the actual FlexRIC Service IPv4 address" .Values.e2.ricAddress }}
+{{- if not (regexMatch "^([0-9]{1,3}\\.){3}[0-9]{1,3}$" $address) }}
+{{- fail "e2.ricAddress must be a FlexRIC Service IPv4 address, not DNS" }}
+{{- end }}
+{{- range splitList "." $address }}
+{{- if or (gt (int .) 255) (and (gt (len .) 1) (hasPrefix "0" .)) }}
+{{- fail "e2.ricAddress must contain valid IPv4 octets" }}
+{{- end }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,7 +17,7 @@ data:
   du-init.sh: |
     #!/bin/bash
     export POD_IP=$(awk 'END{print $1}' /etc/hosts)
-    export CU_IP=$(getent hosts oran-oai-cu | awk '{print $1}')
+    export CU_IP=$(getent hosts {{ .Values.cuFullname }} | awk '{print $1}')
     echo "OAI DU (O-RAN, rf.mode={{ .Values.rf.mode }}): POD_IP=${POD_IP} CU_IP=${CU_IP}"
     mkdir -p /tmp/conf
     sed -e "s|CU_IP|${CU_IP}|g" -e "s|POD_IP|${POD_IP}|g" /opt/oai-gnb/etc/gnb.conf > /tmp/conf/du.conf
@@ -186,7 +197,7 @@ data:
 {{- if .Values.e2.enabled }}
     e2_agent = {
       near_ric_ip_addr = "{{ .Values.e2.ricAddress }}";
-      sm_dir = "/usr/local/lib/flexric/";
+      sm_dir = "/tmp/flexric-sm-kpm-rc/";
     };
 {{- end }}
 
@@ -216,12 +227,26 @@ spec:
         sidecar.istio.io/inject: "false"
         checksum/config: "r{{ .Values.configRevision | default 1 }}-{{ toYaml .Values | sha256sum | trunc 8 }}"
     spec:
+{{- if .Values.e2.enabled }}
+      initContainers:
+      - name: copy-kpm-rc-only
+        image: {{ required "Supply approved image values with scripts/runtime_images.py" .Values.image.reference | quote }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["sh", "-ec", "cp /usr/local/lib/flexric/libkpm_sm.so /usr/local/lib/flexric/librc_sm.so /sm-out/"]
+        volumeMounts:
+        - name: e2-sm
+          mountPath: /sm-out
+{{- end }}
       containers:
       - name: du
-        image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+        image: {{ required "Supply approved image values with scripts/runtime_images.py" .Values.image.reference | quote }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         securityContext:
           privileged: true
+        {{- with .Values.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
 {{- if eq .Values.rf.mode "usrp" }}
         volumeMounts:
         - name: du-config
@@ -233,12 +258,21 @@ spec:
         - name: du-config
           mountPath: /opt/oai-gnb/etc
 {{- end }}
+{{- if .Values.e2.enabled }}
+        - name: e2-sm
+          mountPath: /tmp/flexric-sm-kpm-rc
+          readOnly: true
+{{- end }}
         command: ["bash", "/opt/oai-gnb/etc/du-init.sh"]
       volumes:
       - name: du-config
         configMap:
           name: oran-oai-du-config
           defaultMode: 0755
+{{- if .Values.e2.enabled }}
+      - name: e2-sm
+        emptyDir: {}
+{{- end }}
 {{- if eq .Values.rf.mode "usrp" }}
       - name: usb-bus
         hostPath:

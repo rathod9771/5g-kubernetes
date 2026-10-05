@@ -1,7 +1,5 @@
-image:
-  repository: oaisoftwarealliance/oai-gnb
-  tag: 2026.w25
-  pullPolicy: IfNotPresent
+# Image identity is supplied by config/reference-versions.json.
+image: {}
 
 du:
   mcc: "208"
@@ -28,4 +26,7 @@ rf:
 
 e2:
   enabled: false
-  ricAddress: "REPLACE_WITH_FLEXRIC_SERVICE_IP"
+  ricAddress: ""
+
+# F1 discovery must follow the canonical CU Service.
+cuFullname: oran-oai-cu

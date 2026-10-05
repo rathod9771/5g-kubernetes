@@ -234,7 +234,7 @@ class AdversarialTests(unittest.TestCase):
 
     def test_benchmark_selects_only_nonadditive_ready_ran(self):
         registry=load_registry();selected=[s['key'] for s in registry['scenarios'] if s['generation_status']=='ready' and not s['additive']]
-        self.assertEqual(set(selected),{'cran-srsran','cran-oai','cloudran-srsran','cloudran-oai','vcran-srsran','vcran-oai'})
+        self.assertEqual(set(selected),{'cran-srsran','cran-oai','cloudran-srsran','cloudran-oai','vcran-srsran','vcran-oai','oran-oai'})
         self.assertIn('and not s["additive"]',(ROOT/'bench-all-ran.sh').read_text())
 
     def test_malformed_additive_state_rejected_before_lifecycle(self):
@@ -364,7 +364,7 @@ class AdversarialTests(unittest.TestCase):
                 self.assertNotIn('OSM_PASSWORD',os.environ)
 
 
-    def test_independent_all_ready_helm_resources_against_baseline(self):
+    def test_independent_original_ready_helm_resources_against_baseline(self):
         baseline='4db25352a4eb04e0bdf0849458a221b51991e2dc'
         if subprocess.run(['git','cat-file','-e',baseline],cwd=ROOT,capture_output=True).returncode:
             self.skipTest('Baseline unavailable in shallow checkout')
@@ -387,8 +387,11 @@ class AdversarialTests(unittest.TestCase):
         # compared independently to the historical baseline below.
         expected_checksums={'cran-oai':('r1-49013ed9','r1-44832321'),'cloudran-oai':('r1-e7850648','r1-b0a5a416'),'vcran-oai':('r1-d6326412','r1-459864ff')}
         charts=resources=changes=0
-        for scenario in load_registry()['scenarios']:
-            if scenario['generation_status']!='ready':continue
+        # The historical baseline predates O-RAN authority reconciliation.
+        # Keep comparing every original accepted profile; O-RAN has its own tests.
+        original_keys=['cran-srsran','cran-oai','cloudran-srsran','cloudran-oai','vcran-srsran','vcran-oai','fran']
+        from scenario_registry import select_scenarios
+        for scenario in select_scenarios(load_registry(), original_keys):
             for chart in scenario['charts']:
                 before,after=render(old,chart),render(ROOT,chart)
                 charts+=1;resources+=len(after)

@@ -1,0 +1,5 @@
+# Optional profile. Supply e2.ricAddress from the live FlexRIC Service ClusterIP.
+# Only libkpm_sm.so and librc_sm.so are copied from the approved CU image.
+e2:
+  enabled: true
+  ricAddress: ""
