@@ -17,6 +17,7 @@ class WorkspaceTests(unittest.TestCase):
                          section('function wfHTML(', 'async function deployRAN('),
                          section('function showDeployedPanel(', 'loadPods();\nsetInterval(loadPods,20000);'),
                          section('const EXTERNAL_PANELS =', 'let _extKey'),
+                         section('function renderGuideMarkdown(', 'function docShow(i)'),
                          section('async function loadOsmStatus(', 'async function deployCombo('),
                          section('async function refreshUEPanel(', 'async function refreshLiveBar(')])
         harness='''
@@ -27,7 +28,7 @@ const sandbox={document,window:{},console,AbortController,DOMException,Date,Prom
  localStorage:{setItem(){},removeItem(){}},alert(){},
  setInterval:f=>{const id=++next;intervals.set(id,f);return id;},clearInterval:id=>intervals.delete(id),
  setTimeout:f=>{const id=++next;timeouts.set(id,f);return id;},clearTimeout:id=>timeouts.delete(id),
- fetch:async(url)=>{calls.push(url);if(fail)throw Error('synthetic failure');return {ok:true,json:async()=>
+ fetch:async(url)=>{calls.push(url);if(fail)throw Error('synthetic failure');return {ok:true,text:async()=> '# Guide\\n\\nUpdated documentation',json:async()=>
  url.startsWith('/api/embed-policy/')?{allowed:true,reason:'allowed'}:
  url==='/api/config'?{osm:'https://osm.invalid',rancher:'https://rancher.invalid',grafana:'https://grafana.invalid',prometheus:'https://prometheus.invalid'}:
  url==='/api/osm/status'?{pods:{total:1,ready:1},flux:[]}:
@@ -45,6 +46,16 @@ vm.createContext(sandbox);vm.runInContext(input.source+'\\nglobalThis.W=Workspac
 '''
         result=subprocess.run(['node','-e',harness],input=json.dumps({'source':source,'dom':str(ROOT/'tests/workspace_dom.js')}),capture_output=True,text=True,timeout=20)
         self.assertEqual(result.returncode,0,result.stderr)
+
+    def test_guide_refresh_preserves_window_and_scroll(self):
+        self.run_browser('''
+await sandbox.showDocsPanel(button);const panel=W.panels.get('docs'),guide=document.getElementById('dashboard-guide');
+assert(guide.innerHTML.includes('<h1>Guide</h1>'));const count=intervals.size;guide.scrollTop=42;
+W.maximizePanel('docs');await W.refreshPanel('docs');assert(panel.maximized);assert.equal(guide.scrollTop,42);
+assert.equal(W.panels.get('docs'),panel);assert.equal(intervals.size,count);
+assert.equal(calls.filter(url=>url==='/api/docs/dashboard-and-ran-architecture-guide.md').length,2);
+W.closePanel('docs');assert(!W.panels.has('docs'));
+''')
 
     def test_persistence_controls_and_timer_cleanup(self):
         self.run_browser('''

@@ -704,9 +704,11 @@ def docs_slide_file(name):
 
 @app.route("/api/docs/<path:name>")
 def docs_file(name):
-    """Serve documentation assets (the architecture deck as PDF and PPTX)."""
+    """Serve the release guide and existing architecture presentation assets."""
     if "/" in name or ".." in name:
         return jsonify({"error": "bad name"}), 400
+    if name == "dashboard-and-ran-architecture-guide.md":
+        return send_from_directory(os.path.join(os.path.dirname(UI_DIR), "docs"), name)
     if not os.path.isfile(os.path.join(DOCS_DIR, name)):
         return jsonify({"error": "not found"}), 404
     return send_from_directory(DOCS_DIR, name)
