@@ -88,6 +88,9 @@ const vm=require('vm'),assert=require('assert');const input=JSON.parse(require('
    wfHTML:()=>'',updateRANHealth:()=>{},renderClientEvents:()=>'',renderProcess:()=>'',renderStatus:()=>'',console,
    setInterval:f=>{timers.push(f);return timers.length;},clearInterval:()=>{},
    fetch:async url=>{urls.push(url);return {json:async()=>url==='/api/scenarios'?input.catalog:url==='/api/verify-clean'?{active_combos:[key]}:{logs:''}};}};
+  sandbox.Workspace={panels:new Map(),closePanel(id){this.panels.delete(id)},focusPanel(){},setRefresh(){},request:async(id,url)=>{const r=await sandbox.fetch(url);return r.json();}};
+  sandbox.panelCanvas=(id)=>{sandbox.Workspace.panels.set(id,{timers:new Set()});return element('main')};
+  sandbox.panelTimer=(id,timer)=>timer;sandbox.liveOwner=()=>'';sandbox.panelForTarget=()=>"ran";sandbox.openRANView=(view,pod,key)=>{if(view==='events')sandbox.fetchClientEvents(key,'ranpbody');else if(view==='logs')sandbox.fetchLogs(pod,'ranlterm');else sandbox.fetchRuntime(key,'ranruntimebody',view);};sandbox.refreshLiveView=()=>{};sandbox.panelError=()=>{};
   vm.createContext(sandbox);vm.runInContext(input.source,sandbox);
   for(const restore of [true,false]){
    urls=[];timers=[];

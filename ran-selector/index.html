@@ -504,6 +504,8 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
 .ran-empty{padding:20px;text-align:center;border:1px dashed var(--border);border-radius:9px;color:var(--muted);font-size:13px;line-height:1.6}
 @media(max-width:900px){.ran-client-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.ran-event{grid-template-columns:20px 1fr}.ran-event-detail{grid-column:2}.ran-event-time{grid-column:2}}
 @media(max-width:520px){.ran-client-summary{grid-template-columns:1fr}.ran-client-tabs{overflow-x:auto}.ran-client-tab{white-space:nowrap}.ran-health{align-items:flex-start;flex-direction:column}.ran-event{grid-template-columns:18px 1fr}}
+
+#main{overflow:auto;display:block!important;padding:12px}.workspace-panel{border:1px solid var(--border,#2a2a4a);border-radius:8px;margin-bottom:12px;background:var(--surface,#101020);overflow:hidden}.workspace-header{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-weight:600;gap:12px}.workspace-controls{display:flex;gap:4px}.workspace-controls button{background:transparent;border:0;color:inherit;cursor:pointer;border-radius:4px;padding:4px 8px}.workspace-controls button:hover{background:#8882}.workspace-focused{outline:1px solid #00aaff66}.workspace-body{transition:opacity .15s}.workspace-body .content-area{padding:0}.workspace-body>.content-area>.panel>.panel-hdr>.close-btn{display:none}.workspace-maximized{min-height:calc(100vh - 150px)}.workspace-error{padding:4px 12px;color:#dc2626;font-size:12px}.refreshing{animation:blink .7s infinite}.workspace-body iframe{height:65vh;min-height:360px}
 </style>
 </head>
 <body>
@@ -526,7 +528,8 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
     <button class="top-btn" id="btn-istio" onclick="showIstioPanel(this)">Istio</button>
     <button class="top-btn" id="btn-verify" onclick="manualVerifyClean()">Verify Clean</button>
     <span id="clean-badge" style="font-size:10px;padding:4px 10px;border-radius:6px;font-weight:600"></span>
-    <button class="top-btn" onclick="openRuntimeLink('rancher')">🐄 Rancher ↗</button>
+    <button class="top-btn" onclick="showExternalPanel(this,'rancher')">🐄 Rancher ↗</button>
+    <button class="top-btn" onclick="showExternalPanel(this,'prometheus')">Prometheus</button><button class="top-btn" onclick="showExternalPanel(this,'grafana')">Grafana</button>
     <button class="top-btn" id="btn-osm" onclick="showExternalPanel(this,'osm')">📡 OSM</button>
     <button class="top-btn" id="btn-layer2" onclick="showLayer2Panel(this)">📊 Layer 2</button>
     <button class="top-btn purple" id="btn-layer3" onclick="showLayer3Panel(this)">🤖 Layer 3</button>
@@ -566,6 +569,64 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
   </div>
 </div>
 <script>
+// Persistent read-only functionality workspace. Deployment state stays server-owned.
+const Workspace={panels:new Map(),maximized:null,
+  openPanel(id,options){
+    if(this.panels.has(id)){this.focusPanel(id);return null;}
+    const host=document.getElementById('main');host.querySelector('.blank')?.remove();
+    const node=document.createElement('section');node.className='workspace-panel';node.dataset.panel=id;
+    const header=document.createElement('header');header.className='workspace-header';
+    const title=document.createElement('span');title.textContent=options.title;header.appendChild(title);
+    const controls=document.createElement('div');controls.className='workspace-controls';
+    const panel={id,node,header,options,minimized:false,maximized:false,busy:false,timers:new Set(),controllers:new Set()};
+    for(const [label,tip,action] of [['↻','Refresh',()=>this.refreshPanel(id)],['—','Minimize',()=>this.minimizePanel(id)],['□','Maximize / restore',()=>panel.maximized?this.restorePanel(id):this.maximizePanel(id)],['×','Close',()=>this.closePanel(id)]]){
+      const button=document.createElement('button');button.type='button';button.textContent=label;button.title=tip;button.setAttribute('aria-label',tip+' '+options.title);button.onclick=action;
+      controls.appendChild(button);if(label==='↻')panel.refreshButton=button;
+    }
+    header.appendChild(controls);node.appendChild(header);
+    const error=document.createElement('div');error.className='workspace-error';error.hidden=true;error.setAttribute('role','status');node.appendChild(error);panel.error=error;
+    const body=document.createElement('div');body.className='workspace-body';node.appendChild(body);panel.body=body;
+    this.panels.set(id,panel);host.prepend(node);this.layout();this.focusPanel(id);
+    if(options.render)options.render(body);return body;
+  },
+  focusPanel(id){const p=this.panels.get(id);if(!p)return;if(this.maximized&&this.maximized!==id)this.restorePanel(this.maximized);p.minimized=false;p.body.hidden=false;for(const item of this.panels.values())item.node.classList.toggle('workspace-focused',item===p);p.node.scrollIntoView?.({block:'nearest',behavior:'smooth'});},
+  minimizePanel(id){const p=this.panels.get(id);if(!p)return;if(p.maximized)this.restorePanel(id);p.minimized=true;p.body.hidden=true;},
+  maximizePanel(id){const p=this.panels.get(id);if(!p)return;if(this.maximized)this.restorePanel(this.maximized);p.beforeMaximized=p.minimized;p.minimized=false;p.body.hidden=false;p.maximized=true;this.maximized=id;this.layout();},
+  restorePanel(id){const p=this.panels.get(id);if(!p)return;if(p.maximized){p.maximized=false;this.maximized=null;p.minimized=p.beforeMaximized||false;}else p.minimized=false;p.body.hidden=p.minimized;this.layout();},
+  layout(){for(const p of this.panels.values()){p.node.hidden=!!this.maximized&&this.maximized!==p.id;p.node.classList.toggle('workspace-maximized',p.maximized);}},
+  closePanel(id){const p=this.panels.get(id);if(!p)return;for(const timer of p.timers)clearInterval(timer);for(const controller of p.controllers)controller.abort();if(p.options.cleanup)p.options.cleanup();p.node.remove();this.panels.delete(id);if(this.maximized===id)this.maximized=null;this.layout();},
+  isPanelOpen(id){return this.panels.has(id);},
+  setRefresh(id,refresh){const p=this.panels.get(id);if(p)p.options.refresh=refresh;},
+  ownTimer(id,timer){const p=this.panels.get(id);if(p)p.timers.add(timer);},
+  error(id){const p=this.panels.get(id);if(p){p.error.hidden=false;p.error.textContent='Refresh failed — retry';}},
+  async refreshPanel(id){const p=this.panels.get(id);if(!p||p.busy)return;p.busy=true;p.refreshButton.disabled=true;p.refreshButton.classList.add('refreshing');p.error.hidden=true;
+    try{await p.options.refresh?.();}catch(error){if(error.name!=='AbortError')this.error(id);}finally{p.busy=false;p.refreshButton.disabled=false;p.refreshButton.classList.remove('refreshing');}},
+  async request(id,url,options={}){const p=this.panels.get(id);if(!p)throw new DOMException('Panel closed','AbortError');const controller=new AbortController();p.controllers.add(controller);
+    let timedOut=false;const timeout=setTimeout(()=>{timedOut=true;controller.abort();},15000);
+    try{const response=await fetch(url,{...options,signal:controller.signal});if(!response.ok)throw new Error('Request failed');const data=await response.json();if(this.panels.get(id)!==p)throw new DOMException('Panel closed','AbortError');if(data.error)throw new Error('API unavailable');return data;}catch(error){if(timedOut)throw new Error('Refresh request timed out');throw error;}finally{clearTimeout(timeout);p.controllers.delete(controller);}}
+};
+function panelCanvas(id,title,refresh,cleanup){return Workspace.openPanel(id,{title,refresh,cleanup});}
+function panelError(id,error){if(error?.name!=='AbortError')Workspace.error(id);}
+function liveOwner(pfx){return pfx==='ran'?'ran':pfx==='nf'?'core':'ue';}
+function panelTimer(id,timer){Workspace.ownTimer(id,timer);return timer;}
+function panelForTarget(id){
+  const target=document.getElementById(id);
+  for(const panel of Workspace.panels.values())if(target && panel.body.contains(target))return panel.id;
+  return id.startsWith('ran')?'ran':id.startsWith('nf')?'core':'ue';
+}
+function openRANView(view,podLabel,key){
+  const id='ran-'+view+'-'+key,bodyId=id+'-body';
+  const title={events:'Recent Events',logs:'Technical Logs',process:'Processes',status:'Runtime'}[view];
+  const refresh=()=>view==='events'?fetchClientEvents(key,bodyId):view==='logs'?fetchLogs(podLabel,bodyId):fetchRuntime(key,bodyId,view);
+  const canvas=panelCanvas(id,title+' — '+key,refresh);if(!canvas)return;
+  const content=document.createElement('div');content.id=bodyId;content.className=view==='logs'?'log-terminal':'ran-client-body';canvas.appendChild(content);
+  refresh();panelTimer(id,setInterval(refresh,view==='logs'?3000:5000));
+}
+function refreshLiveView(pfx,view,podLabel,key){
+  const id=pfx==='ran'?'ran':pfx==='nf'?'core':'ue';
+  Workspace.setRefresh(id,async()=>{if(id==='ue')await refreshUEPanel();if(id==='core')await refreshCorePods();return view==='logs'?fetchLogs(podLabel,pfx==='ran'?'ranlterm':pfx+'lterm'):view==='events'?fetchClientEvents(key,'raneventbody'):fetchRuntime(key,pfx==='ran'?'ranruntimebody':pfx+'pbody',view);});
+}
+
 const NF_LIST=["AMF","SMF","UPF","NRF","AUSF","UDM","UDR","PCF","NSSF"];
 const NF_COLOR={AMF:"#00d4ff",SMF:"#00aaff",UPF:"#ff6b35",NRF:"#15803c",AUSF:"#a855f7",UDM:"#f59e0b",UDR:"#ec4899",PCF:"#06b6d4",NSSF:"#84cc16"};
 const NF_DESC={AMF:"Access & Mobility — registration, auth, mobility. N2 to gNB via NGAP/SCTP.",SMF:"Session Management — assigns UE IP, GTP tunnel via PFCP to UPF.",UPF:"User Plane — forwards packets via gtp5g kernel module. N3 N4 N6.",NRF:"Network Repository — service registry for all NFs. Port 8000.",AUSF:"Authentication Server — 5G-AKA with K/OPc keys.",UDM:"Unified Data Mgmt — subscriber profiles and auth vectors.",UDR:"Unified Data Repo — raw storage backend for UDM.",PCF:"Policy Control — QoS rules and PCC rules to SMF.",NSSF:"Slice Selection — routes UE to SST=1 SD=010203."};
@@ -590,16 +651,22 @@ async function loadPods(){
   }catch(e){}
 }
 
+async function refreshCorePods(){
+  try{const data=await Workspace.request('core','/api/pods');
+    for(const nf of NF_LIST){const pod=data.pods.find(p=>p.name.toLowerCase().includes('open5gs-'+nf.toLowerCase()));
+      if(pod)podData[nf]=pod;
+      const target=document.getElementById('nfst-'+nf);if(target)target.textContent=pod?pod.ready+' ✓':'—';
+    }
+  }catch(error){panelError('core',error);}
+}
+
 function clearTop(){
   document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("active"));
 }
 
 function blank(){
-  clearTop();
-  document.querySelectorAll(".ran-card").forEach(c=>c.classList.remove("deployed"));
-  currentRAN=null;
-  localStorage.removeItem("activeTopPanel");
-  document.getElementById("main").innerHTML='<div class="blank"><div class="blank-icon">📡</div><div class="blank-txt">Deploy a RAN or select a component from the top bar</div></div>';
+  // Legacy deployment error paths must not destroy unrelated workspace panels.
+  Workspace.closePanel('switch');
 }
 
 // Restore Layer 2 / Layer 3 panel across page reloads
@@ -638,8 +705,8 @@ function tabsHTML(podLabel,key,pfx){
 async function fetchLogs(podLabel,tid){
   const el=document.getElementById(tid); if(!el)return;
   try{
-    const r=await fetch("/api/logs/"+encodeURIComponent(podLabel)+"?lines=100",{cache:"no-store"});
-    const d=await r.json();
+    const owner=panelForTarget(tid);
+    const d=await Workspace.request(owner,"/api/logs/"+encodeURIComponent(podLabel)+"?lines=100",{cache:"no-store"});
     if(!d.logs||!d.logs.trim()){
       el.innerHTML='<div class="ran-empty">'+(d.pod?'No technical logs available yet.':'No running pod found.')+'</div>'; return;
     }
@@ -654,15 +721,15 @@ async function fetchLogs(podLabel,tid){
       div.innerHTML=`<span class="${cls}">${escHtml(line)}</span>`; el.appendChild(div);
     });
     el.scrollTop=el.scrollHeight;
-  }catch(e){el.innerHTML='<div class="ran-empty">Live technical-log error: '+escHtml(e.message)+'</div>';}
+  }catch(e){panelError(panelForTarget(tid),e);}
 }
 
 function stopLiveTimer(pfx){
-  if(window._liveTimers&&window._liveTimers[pfx]){clearInterval(window._liveTimers[pfx]);delete window._liveTimers[pfx];}
+  if(window._liveTimers&&window._liveTimers[pfx]){clearInterval(window._liveTimers[pfx]);for(const panel of Workspace.panels.values())panel.timers.delete(window._liveTimers[pfx]);delete window._liveTimers[pfx];}
 }
 function startLiveLogs(podLabel,tid,pfx){
   stopLiveTimer(pfx); fetchLogs(podLabel,tid); window._liveTimers=window._liveTimers||{};
-  window._liveTimers[pfx]=setInterval(()=>{if(!document.getElementById(tid)){stopLiveTimer(pfx);return;}fetchLogs(podLabel,tid);},3000);
+  window._liveTimers[pfx]=panelTimer(liveOwner(pfx),setInterval(()=>{if(!document.getElementById(tid)){stopLiveTimer(pfx);return;}fetchLogs(podLabel,tid);},3000));
 }
 function escHtml(v){return String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 
@@ -690,18 +757,21 @@ function renderClientEvents(d){
 }
 async function fetchClientEvents(key,bodyId){
   const body=document.getElementById(bodyId); if(!body)return;
-  try{const r=await fetch("/api/events/"+encodeURIComponent(key),{cache:"no-store"}); const d=await r.json(); body.innerHTML=renderClientEvents(d); updateRANHealth(d);}catch(e){body.innerHTML='<div class="ran-empty">Live event error: '+escHtml(e.message)+'</div>';}
+  try{const d=await Workspace.request(panelForTarget(bodyId),"/api/events/"+encodeURIComponent(key),{cache:"no-store"}); body.innerHTML=renderClientEvents(d); updateRANHealth(d,key);}catch(e){panelError(panelForTarget(bodyId),e);}
 }
-function updateRANHealth(d){
+function updateRANHealth(d,key){
+  if(key && Workspace.panels.get("ran")?.scenario!==key)return;
   const el=document.getElementById("ran-health-inline"); if(!el)return;
   const col=eventColor(d.overall); el.innerHTML=`<span class="pulse" style="background:${col}"></span>${escHtml(d.overall)}`; el.style.color=col;
 }
 async function fetchRuntime(key,bodyId,view){
   const body=document.getElementById(bodyId); if(!body)return;
-  try{const r=await fetch("/api/runtime/"+encodeURIComponent(key),{cache:"no-store"}); const d=await r.json(); body.innerHTML=view==="process"?renderProcess(d):renderStatus(d);}catch(e){body.innerHTML='<div class="ran-empty">Live runtime error: '+escHtml(e.message)+'</div>';}
+  try{const owner=panelForTarget(bodyId);const d=await Workspace.request(owner,"/api/runtime/"+encodeURIComponent(key),{cache:"no-store"}); body.innerHTML=view==="process"?renderProcess(d):renderStatus(d);}catch(e){panelError(panelForTarget(bodyId),e);}
 }
 function doTab(btn,view,podLabel,key,pfx){
+  if(pfx!=="ran")refreshLiveView(pfx,view,podLabel,key);
   if(pfx !== "ran"){
+    if(!pfx)Workspace.setRefresh('ue',()=>Promise.all([refreshUEPanel(),view==='logs'?fetchLogs(podLabel,'lterm'):fetchRuntime(key,'pbody',view)]));
     const scope=document.getElementById(pfx+"wrap")||document;
     scope.querySelectorAll(".tab").forEach(t=>t.classList.remove("active")); btn.classList.add("active");
     const body=document.getElementById(pfx+"pbody"); if(!body)return; stopLiveTimer(pfx);
@@ -710,29 +780,17 @@ function doTab(btn,view,podLabel,key,pfx){
       startLiveLogs(podLabel,pfx+"lterm",pfx);
     }else if(view==="process"){
       body.innerHTML='<div class="loading-txt">Reading live processes from Kubernetes...</div>';
-      fetchRuntime(key,pfx+"pbody","process"); window._liveTimers=window._liveTimers||{}; window._liveTimers[pfx]=setInterval(()=>fetchRuntime(key,pfx+"pbody","process"),5000);
+      fetchRuntime(key,pfx+"pbody","process"); window._liveTimers=window._liveTimers||{}; window._liveTimers[pfx]=panelTimer(liveOwner(pfx),setInterval(()=>fetchRuntime(key,pfx+"pbody","process"),5000));
     }else{
       body.innerHTML='<div class="loading-txt">Reading live Kubernetes status...</div>';
-      fetchRuntime(key,pfx+"pbody","status"); window._liveTimers=window._liveTimers||{}; window._liveTimers[pfx]=setInterval(()=>fetchRuntime(key,pfx+"pbody","status"),5000);
+      fetchRuntime(key,pfx+"pbody","status"); window._liveTimers=window._liveTimers||{}; window._liveTimers[pfx]=panelTimer(liveOwner(pfx),setInterval(()=>fetchRuntime(key,pfx+"pbody","status"),5000));
     }
     return;
   }
   const scope=document.getElementById("ran-client-tabs")?.parentElement||document;
   scope.querySelectorAll(".ran-client-tab").forEach(t=>t.classList.remove("active")); btn.classList.add("active");
-  const body=document.getElementById("ranpbody"); if(!body)return; stopLiveTimer("ran");
-  if(view==="events"){
-    body.innerHTML='<div class="ran-client-body" id="raneventbody"><div class="loading-txt">Reading live RAN events...</div></div>';
-    fetchClientEvents(key,"raneventbody"); window._liveTimers=window._liveTimers||{}; window._liveTimers.ran=setInterval(()=>fetchClientEvents(key,"raneventbody"),5000);
-  }else if(view==="logs"){
-    body.innerHTML='<div class="ran-client-body"><div class="log-terminal" id="ranlterm"><div class="loading-txt">Fetching live technical logs...</div></div></div>';
-    startLiveLogs(podLabel,"ranlterm","ran");
-  }else if(view==="process"){
-    body.innerHTML='<div class="ran-client-body" id="ranruntimebody"><div class="loading-txt">Reading live processes...</div></div>';
-    fetchRuntime(key,"ranruntimebody","process"); window._liveTimers=window._liveTimers||{}; window._liveTimers.ran=setInterval(()=>fetchRuntime(key,"ranruntimebody","process"),5000);
-  }else{
-    body.innerHTML='<div class="ran-client-body" id="ranruntimebody"><div class="loading-txt">Reading live runtime status...</div></div>';
-    fetchRuntime(key,"ranruntimebody","status"); window._liveTimers=window._liveTimers||{}; window._liveTimers.ran=setInterval(()=>fetchRuntime(key,"ranruntimebody","status"),5000);
-  }
+  // Each live view has its own persistent DOM, refresh control and interval.
+  openRANView(view,podLabel,key);
 }
 
 async function deployRAN(key,name,sub){
@@ -749,7 +807,7 @@ async function deployRAN(key,name,sub){
   if(obtn){obtn.className="deploy-btn";obtn.textContent="▶ Deploy";}
   if(ocard)ocard.classList.remove("deployed");
 
-  const m=document.getElementById("main");
+  const m=panelCanvas('switch','RAN switch',()=>Promise.resolve());
   m.innerHTML=`<div class="content-area">
     <div class="panel log-panel ran-log-panel" id="ran-panel-main">
       <div class="panel-hdr">
@@ -787,8 +845,13 @@ async function deployRAN(key,name,sub){
 }
 
 function showDeployedPanel(key,name,sub){
+  Workspace.closePanel('switch');
   const podLabel=key;
-  const m=document.getElementById("main");
+  const existing=Workspace.panels.get('ran');
+  if(existing && existing.scenario===key){Workspace.focusPanel('ran');return;}
+  if(existing)Workspace.closePanel('ran');
+  const m=panelCanvas('ran','RAN Scenario — '+name,async()=>{await Workspace.request('ran','/api/status');await Workspace.request('ran','/api/runtime/'+encodeURIComponent(key));await fetchClientEvents(key,'ranpbody');},()=>stopLiveTimer('ran'));
+  Workspace.panels.get('ran').scenario=key;
   m.innerHTML=`<div class="content-area">
     <div class="panel ran-client-panel" id="ran-client-panel">
       <div class="panel-hdr">
@@ -805,13 +868,14 @@ function showDeployedPanel(key,name,sub){
   fetchClientEvents(key,"ranpbody");
   window._liveTimers=window._liveTimers||{};
   stopLiveTimer("ran");
-  window._liveTimers.ran=setInterval(()=>fetchClientEvents(key,"ranpbody"),5000);
+  window._liveTimers.ran=panelTimer('ran',setInterval(()=>fetchClientEvents(key,"ranpbody"),5000));
 }
 
 function showCorePanel(btn){
   clearTop();
   btn.classList.add("active");
-  document.getElementById("main").innerHTML=`<div class="content-area core-content">
+  const canvas=panelCanvas('core','5G Core',refreshCorePods,()=>stopLiveTimer('nf'));if(!canvas)return;
+  canvas.innerHTML=`<div class="content-area core-content">
     <div class="panel core-overview-panel">
       <div class="panel-hdr">
         <div style="display:flex;align-items:center;gap:10px">
@@ -830,7 +894,6 @@ function showCorePanel(btn){
     <div id="nf-area"></div>
   </div>`;
   loadPods();
-setTimeout(()=>verifyClean(true), 1500);
 }
 
 function openNF(nf){
@@ -852,10 +915,13 @@ function openNF(nf){
       <div class="log-terminal" id="nflterm"><div class="loading-txt">Loading live logs...</div></div>
     </div>
   </div>`;
+  refreshLiveView("nf","logs",nf,nf);
   startLiveLogs(nf,"nflterm","nf");
 }
 
 function closeNF(){
+  stopLiveTimer("nf");
+  Workspace.setRefresh("core",refreshCorePods);
   document.getElementById("nf-area").innerHTML="";
   document.querySelectorAll(".nf-btn").forEach(b=>b.classList.remove("sel"));
 }
@@ -863,7 +929,7 @@ function closeNF(){
 function showTopPanel(btn,type){
   clearTop();
   btn.classList.add("active");
-  const m=document.getElementById("main");
+  const m=panelCanvas(type,type==='ue'?'UE / PDU Session':'Network Slice',type==='ue'?()=>Promise.all([refreshUEPanel(),fetchLogs('UE','lterm')]):()=>loadPods(),()=>{if(type==='ue'){stopLiveTimer('ue');stopLiveTimer('');clearInterval(window._uePanelTimer);}});if(!m)return;
   if(type==="ue"){
     m.innerHTML=`<div class="content-area">
       <div class="panel fill-panel ue-panel">
@@ -886,10 +952,10 @@ function showTopPanel(btn,type){
         <div class="info-card"><div class="info-key">PLMN / Slice</div><div class="info-val">208/93 · SST=1 SD=010203</div></div>
       </div>
     </div>`;
-    startLiveLogs("UE","lterm","ue");
+    startLiveLogs("UE","lterm","");
     refreshUEPanel();
     window._uePanelTimer&&clearInterval(window._uePanelTimer);
-    window._uePanelTimer=setInterval(refreshUEPanel,5000);
+    window._uePanelTimer=panelTimer('ue',setInterval(refreshUEPanel,5000));
   }else{
     m.innerHTML=`<div class="content-area">
       <div class="panel fill-panel slice-panel">
@@ -914,7 +980,7 @@ async function showIstioPanel(btn){
   clearTop();
   btn.classList.add("active");
   localStorage.setItem("activeTopPanel","istio");
-  const m=document.getElementById("main");
+  const m=panelCanvas('istio','Istio Service Mesh',refreshIstioPanel,()=>{;});if(!m)return;
   m.innerHTML=`<div class="content-area"><div class="panel">
     <div class="panel-hdr">
       <div><div class="panel-title" style="color:#a855f7">Istio Service Mesh</div><div class="panel-sub">Real status -- control plane health and actual per-NF sidecar injection</div></div>
@@ -922,8 +988,11 @@ async function showIstioPanel(btn){
     </div>
     <div class="panel-body" id="istio-body"><div class="loading-txt">Loading real Istio status...</div></div>
   </div></div>`;
+  refreshIstioPanel();
+}
+async function refreshIstioPanel(){
   try{
-    const s=await (await fetch("/api/istio/status")).json();
+    const s=await Workspace.request("istio","/api/istio/status");
     const rows=Object.entries(s.nfs_injected||{}).map(([nf,on])=>
       `<div style="padding:4px 10px;border-radius:6px;border:1px solid ${on?"#00ff8844":"#66666644"};background:${on?"#0a2a1a":"#1a1a1a"};font-size:10px;font-weight:700;color:${on?"#00ff88":"#888"}">${on?"✓":"✕"} ${nf}</div>`
     ).join("");
@@ -938,7 +1007,7 @@ async function showIstioPanel(btn){
         ${s.nfs_injected_count===0?`<div style="margin-top:10px;font-size:11px;color:#888">Control plane is installed and healthy, but sidecar injection is not enabled on the 5G core namespace. This is deliberate -- Istio previously mishandled open5gs's SBI HTTP/2 traffic here (see docs/troubleshooting.md). Label a namespace with istio-injection=enabled and redeploy its workloads to actually inject sidecars.</div>`:``}
       </div>`;
   }catch(e){
-    document.getElementById("istio-body").innerHTML=`<div style="padding:14px;color:#ff6b35">Could not reach /api/istio/status</div>`;
+    panelError('istio',e);
   }
 }
 
@@ -946,7 +1015,7 @@ async function showLayer2Panel(btn){
   clearTop();
   btn.classList.add("active");
   localStorage.setItem("activeTopPanel","layer2");
-  const m=document.getElementById("main");
+  const m=panelCanvas('layer2','Layer 2',refreshLayer2Panel,()=>{clearInterval(window._l2interval);});if(!m)return;
   m.innerHTML=`<div class="content-area layer2-content">
     <div class="panel fill-panel layer2-panel">
       <div class="panel-hdr">
@@ -970,21 +1039,21 @@ async function showLayer2Panel(btn){
             <div style="font-size:16px;font-weight:700;color:#1d4ed8">📊 Full Grafana Dashboards</div>
             
           </div>
-          <button class="top-btn" onclick="openRuntimeLink('grafana')">Open Grafana ↗</button>
+          <button class="top-btn" onclick="showExternalPanel(this,'grafana')">Open Grafana ↗</button>
         </div>
       </div>
     </div>
   </div>`;
   refreshLayer2Panel();
   window._l2interval && clearInterval(window._l2interval);
-  window._l2interval = setInterval(refreshLayer2Panel, 8000);
+  window._l2interval = panelTimer('layer2',setInterval(refreshLayer2Panel, 8000));
 }
 
 async function refreshLayer2Panel(){
   const el = document.getElementById("l2-bler");
   if(!el) { clearInterval(window._l2interval); return; }
   try{
-    const d = await (await fetch("/api/layer2-metrics")).json();
+    const d = await Workspace.request("layer2","/api/layer2-metrics");
     const fmt = (v,suffix,digits) => (v===null||v===undefined) ? "—" : v.toFixed(digits!==undefined?digits:2)+(suffix||"");
     document.getElementById("l2-bler").textContent = fmt(d.bler_dl!==null?d.bler_dl*100:null, "%", 3);
     document.getElementById("l2-latency").textContent = fmt(d.control_plane_latency_ms, "ms", 2);
@@ -992,14 +1061,14 @@ async function refreshLayer2Panel(){
     document.getElementById("l2-tx").textContent = fmt(d.mac_tx_bytes ? d.mac_tx_bytes/1024 : null, " KB", 1);
     document.getElementById("l2-rx").textContent = fmt(d.mac_rx_bytes ? d.mac_rx_bytes/1024 : null, " KB", 1);
     document.getElementById("l2-reg").textContent = fmt(d.amf_registrations, "", 0);
-  }catch(e){}
+  }catch(e){panelError('layer2',e);}
 }
 
 async function showLayer3Panel(btn){
   clearTop();
   btn.classList.add("active");
   localStorage.setItem("activeTopPanel","layer3");
-  const m=document.getElementById("main");
+  const m=panelCanvas('layer3','Layer 3',refreshLayer3Panel,()=>{clearInterval(window._l3interval);});if(!m)return;
   m.innerHTML=`<div class="content-area layer3-content">
     <div class="panel fill-panel layer3-panel">
       <div class="panel-hdr">
@@ -1013,14 +1082,14 @@ async function showLayer3Panel(btn){
   </div>`;
   refreshLayer3Panel();
   window._l3interval && clearInterval(window._l3interval);
-  window._l3interval = setInterval(refreshLayer3Panel, 10000);
+  window._l3interval = panelTimer('layer3',setInterval(refreshLayer3Panel, 10000));
 }
 
 async function refreshLayer3Panel(){
   const body = document.getElementById("l3-body");
   if(!body) { clearInterval(window._l3interval); return; }
   try{
-    const d = await (await fetch("/api/layer3-actions")).json();
+    const d = await Workspace.request("layer3","/api/layer3-actions");
     if(!d.actions || d.actions.length === 0){
       body.innerHTML = '<div class="loading-txt">No autonomous actions yet — SLA has stayed within threshold.</div>';
       return;
@@ -1037,7 +1106,7 @@ async function refreshLayer3Panel(){
         <div class="proc-badge pbg-run">${ok ? (a.dashboard_response?.status||'') : 'error'}</div>
       </div>`;
     }).join("") + '</div>';
-  }catch(e){}
+  }catch(e){panelError('layer3',e);}
 }
 
 loadPods();
@@ -1128,6 +1197,8 @@ function manualVerifyClean(){ verifyClean(false); }
 
 const EXTERNAL_PANELS = {
   rancher: { url: "", label: "Rancher" },
+  grafana: { url: "", label: "Grafana" },
+  prometheus: { url: "", label: "Prometheus" },
   osm:     { url: "", label: "OSM 19 (Open Source MANO)" }
 };
 
@@ -1140,65 +1211,28 @@ async function openRuntimeLink(key){
   try { const links = await runtimeLinks(); if(links[key]) window.open(links[key], '_blank', 'noopener'); }
   catch(error) { alert(error.message); }
 }
-async function showExternalPanel(btn, key){
-  let links;
-  try { links = await runtimeLinks(); }
-  catch(error) { alert(error.message); return; }
-  EXTERNAL_PANELS[key].url = links[key];
-  document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("sel"));
-  if(btn) btn.classList.add("sel");
-  const p = EXTERNAL_PANELS[key];
-  const m = document.getElementById("main");
-  _extKey = key;
-  const btnStyle = "background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;"
-                 + "padding:1px 9px;font-size:12px;cursor:pointer;line-height:1.4";
-  m.innerHTML = `<div id="extwrap" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column">
-    <div style="flex:0 0 auto;padding:6px 14px;background:#0d1424;border-bottom:1px solid #1e2a45;font-size:12px;color:#8899bb;display:flex;justify-content:space-between;align-items:center">
-      <span>${p.label} — embedded, no separate login tab needed</span>
-      <span style="display:flex;align-items:center;gap:12px">
-        <a href="${p.url}" target="_blank" style="color:#00d4ff;text-decoration:none;font-size:11px">Open in new tab ↗</a>
-        <span style="width:1px;height:15px;background:#24406b"></span>
-        <button onclick="extMinimize()" title="Minimize" style="${btnStyle}">&#8211;</button>
-        <button onclick="extFullscreen()" title="Fullscreen" style="${btnStyle}">&#9974;</button>
-        <button onclick="extClose()" title="Close" style="${btnStyle}"
-          onmouseover="this.style.borderColor='#ff5566';this.style.color='#ff5566'"
-          onmouseout="this.style.borderColor='#24406b';this.style.color='#8899bb'">&#10005;</button>
-      </span>
-    </div>
-    ${key === "osm" ? '<div id="osm-status" style="flex:0 0 auto;padding:6px 14px;background:#0a1020;border-bottom:1px solid #1e2a45;font-size:11px;color:#8899bb">loading OSM status…</div>' : ""}
-    <iframe src="${p.url}" style="flex:1 1 auto;min-height:0;width:100%;border:none;background:#fff"
-      sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"></iframe>
-  </div>`;
-  document.onkeydown = function(e){ if(e.key === "Escape") extClose(); };
-  if(key === "osm") loadOsmStatus();
+async function showExternalPanel(btn,key){
+  if(Workspace.isPanelOpen(key)){Workspace.focusPanel(key);return;}
+  let links;try{links=await runtimeLinks();}catch(error){alert(error.message);return;}
+  // A second click may finish endpoint discovery after the first opened it.
+  const p=EXTERNAL_PANELS[key];
+  const body=panelCanvas(key,p.label,async()=>{
+    if(key==='osm')await loadOsmStatus();
+    const frame=Workspace.panels.get(key)?.body.querySelector('iframe');
+    if(frame)frame.src=frame.src;
+  });if(!body)return;
+  const link=document.createElement('a');link.textContent='Open in new tab ↗';link.href=links[key];link.target='_blank';link.rel='noopener';body.appendChild(link);
+  if(key==='osm'){const status=document.createElement('div');status.id='osm-status';body.appendChild(status);}
+  const frame=document.createElement('iframe');frame.src=links[key];frame.style.width='100%';frame.style.border='0';
+  frame.setAttribute('sandbox','allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation');body.appendChild(frame);
+  if(key==='osm')loadOsmStatus();
 }
 
-let _extKey = null;
-function extMinimize(){
-  document.onkeydown = null;
-  const b = document.getElementById("btn-" + _extKey);
-  if(b) b.classList.add("sel");
-  extRestoreCanvas();
-}
-function extClose(){
-  document.onkeydown = null;
-  document.querySelectorAll(".top-btn").forEach(b=>b.classList.remove("sel"));
-  _extKey = null;
-  extRestoreCanvas();
-}
-function extFullscreen(){
-  const el = document.getElementById("extwrap");
-  if(!el) return;
-  if(document.fullscreenElement) document.exitFullscreen();
-  else if(el.requestFullscreen) el.requestFullscreen();
-}
-function extRestoreCanvas(){
-  const m = document.getElementById("main");
-  if(m) m.innerHTML = `<div class="blank">
-      <div class="blank-icon">&#128225;</div>
-      <div class="blank-txt">Deploy a RAN or select a component from the top bar</div>
-    </div>`;
-}
+let _extKey=null;
+function extMinimize(){if(_extKey)Workspace.minimizePanel(_extKey);}
+function extClose(){if(_extKey)Workspace.closePanel(_extKey);}
+function extFullscreen(){if(_extKey)Workspace.maximizePanel(_extKey);}
+function extRestoreCanvas(){if(_extKey)Workspace.restorePanel(_extKey);}
 
 const DOCS = {
   pdf:  "/api/docs/RAN_Architectures.pdf",
@@ -1214,7 +1248,7 @@ async function showDocsPanel(btn){
   if(btn) btn.classList.add("sel");
   _docOpen = true;
   docBadge(false);
-  const m = document.getElementById("main");
+  const m=panelCanvas('docs',DOCS.title,()=>docShow(_docIdx),()=>{_docOpen=false;document.removeEventListener('keydown',docKeys);});if(!m)return;
 
   m.innerHTML = `
   <div id="docwrap" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column;background:#080d18">
@@ -1227,17 +1261,6 @@ async function showDocsPanel(btn){
         <a href="${DOCS.pdf}" target="_blank" style="color:#00d4ff;text-decoration:none;font-size:11px">PDF &#8599;</a>
         <a href="${DOCS.pptx}" download style="color:#00d4ff;text-decoration:none;font-size:11px">.pptx &#8595;</a>
         <span style="width:1px;height:15px;background:#24406b"></span>
-        <button onclick="docMinimize()" title="Minimize"
-          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
-                 padding:1px 9px;font-size:12px;cursor:pointer;line-height:1.4">&#8211;</button>
-        <button onclick="docFullscreen()" title="Fullscreen"
-          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
-                 padding:1px 8px;font-size:12px;cursor:pointer;line-height:1.4">&#9974;</button>
-        <button onclick="docClose()" title="Close"
-          style="background:transparent;border:1px solid #24406b;color:#8899bb;border-radius:5px;
-                 padding:1px 9px;font-size:12px;cursor:pointer;line-height:1.4"
-          onmouseover="this.style.borderColor='#ff5566';this.style.color='#ff5566'"
-          onmouseout="this.style.borderColor='#24406b';this.style.color='#8899bb'">&#10005;</button>
       </span>
     </div>
 
@@ -1269,9 +1292,8 @@ async function showDocsPanel(btn){
 
   if(!_docSlides.length){
     try{
-      const r = await fetch("/api/docs/slides");
-      _docSlides = (await r.json()).slides || [];
-    }catch(e){ _docSlides = []; }
+      _docSlides = (await Workspace.request("docs","/api/docs/slides")).slides || [];
+    }catch(e){panelError("docs",e);return;}
   }
   if(!_docSlides.length){
     document.getElementById("docStage").innerHTML =
@@ -1284,7 +1306,7 @@ async function showDocsPanel(btn){
   docRenderStrip();
   if(_docStrip){ const s=document.getElementById("docStrip"); if(s) s.style.display="flex"; }
   docShow(_docIdx);
-  document.onkeydown = docKeys;
+  document.addEventListener('keydown',docKeys);
 }
 
 function docShow(i){
@@ -1312,7 +1334,7 @@ function docToggleStrip(){
 }
 
 function docKeys(e){
-  if(!document.getElementById("docImg")) { document.onkeydown = null; return; }
+  if(!document.getElementById('docImg'))return;
   if(e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); docGo(1); }
   if(e.key === "ArrowLeft")  { e.preventDefault(); docGo(-1); }
   if(e.key === "Home") docShow(0);
@@ -1330,36 +1352,10 @@ function docRenderStrip(){
   ).join("");
 }
 
-function docFullscreen(){
-  const el = document.getElementById("docwrap");
-  if(!el) return;
-  if(document.fullscreenElement) document.exitFullscreen();
-  else if(el.requestFullscreen) el.requestFullscreen();
-}
-
-// minimize: keep the slide position, mark the top-bar button, restore the canvas
-function docMinimize(){
-  _docOpen = false;
-  document.onkeydown = null;
-  docBadge(true);
-  docRestoreCanvas();
-}
-function docClose(){
-  _docOpen = false;
-  _docIdx = 0;
-  document.onkeydown = null;
-  docBadge(false);
-  const b = document.getElementById("btn-docs");
-  if(b) b.classList.remove("sel");
-  docRestoreCanvas();
-}
-function docRestoreCanvas(){
-  const m = document.getElementById("main");
-  if(m) m.innerHTML = `<div class="blank">
-      <div class="blank-icon">&#128225;</div>
-      <div class="blank-txt">Deploy a RAN or select a component from the top bar</div>
-    </div>`;
-}
+function docFullscreen(){Workspace.maximizePanel('docs');}
+function docMinimize(){Workspace.minimizePanel('docs');}
+function docClose(){Workspace.closePanel('docs');}
+function docRestoreCanvas(){Workspace.restorePanel('docs');}
 function docBadge(on){
   const b = document.getElementById("btn-docs");
   if(!b) return;
@@ -1394,8 +1390,7 @@ async function loadOsmStatus(){
   const el = document.getElementById("osm-status");
   if(!el) return;
   try{
-    const r = await fetch("/api/osm/status");
-    const d = await r.json();
+    const d = await Workspace.request("osm","/api/osm/status");
     if(d.error){ el.innerHTML = `<span style="color:#ff6b6b">status error: ${d.error}</span>`; return; }
     const allPods = d.pods.total > 0 && d.pods.ready === d.pods.total;
     const podCol = allPods ? "#3ddc84" : "#ffb454";
@@ -1407,7 +1402,7 @@ async function loadOsmStatus(){
       ` &nbsp;\u00b7&nbsp; GitOps: ${flux}` +
       ` &nbsp;\u00b7&nbsp; <span style="color:#667">blank frame? open in a new tab once to accept the self-signed certificate</span>`;
   }catch(e){
-    el.innerHTML = `<span style="color:#ff6b6b">status unavailable</span>`;
+    panelError('osm',e);
   }
 }
 
@@ -1518,7 +1513,7 @@ async function runDeployCombo(comboKey,name,sub){
   btn.className="deploy-btn deploying";
   btn.textContent="\u23f3 Deploying...";
 
-  const m=document.getElementById("main");
+  const m=panelCanvas('switch','RAN switch',()=>Promise.resolve());
   m.innerHTML=`<div class="content-area">
     <div class="panel" id="ran-panel-main">
       <div class="panel-hdr">
@@ -1562,7 +1557,7 @@ function showComboDeployedPanel(comboKey,name,sub,stackKey){
 <script>
 async function refreshUEPanel(){
   try{
-    const d=await (await fetch("/api/ue-status",{cache:"no-store"})).json();
+    const d=await Workspace.request("ue","/api/ue-status",{cache:"no-store"});
     const sub=document.getElementById("ue-panel-sub");
     const st=document.getElementById("ue-panel-status");
     if(sub)sub.textContent=d.pod ? d.pod : "No running UE pod";
@@ -1577,7 +1572,7 @@ async function refreshUEPanel(){
     set("uei-pdu",d.pdu_session?"ACTIVE":"NONE",d.pdu_session?"ok":"");
     set("uei-tun",d.tun||"—","blue");
     set("uei-rsrp",d.rsrp_dbm==null?"—":d.rsrp_dbm.toFixed(1)+" dBm",d.rsrp_dbm!=null?"ok":"");
-  }catch(e){}
+  }catch(e){panelError('ue',e);}
 }
 
 async function refreshLiveBar(){
