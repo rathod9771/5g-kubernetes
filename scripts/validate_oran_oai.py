@@ -145,6 +145,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--kubeconfig', required=True)
     parser.add_argument('--namespace', required=True)
+    parser.add_argument('--amf-namespace', help='Namespace of amf-ngap-stable; defaults to --namespace')
     parser.add_argument('--e2', action='store_true')
     parser.add_argument('--ric-address', action='store_true', help='Read Service IPv4 only; no acceptance run')
     parser.add_argument('--stability-seconds', type=int, default=30)
@@ -153,11 +154,12 @@ def main(argv=None):
         parser.error('--stability-seconds must be between 1 and 60')
     base = ['kubectl', '--kubeconfig', args.kubeconfig, '--request-timeout=10s', '-n', args.namespace]
 
-    def run(command):
-        return subprocess.run(base + command, capture_output=True, text=True, check=True, timeout=20).stdout
+    def run(command, namespace=None):
+        target = base if namespace is None else base[:-1] + [namespace]
+        return subprocess.run(target + command, capture_output=True, text=True, check=True, timeout=20).stdout
 
-    def get(kind, name=None):
-        return json.loads(run(['get', kind] + ([name] if name else []) + ['-o', 'json']))
+    def get(kind, name=None, namespace=None):
+        return json.loads(run(['get', kind] + ([name] if name else []) + ['-o', 'json'], namespace))
 
     def collect(pair):
         evidence = {}
@@ -185,7 +187,7 @@ def main(argv=None):
         if args.ric_address:
             print(ric_ip)
             return 0
-        amf_ip = service_ipv4(get('service', 'amf-ngap-stable'))
+        amf_ip = service_ipv4(get('service', 'amf-ngap-stable', args.amf_namespace))
         cu_ip = service_ipv4(get('service', 'oran-oai-cu'))
         first = select_pair(get('pods'))
         checks = evaluate(first, collect(first), amf_ip, cu_ip, ric_ip)

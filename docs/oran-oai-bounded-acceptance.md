@@ -34,6 +34,21 @@ python3 -B scripts/validate_oran_oai.py \
   --kubeconfig "$ORAN_KUBECONFIG" --namespace "$ORAN_NAMESPACE"
 ```
 
+If Open5GS is in another namespace, supply `--amf-namespace`. Only the
+`amf-ngap-stable` Service lookup uses that namespace; CU/DU pods, the
+`oran-oai-cu` Service and FlexRIC remain in `--namespace`. Omitting the option
+retains the existing same-namespace behavior. For isolated Precision acceptance:
+
+```bash
+python3 -B scripts/validate_oran_oai.py \
+  --kubeconfig "$ORAN_KUBECONFIG" --namespace oran-oai-acceptance \
+  --amf-namespace 66b508bf-f267-4690-aa4d-8662a0251971
+```
+
+The validator discovers the AMF ClusterIP from that Service and checks the
+existing NGAP association against it. No alias Service or cluster change is
+needed. Keep this option when subsequently validating with `--e2`.
+
 It requires canonical identities and approved images, both pods Running/Ready
 with zero container restarts, NGAP SCTP established to the stable AMF Service
 and NG Setup Response, both F1 SCTP associations and F1 Setup Request/Response,

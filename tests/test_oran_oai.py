@@ -264,6 +264,8 @@ class AcceptanceTests(unittest.TestCase):
             commands.append(command)
             operation = command[6:]
             self.assertIn(operation[0], {'get', 'exec', 'logs'})
+            expected_namespace = (amf_namespace or 'isolated') if operation[:3] == ['get', 'service', 'amf-ngap-stable'] else 'isolated'
+            self.assertEqual(command[5], expected_namespace)
             if operation[:2] == ['get', 'pods']:
                 pair = copy.deepcopy(self.pair)
                 if samples and change_uid[0]:
@@ -286,11 +288,16 @@ class AcceptanceTests(unittest.TestCase):
                            acceptance.SM_DIR: 'plugin_files'}[path]
                     output = self.evidence[role][key]
             return subprocess.CompletedProcess(command, 0, output)
-        for changed in (False, True):
+        for amf_namespace, changed in [(None, False), (None, True),
+                                       ('66b508bf-f267-4690-aa4d-8662a0251971', False),
+                                       ('66b508bf-f267-4690-aa4d-8662a0251971', True)]:
             change_uid = [changed]
             samples.clear()
             with mock.patch.object(acceptance.subprocess, 'run', side_effect=run), mock.patch.object(acceptance.time, 'sleep') as sleep, mock.patch('sys.stdout', new_callable=io.StringIO) as output:
-                result = acceptance.main(['--kubeconfig', '/tmp/fixture', '--namespace', 'isolated', '--e2'])
+                arguments = ['--kubeconfig', '/tmp/fixture', '--namespace', 'isolated', '--e2']
+                if amf_namespace:
+                    arguments += ['--amf-namespace', amf_namespace]
+                result = acceptance.main(arguments)
                 sleep.assert_called_once_with(30)
             self.assertEqual(len(samples), 2)
             self.assertEqual(result, 1 if changed else 0)
@@ -300,6 +307,15 @@ class AcceptanceTests(unittest.TestCase):
         for items in [[], [self.pair['cu']], [self.pair['cu'], self.pair['cu'], self.pair['du']]]:
             with self.assertRaises(ValueError):
                 acceptance.select_pair({'items': items})
+
+    def test_cross_namespace_amf_lookup_failure_has_no_fallback(self):
+        command = ['kubectl', '--kubeconfig', '/tmp/fixture', '--request-timeout=10s',
+                   '-n', 'core', 'get', 'service', 'amf-ngap-stable', '-o', 'json']
+        with mock.patch.object(acceptance.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, command)) as run, mock.patch.object(acceptance.time, 'sleep') as sleep, mock.patch('sys.stderr', new_callable=io.StringIO):
+            result = acceptance.main(['--kubeconfig', '/tmp/fixture', '--namespace', 'isolated', '--amf-namespace', 'core'])
+        self.assertEqual(result, 1)
+        run.assert_called_once_with(command, capture_output=True, text=True, check=True, timeout=20)
+        sleep.assert_not_called()
 
 
 if __name__ == '__main__':
