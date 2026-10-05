@@ -52,8 +52,8 @@ const ran=W.panels.get('ran'),saved=ran.body.innerHTML;const count=intervals.siz
 sandbox.showCorePanel(button);await sandbox.showLayer2Panel(button);await sandbox.showLayer3Panel(button);
 assert.equal(W.panels.size,4);assert.equal(ran.body.innerHTML,saved);
 sandbox.showDeployedPanel('vcran-srsran','vC-RAN','sub');assert.equal(intervals.size,count+2);
-W.minimizePanel('ran');assert(ran.body.hidden);assert.equal(ran.body.innerHTML,saved);
-W.maximizePanel('ran');assert(W.panels.get('core').node.hidden);W.restorePanel('ran');assert(ran.minimized);assert(!W.panels.get('core').node.hidden);
+W.minimizePanel('ran');assert(ran.node.hidden);assert.equal(ran.body.innerHTML,saved);
+W.maximizePanel('ran');assert(ran.zIndex>W.panels.get('core').zIndex);assert(!W.panels.get('core').node.hidden);W.restorePanel('ran');assert(ran.minimized);assert(!W.panels.get('core').node.hidden);
 W.focusPanel('ran');assert(!ran.minimized);assert.equal(W.panels.size,4);
 const l2=W.panels.get('layer2');W.closePanel('ran');assert.equal(W.panels.size,3);assert(!intervals.has([...ran.timers][0]));assert.equal(W.panels.get('layer2'),l2);
 for(let i=0;i<3;i++){sandbox.showDeployedPanel('cran-oai','C-RAN','sub');W.closePanel('ran');}assert.equal(intervals.size,2);
@@ -105,7 +105,7 @@ W.closePanel('layer2');assert(W.isPanelOpen('layer3'));
 await sandbox.showLayer2Panel(button);await new Promise(setImmediate);const other=W.panels.get('layer2');
 sandbox.showDeployedPanel('cran-srsran','C-RAN','sub');
 W.openPanel('switch',{title:'RAN switch',refresh:async()=>{}});
-sandbox.showDeployedPanel('cloudran-oai','Cloud-RAN','sub');
+W.focusPanel('layer2');W.completeSwitchRender(()=>sandbox.showDeployedPanel('cloudran-oai','Cloud-RAN','sub'));assert(other.active);assert(other.zIndex>W.panels.get('ran').zIndex);
 assert.equal(W.panels.get('layer2'),other);assert(!W.isPanelOpen('switch'));assert.equal(W.panels.get('ran').scenario,'cloudran-oai');
 const originalFetch=sandbox.fetch;
 sandbox.fetch=(url,options)=>new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new DOMException('closed','AbortError'))));
@@ -115,3 +115,30 @@ sandbox.fetch=originalFetch;
 for(const id of ['core','ue','layer2','layer3','runtime','events','logs']){const body=W.openPanel(id,{title:id,refresh:async()=>{}});assert(body);assert(W.panels.get(id).refreshButton);}
 assert(W.isPanelOpen('ran'));
 ''')
+
+    def test_layered_z_order_dock_and_geometry(self):
+        self.run_browser('''
+sandbox.showDeployedPanel('vcran-oai','V-C-RAN OAI','sub');await new Promise(setImmediate);
+const ran=W.panels.get('ran'),originalBody=ran.body,originalGeometry={...ran.geometry};
+sandbox.showCorePanel(button);const core=W.panels.get('core');assert(core.zIndex>ran.zIndex);assert.equal(ran.body,originalBody);assert(!ran.node.hidden);
+ran.node.dispatch('pointerdown');assert(ran.zIndex>core.zIndex);assert(ran.active);assert(!core.active);
+sandbox.showTopPanel(button,'ue');const ue=W.panels.get('ue');assert(ue.zIndex>ran.zIndex);assert.equal(W.panels.size,3);
+sandbox.showCorePanel(button);assert.equal(W.panels.size,3);assert(core.zIndex>ue.zIndex);
+assert.equal(ran.geometry.width,90);assert.equal(ran.geometry.height,86);assert.deepEqual(ran.geometry,originalGeometry);
+for(const p of W.panels.values()){assert(p.geometry.x>=0);assert(p.geometry.y>=0);assert(p.geometry.x+p.geometry.width<=100);assert(p.geometry.y+p.geometry.height<=100);assert.equal(p.node.style.width,'90%');}
+const count=intervals.size;
+for(let i=0;i<5;i++){W.minimizePanel('ran');assert(ran.node.hidden);assert(W.dock.contains(ran.dockButton));ran.dockButton.onclick();assert(!ran.node.hidden);assert(ran.active);assert.equal(ran.body,originalBody);assert.deepEqual(ran.geometry,originalGeometry);}
+assert.equal(intervals.size,count);
+W.maximizePanel('ran');assert.deepEqual(ran.geometry,{x:0,y:0,width:100,height:100});assert.equal(ran.node.style.width,'100%');assert(!core.node.hidden);assert.equal(ran.maximizeButton.textContent,'❐');
+W.restorePanel('ran');assert.deepEqual(ran.geometry,originalGeometry);assert.equal(ran.maximizeButton.textContent,'□');
+const dock=ran.dockButton;W.closePanel('ran');assert(!W.dock.contains(dock));assert(W.isPanelOpen('core'));assert(W.isPanelOpen('ue'));
+''')
+
+    def test_css_uses_overlapping_windows_not_flow_layout(self):
+        source=(ROOT/'ran-selector/index.html').read_text()
+        self.assertIn('#main{position:relative;isolation:isolate;overflow:hidden',source)
+        self.assertIn('.workspace-panel{position:absolute;',source)
+        self.assertIn('.workspace-stage{position:absolute;inset:0 0 44px',source)
+        self.assertIn('width:34px;height:34px',source)
+        self.assertNotIn('margin-bottom:12px;background:var(--surface,#101020)',source)
+        self.assertNotIn('requestFullscreen',source)

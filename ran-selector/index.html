@@ -505,7 +505,24 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
 @media(max-width:900px){.ran-client-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.ran-event{grid-template-columns:20px 1fr}.ran-event-detail{grid-column:2}.ran-event-time{grid-column:2}}
 @media(max-width:520px){.ran-client-summary{grid-template-columns:1fr}.ran-client-tabs{overflow-x:auto}.ran-client-tab{white-space:nowrap}.ran-health{align-items:flex-start;flex-direction:column}.ran-event{grid-template-columns:18px 1fr}}
 
-#main{overflow:auto;display:block!important;padding:12px}.workspace-panel{border:1px solid var(--border,#2a2a4a);border-radius:8px;margin-bottom:12px;background:var(--surface,#101020);overflow:hidden}.workspace-header{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-weight:600;gap:12px}.workspace-controls{display:flex;gap:4px}.workspace-controls button{background:transparent;border:0;color:inherit;cursor:pointer;border-radius:4px;padding:4px 8px}.workspace-controls button:hover{background:#8882}.workspace-focused{outline:1px solid #00aaff66}.workspace-body{transition:opacity .15s}.workspace-body .content-area{padding:0}.workspace-body>.content-area>.panel>.panel-hdr>.close-btn{display:none}.workspace-maximized{min-height:calc(100vh - 150px)}.workspace-error{padding:4px 12px;color:#dc2626;font-size:12px}.refreshing{animation:blink .7s infinite}.workspace-body iframe{height:65vh;min-height:360px}
+#main{position:relative;isolation:isolate;overflow:hidden;display:block!important;padding:0;min-height:420px}
+.workspace-stage{position:absolute;inset:0 0 44px;overflow:hidden}
+.workspace-panel{position:absolute;display:flex;flex-direction:column;box-sizing:border-box;border:1px solid var(--border,#2a2a4a);border-radius:10px;background:var(--surface,#101020);overflow:hidden;box-shadow:0 5px 20px #0002;margin:0}
+.workspace-panel[hidden]{display:none!important}
+.workspace-header{flex:0 0 46px;box-sizing:border-box;display:flex;justify-content:space-between;align-items:center;padding:5px 8px 5px 14px;gap:12px;background:var(--surface-2);border-bottom:1px solid var(--border);color:var(--muted);user-select:none}
+.workspace-title{font-size:13px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.workspace-title::before{content:'●';font-size:9px;margin-right:9px;color:var(--muted)}
+.workspace-controls{display:flex;flex-shrink:0;gap:3px}
+.workspace-controls button{width:34px;height:34px;padding:0;background:transparent;border:0;color:inherit;cursor:pointer;border-radius:5px;font-size:19px;line-height:34px}
+.workspace-controls button:hover{background:#8882}.workspace-controls button:focus-visible{outline:2px solid #00aaff;outline-offset:-2px}.workspace-controls .window-close:hover{background:#dc2626;color:white}
+.workspace-focused{border-color:#00aaff88;box-shadow:0 12px 38px #0004}.workspace-focused>.workspace-header{color:var(--text)}.workspace-focused .workspace-title::before{color:#00aaff}
+.workspace-body{flex:1;min-height:0;overflow:auto;position:relative}.workspace-body .content-area{padding:0;min-height:100%}.workspace-body>.content-area>.panel>.panel-hdr>.close-btn{display:none}
+.workspace-error{flex-shrink:0;padding:4px 12px;color:#dc2626;font-size:12px}.workspace-error[hidden]{display:none}.workspace-body iframe{height:100%;min-height:360px;display:block}.workspace-external{display:flex;flex-direction:column}.workspace-external iframe{flex:1;min-height:0;height:auto}
+.workspace-dock{position:absolute;inset:auto 0 0;height:44px;box-sizing:border-box;display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--surface-2);border-top:1px solid var(--border);overflow-x:auto;z-index:1000000}
+.workspace-dock button{height:32px;flex-shrink:0;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 12px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);cursor:pointer;font-size:12px}.workspace-dock button:hover{border-color:#00aaff}.workspace-dock .dock-minimized{opacity:.7}.workspace-dock .dock-active{border-bottom:2px solid #00aaff}
+.workspace-iframe-shield{position:absolute;inset:46px 0 0;z-index:2;background:transparent;cursor:pointer}.workspace-focused>.workspace-iframe-shield{display:none}
+@keyframes window-refresh-spin{to{transform:rotate(360deg)}}.workspace-controls .refreshing{animation:window-refresh-spin .8s linear infinite}
+
 </style>
 </head>
 <body>
@@ -570,31 +587,77 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
 </div>
 <script>
 // Persistent read-only functionality workspace. Deployment state stays server-owned.
-const Workspace={panels:new Map(),maximized:null,
+const Workspace={panels:new Map(),maximized:null,nextZ:0,
+  ensureDesktop(){
+    if(this.stage)return;
+    const host=document.getElementById('main');host.querySelector('.blank')?.remove();
+    this.stage=document.createElement('div');this.stage.className='workspace-stage';host.appendChild(this.stage);
+    this.dock=document.createElement('nav');this.dock.className='workspace-dock';this.dock.setAttribute('aria-label','Open applications');host.appendChild(this.dock);
+  },
+  applyGeometry(p){const g=p.geometry;Object.assign(p.node.style,{left:g.x+'%',top:g.y+'%',width:g.width+'%',height:g.height+'%',zIndex:String(p.zIndex)});},
   openPanel(id,options){
     if(this.panels.has(id)){this.focusPanel(id);return null;}
-    const host=document.getElementById('main');host.querySelector('.blank')?.remove();
+    this.ensureDesktop();
     const node=document.createElement('section');node.className='workspace-panel';node.dataset.panel=id;
     const header=document.createElement('header');header.className='workspace-header';
-    const title=document.createElement('span');title.textContent=options.title;header.appendChild(title);
+    const title=document.createElement('span');title.className='workspace-title';title.textContent=options.title;header.appendChild(title);
     const controls=document.createElement('div');controls.className='workspace-controls';
-    const panel={id,node,header,options,minimized:false,maximized:false,busy:false,timers:new Set(),controllers:new Set()};
+    const panel={id,node,header,options,zIndex:0,active:false,geometry:{x:3.5+(this.panels.size%3)*1.5,y:5.5+(this.panels.size%3)*1.5,width:90,height:86},previousGeometry:null,minimized:false,maximized:false,busy:false,timers:new Set(),controllers:new Set()};
     for(const [label,tip,action] of [['↻','Refresh',()=>this.refreshPanel(id)],['—','Minimize',()=>this.minimizePanel(id)],['□','Maximize / restore',()=>panel.maximized?this.restorePanel(id):this.maximizePanel(id)],['×','Close',()=>this.closePanel(id)]]){
       const button=document.createElement('button');button.type='button';button.textContent=label;button.title=tip;button.setAttribute('aria-label',tip+' '+options.title);button.onclick=action;
-      controls.appendChild(button);if(label==='↻')panel.refreshButton=button;
+      controls.appendChild(button);if(label==='↻')panel.refreshButton=button;if(label==='□')panel.maximizeButton=button;if(label==='×')button.classList.add('window-close');
     }
     header.appendChild(controls);node.appendChild(header);
     const error=document.createElement('div');error.className='workspace-error';error.hidden=true;error.setAttribute('role','status');node.appendChild(error);panel.error=error;
     const body=document.createElement('div');body.className='workspace-body';node.appendChild(body);panel.body=body;
-    this.panels.set(id,panel);host.prepend(node);this.layout();this.focusPanel(id);
+    const dockButton=document.createElement('button');dockButton.type='button';dockButton.textContent=options.title;dockButton.title='Restore / focus '+options.title;dockButton.onclick=()=>this.focusPanel(id);this.dock.appendChild(dockButton);panel.dockButton=dockButton;
+    node.addEventListener('pointerdown',()=>this.focusPanel(id),true);
+    node.addEventListener('focusin',()=>this.focusPanel(id));
+    this.panels.set(id,panel);this.stage.appendChild(node);this.layout();this.focusPanel(id);
     if(options.render)options.render(body);return body;
   },
-  focusPanel(id){const p=this.panels.get(id);if(!p)return;if(this.maximized&&this.maximized!==id)this.restorePanel(this.maximized);p.minimized=false;p.body.hidden=false;for(const item of this.panels.values())item.node.classList.toggle('workspace-focused',item===p);p.node.scrollIntoView?.({block:'nearest',behavior:'smooth'});},
-  minimizePanel(id){const p=this.panels.get(id);if(!p)return;if(p.maximized)this.restorePanel(id);p.minimized=true;p.body.hidden=true;},
-  maximizePanel(id){const p=this.panels.get(id);if(!p)return;if(this.maximized)this.restorePanel(this.maximized);p.beforeMaximized=p.minimized;p.minimized=false;p.body.hidden=false;p.maximized=true;this.maximized=id;this.layout();},
-  restorePanel(id){const p=this.panels.get(id);if(!p)return;if(p.maximized){p.maximized=false;this.maximized=null;p.minimized=p.beforeMaximized||false;}else p.minimized=false;p.body.hidden=p.minimized;this.layout();},
-  layout(){for(const p of this.panels.values()){p.node.hidden=!!this.maximized&&this.maximized!==p.id;p.node.classList.toggle('workspace-maximized',p.maximized);}},
-  closePanel(id){const p=this.panels.get(id);if(!p)return;for(const timer of p.timers)clearInterval(timer);for(const controller of p.controllers)controller.abort();if(p.options.cleanup)p.options.cleanup();p.node.remove();this.panels.delete(id);if(this.maximized===id)this.maximized=null;this.layout();},
+  focusPanel(id){
+    const p=this.panels.get(id);if(!p)return;
+    p.minimized=false;p.body.hidden=false;p.zIndex=++this.nextZ;
+    for(const item of this.panels.values()){item.active=item===p;item.node.classList.toggle('workspace-focused',item.active);}
+    this.layout();
+  },
+  minimizePanel(id){
+    const p=this.panels.get(id);if(!p)return;p.minimized=true;p.active=false;
+    const next=[...this.panels.values()].filter(item=>!item.minimized&&item!==p).sort((a,b)=>b.zIndex-a.zIndex)[0];
+    if(next)this.focusPanel(next.id);else this.layout();
+  },
+  maximizePanel(id){
+    const p=this.panels.get(id);if(!p)return;
+    if(!p.maximized){p.previousGeometry={...p.geometry};p.beforeMaximized=p.minimized;p.geometry={x:0,y:0,width:100,height:100};p.maximized=true;}
+    this.maximized=id;this.focusPanel(id);
+  },
+  restorePanel(id){
+    const p=this.panels.get(id);if(!p)return;
+    if(p.maximized){p.geometry={...p.previousGeometry};p.maximized=false;this.maximized=null;p.minimized=p.beforeMaximized||false;}
+    else p.minimized=false;
+    if(!p.minimized)this.focusPanel(id);else this.layout();
+  },
+  layout(){for(const p of this.panels.values()){
+    p.node.hidden=p.minimized;p.body.hidden=false;this.applyGeometry(p);
+    p.node.classList.toggle('workspace-maximized',p.maximized);p.node.classList.toggle('workspace-focused',p.active&&!p.minimized);
+    p.dockButton.classList.toggle('dock-minimized',p.minimized);p.dockButton.classList.toggle('dock-active',p.active&&!p.minimized);
+    p.maximizeButton.textContent=p.maximized?'❐':'□';p.maximizeButton.title=p.maximized?'Restore':'Maximize';
+  }},
+  closePanel(id){
+    const p=this.panels.get(id);if(!p)return;
+    for(const timer of p.timers)clearInterval(timer);for(const controller of p.controllers)controller.abort();
+    if(p.options.cleanup)p.options.cleanup();p.node.remove();p.dockButton.remove();this.panels.delete(id);
+    if(this.maximized===id)this.maximized=null;
+    const next=[...this.panels.values()].filter(item=>!item.minimized).sort((a,b)=>b.zIndex-a.zIndex)[0];
+    if(p.active&&next)this.focusPanel(next.id);else this.layout();
+  },
+  completeSwitchRender(render){
+    const foreground=[...this.panels.values()].find(p=>p.active&&!p.minimized);
+    render();
+    // Completion must not interrupt an application the user opened while waiting.
+    if(foreground&&!['ran','switch'].includes(foreground.id)&&this.panels.has(foreground.id))this.focusPanel(foreground.id);
+  },
   isPanelOpen(id){return this.panels.has(id);},
   setRefresh(id,refresh){const p=this.panels.get(id);if(p)p.options.refresh=refresh;},
   ownTimer(id,timer){const p=this.panels.get(id);if(p)p.timers.add(timer);},
@@ -1221,10 +1284,12 @@ async function showExternalPanel(btn,key){
     const frame=Workspace.panels.get(key)?.body.querySelector('iframe');
     if(frame)frame.src=frame.src;
   });if(!body)return;
+  body.classList.add('workspace-external');
   const link=document.createElement('a');link.textContent='Open in new tab ↗';link.href=links[key];link.target='_blank';link.rel='noopener';body.appendChild(link);
   if(key==='osm'){const status=document.createElement('div');status.id='osm-status';body.appendChild(status);}
   const frame=document.createElement('iframe');frame.src=links[key];frame.style.width='100%';frame.style.border='0';
   frame.setAttribute('sandbox','allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation');body.appendChild(frame);
+  const shield=document.createElement('div');shield.className='workspace-iframe-shield';shield.title='Focus '+p.label;shield.onclick=()=>Workspace.focusPanel(key);Workspace.panels.get(key).node.appendChild(shield);
   if(key==='osm')loadOsmStatus();
 }
 
@@ -1489,7 +1554,7 @@ async function refreshSwitchedScenario(key,name,sub){
   document.querySelectorAll(".stack-btn").forEach(b=>b.classList.toggle("sel",b.dataset.stack===stack));
   if(architecture)selectedArch={key:architecture,label:name,additive:!!scenario.additive};
   selectedStack=stack?{key:stack,label:stack}:null;
-  showComboDeployedPanel(scenario.key,name,sub,stack);
+  Workspace.completeSwitchRender(()=>showComboDeployedPanel(scenario.key,name,sub,stack));
   document.getElementById("clean-badge").textContent="✓ Switch complete";
   await Promise.allSettled([verifyClean(true),refreshLiveBar(),loadPods(),
     fetchRuntime(scenario.key,"ranpbody","status")]);
