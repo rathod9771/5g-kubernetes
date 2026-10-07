@@ -350,7 +350,7 @@ class AdversarialTests(unittest.TestCase):
         import service_entry
         cfg=self.cfg({'DASHBOARD_PORT':'8092','RANCHER_PORT':'8444'})
         for kind in ('dashboard','watcher','rancher-forward'):
-            with mock.patch.object(service_entry,'load_config',return_value=cfg),mock.patch.object(sys,'argv',['service_entry.py',kind,str(self.base/'snapshot.json')]),mock.patch.object(service_entry.os,'execv') as execv,mock.patch.object(service_entry.os,'execvp',side_effect=RuntimeError('mock exec boundary')) as execvp,mock.patch.dict(os.environ,{'OSM_PASSWORD':'synthetic-inherited'}):
+            with mock.patch.object(service_entry,'ensure_osm_ca') as trust, mock.patch.object(service_entry,'load_config',return_value=cfg),mock.patch.object(sys,'argv',['service_entry.py',kind,str(self.base/'snapshot.json')]),mock.patch.object(service_entry.os,'execv') as execv,mock.patch.object(service_entry.os,'execvp',side_effect=RuntimeError('mock exec boundary')) as execvp,mock.patch.dict(os.environ,{'OSM_PASSWORD':'synthetic-inherited'}):
                 if kind=='rancher-forward':
                     with self.assertRaises(RuntimeError):service_entry.main()
                     argv=execvp.call_args.args[1]
@@ -361,6 +361,7 @@ class AdversarialTests(unittest.TestCase):
                     binary,argv=execv.call_args.args
                     self.assertEqual(argv[0],binary)
                     self.assertEqual(argv[1],str(self.root/('ran-selector/backend.py' if kind=='dashboard' else 'layer3-autonomous/watcher.py')))
+                trust.assert_called_with(cfg)
                 self.assertNotIn('OSM_PASSWORD',os.environ)
 
 

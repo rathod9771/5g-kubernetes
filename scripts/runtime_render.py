@@ -51,8 +51,23 @@ def service_configuration(kind, cfg):
 
 def check_installed_service(kind, cfg, unit):
     try:
-        if Path(unit).read_text() != render_service(kind, cfg):
-            raise ConfigError('Running service configuration differs; explicitly review and restart before installation')
+        installed = Path(unit).read_text()
+        if installed != render_service(kind, cfg):
+            # Older service units hashed an empty CA setting before the shared
+            # managed trust file was provisioned. Their launcher reloads the
+            # private snapshot; no ExecStart/user/context change is involved.
+            legacy = dict(cfg, OSM_CA_CERT_PATH='')
+            managed = Path(cfg['RUNTIME_DIR']) / 'osm-ca.crt'
+            compatible = (cfg.get('OSM_CA_CERT_PATH') == str(managed.resolve()) and
+                          installed == render_service(kind, legacy))
+            if not compatible:
+                raise ConfigError('Running service configuration differs; explicitly review and restart before installation')
+            from osm_tls import validate_certificate
+            from runtime_config import private_text
+            certificate, mode = private_text(managed, required=True)
+            if mode & 0o022:
+                raise ConfigError('Managed CA must not be group/world writable')
+            validate_certificate(certificate.encode('utf-8'))
         snapshot = Path(cfg['RUNTIME_DIR']) / (kind + '-service.json')
         if read_snapshot(snapshot) != {k: service_configuration(kind, cfg)[k] for k in DEFAULTS}:
             raise ConfigError('Running service private configuration differs; explicitly review and restart before installation')
@@ -117,14 +132,16 @@ def main():
     parser.add_argument('--check-installed', action='store_true', help='Fail on service configuration drift without writing')
     args = parser.parse_args()
     try:
-        cfg = load_config(network='auto', require=('osm', 'kubernetes') if args.kind == 'init-state' else
-                          ('watcher',) if args.kind == 'watcher' else ())
+        cfg = dict(load_config(network='auto', require=('osm', 'kubernetes') if args.kind == 'init-state' else
+                          ('watcher',) if args.kind == 'watcher' else ()))
         if args.check_installed:
             if args.kind not in ('dashboard', 'watcher') or not args.source:
                 raise ConfigError('Service check requires dashboard/watcher and an installed unit path')
             check_installed_service(args.kind, cfg, args.source)
             return
         if args.kind in ('dashboard', 'watcher', 'rancher-forward'):
+            from osm_tls import ensure_osm_ca
+            ensure_osm_ca(cfg)
             write_snapshot(Path(cfg['RUNTIME_DIR']) / (args.kind + '-service.json'), service_configuration(args.kind, cfg))
             print(render_service(args.kind, cfg), end='')
         elif args.kind == 'manifest':

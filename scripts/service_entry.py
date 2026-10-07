@@ -2,7 +2,8 @@
 import os
 from pathlib import Path
 import sys
-from runtime_config import ConfigError, load_config
+from runtime_config import ConfigError, load_config, write_snapshot
+from osm_tls import ensure_osm_ca
 
 
 def main():
@@ -10,7 +11,9 @@ def main():
         raise ConfigError('Invalid service launch request')
     kind, snapshot = sys.argv[1:]
     os.environ['P0_RUNTIME_CONFIG'] = snapshot
-    cfg = load_config(require=('watcher',) if kind == 'watcher' else ())
+    cfg = dict(load_config(require=('watcher',) if kind == 'watcher' else ()))
+    ensure_osm_ca(cfg)
+    write_snapshot(snapshot, cfg)
     # Snapshot is authoritative. Strip inherited secret variables from subprocess environments.
     from runtime_config import SECRETS
     for name in SECRETS:

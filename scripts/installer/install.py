@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """Explicit target-machine installer. Static imports never perform lifecycle work."""
 import argparse
-import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import secrets
-import re
-import ssl
 import shutil
 import subprocess
 import sys
@@ -419,26 +416,47 @@ class Installer:
         if not matches():
             raise ConfigError('OSM LCM reference GitOps configuration missing after reconciliation; readiness refused')
 
+    def reconcile_ingress_certificates(self):
+        """Repair only ingress leaf identity/purpose, preserving the existing CA."""
+        from urllib.parse import urlsplit
+        targets = [('ngui', urlsplit(self.cfg['OSM_HOST']).hostname, 'ngui-cert'),
+                   ('nbi', 'nbi.' + self.cfg['OSM_BASE_DOMAIN'], 'nbi-cert')]
+        for name, host, secret in targets:
+            certificate = self.kjson('get', 'certificate', name, '-n', self.cfg['OSM_NAMESPACE'])
+            spec = certificate.get('spec', {})
+            issuer = spec.get('issuerRef', {})
+            if (spec.get('secretName') != secret or spec.get('isCA') or
+                    issuer.get('name') != 'ca-issuer' or issuer.get('kind', 'Issuer') != 'Issuer' or
+                    issuer.get('group', 'cert-manager.io') != 'cert-manager.io'):
+                raise ConfigError('OSM TLS: unexpected issuer/Secret for Certificate/' + name + '; explicit review required')
+            usages = spec.get('usages', [])
+            if spec.get('dnsNames') == [host] and 'server auth' in usages:
+                continue
+            desired = list(usages)
+            if 'server auth' not in desired:
+                desired.append('server auth')
+            patch = {'spec': {'dnsNames': [host], 'usages': desired}}
+            self.kubectl('patch', 'certificate', name, '-n', self.cfg['OSM_NAMESPACE'],
+                         '--type=merge', '-p', json.dumps(patch),
+                         context='OSM ingress TLS Certificate/' + name + ' reconciliation')
+            # Old Ready=True may remain until cert-manager observes the new spec.
+            for attempt in range(60):
+                current = self.kjson('get', 'certificate', name, '-n', self.cfg['OSM_NAMESPACE'])
+                if any(c.get('type') == 'Ready' and c.get('status') == 'True' and
+                       c.get('observedGeneration') == current.get('metadata', {}).get('generation')
+                       for c in current.get('status', {}).get('conditions', [])):
+                    break
+                time.sleep(2)
+            else:
+                raise ConfigError('OSM ingress TLS Certificate/' + name + ' reissuance not Ready at current generation')
+
     def export_osm_ca(self):
         """Export only the target cluster's public CA; never request its private key."""
         result = self.kubectl('get', 'secret', 'osm-ca', '-n', self.cfg['OSM_NAMESPACE'],
                               '-o', 'jsonpath={.data.tls\\.crt}',
                               context='OSM TLS trust: read osm-ca tls.crt', retry_network=True)
-        try:
-            certificate = base64.b64decode(result.stdout.strip(), validate=True)
-            # A certificate-only PEM bundle rejects keys and unrelated Secret data.
-            pattern = rb'(?:\s*-----BEGIN CERTIFICATE-----\s+[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----\s*)+'
-            if not re.fullmatch(pattern, certificate):
-                raise ValueError()
-            trust = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            trust.load_verify_locations(cadata=certificate.decode('ascii'))
-            if not trust.get_ca_certs():
-                raise ValueError()
-        except (ValueError, UnicodeError, ssl.SSLError):
-            raise ConfigError('OSM TLS trust: osm-ca tls.crt is missing or invalid public certificate material') from None
-        ca_path = self.directory / 'osm-ca.crt'
-        atomic_write(ca_path, certificate)
-        self.cfg['OSM_CA_CERT_PATH'] = str(ca_path.resolve())
+        from osm_tls import ensure_osm_ca
+        ca_path = ensure_osm_ca(self.cfg, refresh=True, read_certificate=lambda: result.stdout)
         self.snapshot()
         return ca_path
 
@@ -446,6 +464,7 @@ class Installer:
         chart = self.osm_source()
         self.prepare_management_credentials()
         self.release('osm', self.cfg['OSM_NAMESPACE'], str(chart), self.lock['osm'], osm_values(self.cfg, self.lock), wait=False)
+        self.reconcile_ingress_certificates()
         self.reconcile_lcm_gitops(chart)
         self.validate_lcm_management(chart)
         self.kubectl('wait', 'certificate', '--all', '-n', self.cfg['OSM_NAMESPACE'], '--for=condition=Ready', '--timeout=600s')
