@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Build one private self-extracting installer for a fresh target machine.
-# The generated .run file contains private subscriber data and the approved
-# srsRAN image export. Never commit or publish the generated file.
+# The generated .run file contains only the private subscriber archive.
+# srsRAN is built automatically on the target from the pinned upstream revision.
 set -euo pipefail
 case $- in *x*) set +x ;; esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUBSCRIBER_ARCHIVE="${HOME}/private-5g-input/open5gs-subscribers.archive.gz"
-SRSRAN_ARCHIVE="${HOME}/private-5g-input/srsran-approved.tar"
 OUTPUT="${HOME}/5g-orchestrator-installer.run"
 BRANCH="reproducible-installer"
 REPO_URL="https://github.com/rathod9771/5g-kubernetes.git"
@@ -19,7 +18,6 @@ Usage:
 
 Options:
   --subscriber-archive PATH   Open5GS mongodump gzip archive
-  --srsran-image-archive PATH Approved srsRAN Docker export
   --output PATH               Generated private installer
 EOF
 }
@@ -27,7 +25,6 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --subscriber-archive) SUBSCRIBER_ARCHIVE="$2"; shift 2 ;;
-    --srsran-image-archive) SRSRAN_ARCHIVE="$2"; shift 2 ;;
     --output) OUTPUT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR: unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -38,16 +35,7 @@ done
   echo "ERROR: subscriber archive not found: $SUBSCRIBER_ARCHIVE" >&2
   exit 1
 }
-[[ -f "$SRSRAN_ARCHIVE" && ! -L "$SRSRAN_ARCHIVE" ]] || {
-  echo "ERROR: approved srsRAN archive not found: $SRSRAN_ARCHIVE" >&2
-  echo "The exact approved export is required; a newly-created export is not assumed equivalent." >&2
-  exit 1
-}
 
-# Authenticate the approved srsRAN export against the repository integrity lock.
-PYTHONPATH="$REPO_ROOT/scripts" python3 -B "$REPO_ROOT/scripts/srsran_image.py" verify "$SRSRAN_ARCHIVE"
-
-# Validate the private subscriber archive without printing its contents.
 python3 - "$SUBSCRIBER_ARCHIVE" <<'PY'
 import os, stat, sys
 p = sys.argv[1]
@@ -69,8 +57,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/payload"
 cp -- "$SUBSCRIBER_ARCHIVE" "$TMP/payload/open5gs-subscribers.archive.gz"
-cp -- "$SRSRAN_ARCHIVE" "$TMP/payload/srsran-approved.tar"
-chmod 600 "$TMP/payload/"*
+chmod 600 "$TMP/payload/open5gs-subscribers.archive.gz"
 tar -C "$TMP/payload" -czf "$TMP/payload.tar.gz" .
 
 umask 077
@@ -115,7 +102,7 @@ chmod 700 "\$PRIVATE_DIR"
 PAYLOAD_LINE=\$(awk '/^__PRIVATE_PAYLOAD_BELOW__\$/ {print NR + 1; exit}' "\$0")
 [[ -n "\$PAYLOAD_LINE" ]] || { echo "ERROR: installer payload marker missing" >&2; exit 1; }
 tail -n +"\$PAYLOAD_LINE" "\$0" | tar -xzf - -C "\$PRIVATE_DIR"
-chmod 600 "\$PRIVATE_DIR/open5gs-subscribers.archive.gz" "\$PRIVATE_DIR/srsran-approved.tar"
+chmod 600 "\$PRIVATE_DIR/open5gs-subscribers.archive.gz"
 
 cd "\$REPO"
 if [[ ! -f config/global.env ]]; then
@@ -141,9 +128,10 @@ if not seen:
 cfg.write_text("\n".join(out) + "\n")
 PY
 
-echo "Private inputs installed securely."
-echo "Starting 5G Orchestrator installation..."
-exec ./install.sh --srsran-image-archive "\$PRIVATE_DIR/srsran-approved.tar"
+echo "Private subscriber input installed securely."
+echo "Starting 5G Orchestrator installation."
+echo "srsRAN will be built automatically from the repository-pinned source revision."
+exec ./install.sh
 exit 0
 __PRIVATE_PAYLOAD_BELOW__
 EOF
@@ -154,8 +142,8 @@ echo "Created private one-command installer:"
 echo "  $OUTPUT"
 echo
 echo "Transfer this file securely to the target machine."
-echo "On the target machine, the only command required is:"
+echo "On the target machine, run only:"
 echo "  bash ~/$(basename "$OUTPUT")"
 echo
-echo "WARNING: this generated file contains private subscriber data and the approved srsRAN image."
-echo "Never commit, upload, email publicly, or place it in the repository."
+echo "WARNING: this generated file contains private subscriber data."
+echo "Never commit or publish it."
