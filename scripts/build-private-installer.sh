@@ -250,18 +250,42 @@ for record in "${POLICY_IMAGES[@]}"; do
   fi
 done
 
-echo "Collecting complete validated k8s.io image cache..."
-mapfile -t IMAGE_REFS < <(sudo ctr -n k8s.io images list -q | sort -u)
+echo "Collecting required validated image set..."
+mapfile -t IMAGE_REFS < <(python3 - "$REPO_ROOT/config/reference-versions.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+refs=set(d.get("images", {}).keys())
+for image in d["ran_images"]["components"].values():
+    if image.get("runtime_reference") == "local-tag":
+        refs.add(image["repository"] + ":" + image["tag"])
+    elif image.get("digest"):
+        refs.add(image["repository"] + "@" + image["digest"])
+    else:
+        refs.add(image["repository"] + ":" + image["tag"])
+for ref in sorted(refs):
+    print(ref)
+PY
+)
+
 [[ "${#IMAGE_REFS[@]}" -gt 0 ]] || {
-  echo "ERROR: no containerd images were found." >&2
+  echo "ERROR: image policy produced no bundle references." >&2
   exit 1
 }
 
+for ref in "${IMAGE_REFS[@]}"; do
+  sudo ctr -n k8s.io images list -q | grep -Fxq "$ref" || {
+    echo "ERROR: required bundle image reference is missing after reconciliation: $ref" >&2
+    exit 1
+  }
+done
+
 printf '%s\n' "${IMAGE_REFS[@]}" > "$PAYLOAD/image-refs.txt"
 
-echo "Exporting ${#IMAGE_REFS[@]} container image references."
+echo "Exporting ${#IMAGE_REFS[@]} required validated container image references."
+echo "Unrelated/stale source-host cache entries are intentionally excluded."
 echo "This file can be large and may take several minutes..."
-sudo ctr -n k8s.io images export --platform linux/amd64   "$PAYLOAD/container-images.tar" "${IMAGE_REFS[@]}"
+sudo ctr -n k8s.io images export --platform linux/amd64 \
+  "$PAYLOAD/container-images.tar" "${IMAGE_REFS[@]}"
 sudo chown "$(id -u):$(id -g)" "$PAYLOAD/container-images.tar"
 
 (
