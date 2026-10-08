@@ -190,13 +190,7 @@ for record in "${POLICY_IMAGES[@]}"; do
   fi
 
   if [[ "$mode" == locked ]]; then
-    if [[ -n "$current_digest" ]]; then
-      [[ "$current_digest" == "$expected_digest" ]] || {
-        echo "ERROR: cached policy image has the wrong digest: $ref" >&2
-        echo "Expected: $expected_digest" >&2
-        echo "Found:    $current_digest" >&2
-        exit 1
-      }
+    if [[ -n "$current_digest" && "$current_digest" == "$expected_digest" ]]; then
       continue
     fi
 
@@ -204,16 +198,26 @@ for record in "${POLICY_IMAGES[@]}"; do
     if [[ "$ref" != *@sha256:* ]]; then
       immutable="$ref@$expected_digest"
     fi
-    echo "Pulling missing digest-locked image: $ref"
+
+    if [[ -n "$current_digest" ]]; then
+      echo "Reconciling cached policy image to locked digest: $ref"
+      echo "  cached:   $current_digest"
+      echo "  required: $expected_digest"
+    else
+      echo "Pulling missing digest-locked image: $ref"
+    fi
+
     sudo ctr -n k8s.io images pull --platform linux/amd64 "$immutable"
 
     if [[ "$immutable" != "$ref" ]]; then
-      sudo ctr -n k8s.io images tag "$immutable" "$ref" >/dev/null
+      sudo ctr -n k8s.io images tag --force "$immutable" "$ref" >/dev/null
     fi
 
     current_digest="$(image_digest "$ref")"
     [[ "$current_digest" == "$expected_digest" ]] || {
-      echo "ERROR: pulled image did not resolve to the locked digest: $ref" >&2
+      echo "ERROR: digest reconciliation failed for policy image: $ref" >&2
+      echo "Expected: $expected_digest" >&2
+      echo "Found:    ${current_digest:-<missing>}" >&2
       exit 1
     }
     continue
