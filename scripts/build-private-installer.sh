@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Build one private self-extracting installer for a fresh target machine.
-# The generated .run file contains only the private subscriber archive.
-# srsRAN is built automatically on the target from the pinned upstream revision.
+# Build a private, self-extracting, one-command handover installer.
+#
+# The generated .run file contains:
+#   - the exact tracked repository snapshot at the current commit
+#   - the private Open5GS subscriber archive
+#   - a containerd export containing every image cached on this validated source host
+#     plus every image declared by config/reference-versions.json / ran_images
+#
+# Never commit or publish the generated .run file.
 set -euo pipefail
 case $- in *x*) set +x ;; esac
 
@@ -9,7 +15,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUBSCRIBER_ARCHIVE="${HOME}/private-5g-input/open5gs-subscribers.archive.gz"
 OUTPUT="${HOME}/5g-orchestrator-installer.run"
 BRANCH="reproducible-installer"
-REPO_URL="https://github.com/rathod9771/5g-kubernetes.git"
 
 usage() {
   cat <<'EOF'
@@ -17,8 +22,14 @@ Usage:
   scripts/build-private-installer.sh [options]
 
 Options:
-  --subscriber-archive PATH   Open5GS mongodump gzip archive
-  --output PATH               Generated private installer
+  --subscriber-archive PATH   Private Open5GS subscriber archive
+  --output PATH               Generated private handover installer
+  -h, --help                  Show this help
+
+The source host must already be a validated installation with containerd running.
+The script pulls any missing policy-declared registry images, verifies the local
+srsRAN image exists, exports the complete k8s.io image cache, embeds the tracked
+repository snapshot and private subscriber input, and emits one .run file.
 EOF
 }
 
@@ -30,6 +41,21 @@ while [[ $# -gt 0 ]]; do
     *) echo "ERROR: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+[[ "${EUID}" -ne 0 ]] || {
+  echo "ERROR: run the bundle builder as the intended normal user, not root." >&2
+  exit 1
+}
+
+[[ -d "$REPO_ROOT/.git" ]] || {
+  echo "ERROR: repository metadata is required to create a pinned handover snapshot." >&2
+  exit 1
+}
+
+[[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]] || {
+  echo "ERROR: tracked repository changes are present; commit or intentionally revert them before building the handover bundle." >&2
+  exit 1
+}
 
 [[ -f "$SUBSCRIBER_ARCHIVE" && ! -L "$SUBSCRIBER_ARCHIVE" ]] || {
   echo "ERROR: subscriber archive not found: $SUBSCRIBER_ARCHIVE" >&2
@@ -52,13 +78,89 @@ finally:
     os.close(fd)
 PY
 
+sudo -v
+command -v ctr >/dev/null 2>&1 || {
+  echo "ERROR: ctr is required on the validated source host." >&2
+  exit 1
+}
+sudo systemctl is-active --quiet containerd || {
+  echo "ERROR: containerd is not active on the validated source host." >&2
+  exit 1
+}
+
 EXPECTED_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+EXPECTED_BRANCH="$(git -C "$REPO_ROOT" branch --show-current)"
+[[ "$EXPECTED_BRANCH" == "$BRANCH" ]] || {
+  echo "ERROR: build the handover bundle from branch $BRANCH; current branch is $EXPECTED_BRANCH." >&2
+  exit 1
+}
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/payload"
-cp -- "$SUBSCRIBER_ARCHIVE" "$TMP/payload/open5gs-subscribers.archive.gz"
-chmod 600 "$TMP/payload/open5gs-subscribers.archive.gz"
-tar -C "$TMP/payload" -czf "$TMP/payload.tar.gz" .
+PAYLOAD="$TMP/payload"
+mkdir -p "$PAYLOAD"
+
+echo "Preparing private subscriber input..."
+cp -- "$SUBSCRIBER_ARCHIVE" "$PAYLOAD/open5gs-subscribers.archive.gz"
+chmod 600 "$PAYLOAD/open5gs-subscribers.archive.gz"
+
+echo "Creating pinned repository snapshot: $EXPECTED_COMMIT"
+git -C "$REPO_ROOT" archive --format=tar.gz --prefix=5g-kubernetes/   -o "$PAYLOAD/repository.tar.gz" "$EXPECTED_COMMIT"
+
+echo "Ensuring every policy-declared runtime image is available..."
+mapfile -t POLICY_IMAGES < <(python3 - "$REPO_ROOT/config/reference-versions.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+refs=set(d.get("images", {}).keys())
+for image in d["ran_images"]["components"].values():
+    if image.get("runtime_reference") == "local-tag":
+        refs.add(image["repository"] + ":" + image["tag"])
+    elif image.get("digest"):
+        refs.add(image["repository"] + "@" + image["digest"])
+    else:
+        refs.add(image["repository"] + ":" + image["tag"])
+for ref in sorted(refs):
+    print(ref)
+PY
+)
+
+for ref in "${POLICY_IMAGES[@]}"; do
+  if sudo ctr -n k8s.io images list -q | grep -Fxq "$ref"; then
+    continue
+  fi
+
+  if [[ "$ref" == localhost/5g-kubernetes/srsran:* ]]; then
+    echo "ERROR: required locally-built srsRAN image is missing: $ref" >&2
+    echo "Run ./install.sh on the validated source host first, then rebuild the handover bundle." >&2
+    exit 1
+  fi
+
+  echo "Pulling missing policy image: $ref"
+  sudo ctr -n k8s.io images pull --platform linux/amd64 "$ref"
+done
+
+echo "Collecting complete validated k8s.io image cache..."
+mapfile -t IMAGE_REFS < <(sudo ctr -n k8s.io images list -q | sort -u)
+[[ "${#IMAGE_REFS[@]}" -gt 0 ]] || {
+  echo "ERROR: no containerd images were found." >&2
+  exit 1
+}
+
+printf '%s\n' "${IMAGE_REFS[@]}" > "$PAYLOAD/image-refs.txt"
+
+echo "Exporting ${#IMAGE_REFS[@]} container image references."
+echo "This file can be large and may take several minutes..."
+sudo ctr -n k8s.io images export --platform linux/amd64   "$PAYLOAD/container-images.tar" "${IMAGE_REFS[@]}"
+sudo chown "$(id -u):$(id -g)" "$PAYLOAD/container-images.tar"
+
+(
+  cd "$PAYLOAD"
+  sha256sum repository.tar.gz open5gs-subscribers.archive.gz container-images.tar image-refs.txt > SHA256SUMS
+)
+
+echo "Creating self-extracting handover installer..."
+PAYLOAD_TAR="$TMP/payload.tar"
+tar -C "$PAYLOAD" -cf "$PAYLOAD_TAR" .
 
 umask 077
 cat > "$OUTPUT" <<EOF
@@ -66,61 +168,75 @@ cat > "$OUTPUT" <<EOF
 set -euo pipefail
 case \$- in *x*) set +x ;; esac
 
-REPO_URL='$REPO_URL'
-BRANCH='$BRANCH'
 EXPECTED_COMMIT='$EXPECTED_COMMIT'
-REPO="\${HOME}/5g-kubernetes"
+TARGET_REPO="\${HOME}/5g-kubernetes"
 PRIVATE_DIR="\${HOME}/private-5g-input"
+WORK="\$(mktemp -d)"
+trap 'rm -rf "\$WORK"' EXIT
 
 if [[ "\${EUID}" -eq 0 ]]; then
-  echo "ERROR: run this as the intended normal user, not root." >&2
+  echo "ERROR: run this installer as the intended normal user, not root." >&2
   exit 1
 fi
 
-if ! command -v git >/dev/null 2>&1; then
-  sudo apt-get update
-  sudo apt-get install -y git
+sudo -v
+
+PAYLOAD_LINE=\$(awk '/^__PRIVATE_PAYLOAD_BELOW__\$/ {print NR + 1; exit}' "\$0")
+[[ -n "\$PAYLOAD_LINE" ]] || {
+  echo "ERROR: installer payload marker missing." >&2
+  exit 1
+}
+
+tail -n +"\$PAYLOAD_LINE" "\$0" | tar -xf - -C "\$WORK"
+(
+  cd "\$WORK"
+  sha256sum -c SHA256SUMS
+)
+
+echo "Installing minimum host prerequisites..."
+sudo apt-get update
+sudo apt-get install -y ca-certificates containerd python3 python3-yaml iproute2
+sudo systemctl enable --now containerd
+
+if [[ -e /etc/kubernetes/admin.conf ]]; then
+  echo "ERROR: target already contains a Kubernetes control plane."
+  echo "Use this handover installer only on the intended fresh target host." >&2
+  exit 1
 fi
 
-if [[ ! -d "\$REPO/.git" ]]; then
-  git clone -b "\$BRANCH" "\$REPO_URL" "\$REPO"
-else
-  if [[ -n "\$(git -C "\$REPO" status --porcelain --untracked-files=no)" ]]; then
-    echo "ERROR: existing ~/5g-kubernetes has tracked local changes; refusing to overwrite them." >&2
-    exit 1
-  fi
-  git -C "\$REPO" fetch origin "\$BRANCH"
-  git -C "\$REPO" checkout "\$BRANCH"
+echo "Importing bundled container images into Kubernetes containerd..."
+sudo ctr -n k8s.io images import --platform linux/amd64 "\$WORK/container-images.tar" >/dev/null
+
+echo "Installing pinned repository snapshot..."
+if [[ -e "\$TARGET_REPO" ]]; then
+  echo "ERROR: \$TARGET_REPO already exists; refusing to overwrite it." >&2
+  exit 1
 fi
 
-git -C "\$REPO" cat-file -e "\$EXPECTED_COMMIT^{commit}" 2>/dev/null || git -C "\$REPO" fetch origin "\$EXPECTED_COMMIT"
-git -C "\$REPO" reset --hard "\$EXPECTED_COMMIT"
+mkdir -p "\$HOME"
+tar -xzf "\$WORK/repository.tar.gz" -C "\$HOME"
+
+cd "\$TARGET_REPO"
+actual_tree=\$(git init -q /tmp/5g-handover-git-\$$ 2>/dev/null || true)
+rm -rf /tmp/5g-handover-git-\$$ 2>/dev/null || true
 
 mkdir -p "\$PRIVATE_DIR"
 chmod 700 "\$PRIVATE_DIR"
+install -m 600 "\$WORK/open5gs-subscribers.archive.gz"   "\$PRIVATE_DIR/open5gs-subscribers.archive.gz"
 
-PAYLOAD_LINE=\$(awk '/^__PRIVATE_PAYLOAD_BELOW__\$/ {print NR + 1; exit}' "\$0")
-[[ -n "\$PAYLOAD_LINE" ]] || { echo "ERROR: installer payload marker missing" >&2; exit 1; }
-tail -n +"\$PAYLOAD_LINE" "\$0" | tar -xzf - -C "\$PRIVATE_DIR"
-chmod 600 "\$PRIVATE_DIR/open5gs-subscribers.archive.gz"
-
-cd "\$REPO"
-if [[ ! -f config/global.env ]]; then
-  cp config/global.env.example config/global.env
-fi
+cp config/global.env.example config/global.env
 chmod 600 config/global.env
-python3 - "\$REPO/config/global.env" "\$PRIVATE_DIR/open5gs-subscribers.archive.gz" <<'PY'
+python3 - "\$TARGET_REPO/config/global.env" "\$PRIVATE_DIR/open5gs-subscribers.archive.gz" <<'PY'
 from pathlib import Path
 import sys
-cfg = Path(sys.argv[1])
-subscriber = sys.argv[2]
-lines = cfg.read_text().splitlines()
-out = []
-seen = False
-for line in lines:
+cfg=Path(sys.argv[1])
+subscriber=sys.argv[2]
+out=[]
+seen=False
+for line in cfg.read_text().splitlines():
     if line.startswith("SUBSCRIBER_DATABASE_INPUT="):
         out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
-        seen = True
+        seen=True
     else:
         out.append(line)
 if not seen:
@@ -128,22 +244,30 @@ if not seen:
 cfg.write_text("\n".join(out) + "\n")
 PY
 
-echo "Private subscriber input installed securely."
-echo "Starting 5G Orchestrator installation."
-echo "srsRAN will be built automatically from the repository-pinned source revision."
+echo "Bundled inputs ready:"
+echo "  repository commit: \$EXPECTED_COMMIT"
+echo "  private subscriber input: installed"
+echo "  container image bundle: imported"
+echo
+echo "Starting complete 5G Orchestrator installation..."
 exec ./install.sh
 exit 0
 __PRIVATE_PAYLOAD_BELOW__
 EOF
-cat "$TMP/payload.tar.gz" >> "$OUTPUT"
+
+cat "$PAYLOAD_TAR" >> "$OUTPUT"
 chmod 600 "$OUTPUT"
 
-echo "Created private one-command installer:"
+echo
+echo "Created final private handover bundle:"
 echo "  $OUTPUT"
 echo
-echo "Transfer this file securely to the target machine."
-echo "On the target machine, run only:"
-echo "  bash ~/$(basename "$OUTPUT")"
+echo "Bundle size:"
+du -h "$OUTPUT"
 echo
-echo "WARNING: this generated file contains private subscriber data."
+echo "This single file contains private subscriber data and the complete validated container image cache."
 echo "Never commit or publish it."
+echo
+echo "Transfer it securely to the target machine."
+echo "The target operator runs only:"
+echo "  bash ~/$(basename "$OUTPUT")"
