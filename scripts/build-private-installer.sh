@@ -176,6 +176,13 @@ image_digest() {
   sudo ctr -n k8s.io images list | awk -v ref="$ref" '$1==ref {print $3; exit}'
 }
 
+image_complete() {
+  local ref="$1"
+  local out
+  out="$(sudo ctr -n k8s.io images check --quiet "name==$ref" 2>/dev/null || true)"
+  [[ "$out" == "$ref" ]]
+}
+
 ctr_pull_ref() {
   # ctr does not apply Docker Hub's implicit docker.io/library-style name
   # normalization. Kubernetes/Docker accept oaisoftwarealliance/oai-gnb:tag,
@@ -202,11 +209,16 @@ for record in "${POLICY_IMAGES[@]}"; do
       echo "Run ./install.sh on the validated source host first, then rebuild the handover bundle." >&2
       exit 1
     }
+    image_complete "$ref" || {
+      echo "ERROR: required local runtime image is incomplete in containerd: $ref" >&2
+      echo "Rebuild/reimport the approved local image before creating the handover bundle." >&2
+      exit 1
+    }
     continue
   fi
 
   if [[ "$mode" == locked ]]; then
-    if [[ -n "$current_digest" && "$current_digest" == "$expected_digest" ]]; then
+    if [[ -n "$current_digest" && "$current_digest" == "$expected_digest" ]] && image_complete "$ref"; then
       continue
     fi
 
@@ -217,7 +229,7 @@ for record in "${POLICY_IMAGES[@]}"; do
     pull_immutable="$(ctr_pull_ref "$immutable")"
 
     if [[ -n "$current_digest" ]]; then
-      echo "Reconciling cached policy image to locked digest: $ref"
+      echo "Reconciling cached policy image to locked/complete state: $ref"
       echo "  cached:   $current_digest"
       echo "  required: $expected_digest"
     else
@@ -240,13 +252,21 @@ for record in "${POLICY_IMAGES[@]}"; do
     continue
   fi
 
-  if [[ -z "$current_digest" ]]; then
-    echo "Pulling missing registry image: $ref"
+  if [[ -z "$current_digest" ]] || ! image_complete "$ref"; then
+    if [[ -n "$current_digest" ]]; then
+      echo "Repairing incomplete registry image: $ref"
+    else
+      echo "Pulling missing registry image: $ref"
+    fi
     pull_ref="$(ctr_pull_ref "$ref")"
     sudo ctr -n k8s.io images pull --platform linux/amd64 "$pull_ref"
     if [[ "$pull_ref" != "$ref" ]]; then
       sudo ctr -n k8s.io images tag --force "$pull_ref" "$ref" >/dev/null
     fi
+    image_complete "$ref" || {
+      echo "ERROR: registry image is still incomplete after pull: $ref" >&2
+      exit 1
+    }
   fi
 done
 
@@ -275,6 +295,10 @@ PY
 for ref in "${IMAGE_REFS[@]}"; do
   [[ -n "$(image_digest "$ref")" ]] || {
     echo "ERROR: required bundle image reference is missing after reconciliation: $ref" >&2
+    exit 1
+  }
+  image_complete "$ref" || {
+    echo "ERROR: required bundle image is incomplete after reconciliation: $ref" >&2
     exit 1
   }
 done
