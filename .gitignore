@@ -12,3 +12,7 @@ config/global.env
 /.runtime/
 # Dormant legacy state: already tracked; preserved until explicit untracking review.
 /ran-selector/active-ran.yaml
+
+# Private handover artifacts generated locally; never commit or publish.
+/private-inputs/
+*.run
