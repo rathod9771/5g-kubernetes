@@ -176,6 +176,22 @@ image_digest() {
   sudo ctr -n k8s.io images list | awk -v ref="$ref" '$1==ref {print $3; exit}'
 }
 
+ctr_pull_ref() {
+  # ctr does not apply Docker Hub's implicit docker.io/library-style name
+  # normalization. Kubernetes/Docker accept oaisoftwarealliance/oai-gnb:tag,
+  # while ctr interprets "oaisoftwarealliance" as a registry hostname.
+  local ref="$1"
+  local name="${ref%%[@:]*}"
+  local first="${name%%/*}"
+  if [[ "$name" != */* ]]; then
+    printf 'docker.io/library/%s\n' "$ref"
+  elif [[ "$first" != *.* && "$first" != *:* && "$first" != localhost ]]; then
+    printf 'docker.io/%s\n' "$ref"
+  else
+    printf '%s\n' "$ref"
+  fi
+}
+
 for record in "${POLICY_IMAGES[@]}"; do
   IFS='|' read -r ref expected_digest mode <<<"$record"
   current_digest="$(image_digest "$ref")"
@@ -225,7 +241,11 @@ for record in "${POLICY_IMAGES[@]}"; do
 
   if [[ -z "$current_digest" ]]; then
     echo "Pulling missing registry image: $ref"
-    sudo ctr -n k8s.io images pull --platform linux/amd64 "$ref"
+    pull_ref="$(ctr_pull_ref "$ref")"
+    sudo ctr -n k8s.io images pull --platform linux/amd64 "$pull_ref"
+    if [[ "$pull_ref" != "$ref" ]]; then
+      sudo ctr -n k8s.io images tag --force "$pull_ref" "$ref" >/dev/null
+    fi
   fi
 done
 
