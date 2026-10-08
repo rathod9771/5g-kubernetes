@@ -4,8 +4,8 @@
 # The generated .run file contains:
 #   - the exact tracked repository snapshot at the current commit
 #   - the private Open5GS subscriber archive
-#   - a containerd export containing every image cached on this validated source host
-#     plus every image declared by config/reference-versions.json / ran_images
+#   - a Docker-format linux/amd64 archive containing every image declared by
+#     config/reference-versions.json / ran_images
 #
 # Never commit or publish the generated .run file.
 set -euo pipefail
@@ -28,10 +28,10 @@ Options:
   --output PATH               Generated private handover installer
   -h, --help                  Show this help
 
-The source host must already be a validated installation with containerd running.
-The script pulls any missing policy-declared registry images, verifies the local
-srsRAN image exists, exports the complete k8s.io image cache, embeds the tracked
-repository snapshot and private subscriber input, and emits one .run file.
+The source host must already be a validated installation with Docker and
+containerd running. The script stages every required image as linux/amd64 in
+Docker, verifies the local srsRAN image exists, saves only the required images,
+embeds the tracked repository snapshot and private inputs, and emits one .run file.
 EOF
 }
 
@@ -111,8 +111,16 @@ for key in ("key", "opc"):
 PY
 
 sudo -v
+command -v docker >/dev/null 2>&1 || {
+  echo "ERROR: docker is required on the validated source host." >&2
+  exit 1
+}
 command -v ctr >/dev/null 2>&1 || {
   echo "ERROR: ctr is required on the validated source host." >&2
+  exit 1
+}
+sudo systemctl is-active --quiet docker || {
+  echo "ERROR: Docker daemon is not active on the validated source host." >&2
   exit 1
 }
 sudo systemctl is-active --quiet containerd || {
@@ -131,6 +139,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 PAYLOAD="$TMP/payload"
 mkdir -p "$PAYLOAD"
+rm -f -- "$OUTPUT"
 
 echo "Preparing private inputs..."
 cp -- "$SUBSCRIBER_ARCHIVE" "$PAYLOAD/open5gs-subscribers.archive.gz"
@@ -138,22 +147,16 @@ cp -- "$UE_SUBSCRIBER_INPUT" "$PAYLOAD/oai-ue-subscriber.json"
 chmod 600 "$PAYLOAD/open5gs-subscribers.archive.gz" "$PAYLOAD/oai-ue-subscriber.json"
 
 echo "Creating pinned repository snapshot: $EXPECTED_COMMIT"
-git -C "$REPO_ROOT" archive --format=tar.gz --prefix=5g-kubernetes/   -o "$PAYLOAD/repository.tar.gz" "$EXPECTED_COMMIT"
+git -C "$REPO_ROOT" archive --format=tar.gz --prefix=5g-kubernetes/ \
+  -o "$PAYLOAD/repository.tar.gz" "$EXPECTED_COMMIT"
 
-echo "Ensuring every policy-declared runtime image is available..."
+echo "Staging every required linux/amd64 image in Docker..."
 mapfile -t POLICY_IMAGES < <(python3 - "$REPO_ROOT/config/reference-versions.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
-
-# ref|digest|mode
-# mode=locked means the tag/reference must resolve to the exact policy digest.
-# mode=registry means the current policy intentionally defers the digest.
-# mode=local means bytes must already exist and must never be pulled.
 records={}
-
 for ref, digest in d.get("images", {}).items():
     records[ref]=(digest, "locked")
-
 for image in d["ran_images"]["components"].values():
     if image.get("runtime_reference") == "local-tag":
         ref=image["repository"] + ":" + image["tag"]
@@ -164,157 +167,68 @@ for image in d["ran_images"]["components"].values():
     else:
         ref=image["repository"] + ":" + image["tag"]
         records[ref]=("", "registry")
-
 for ref in sorted(records):
     digest, mode=records[ref]
     print(ref + "|" + digest + "|" + mode)
 PY
 )
 
-image_digest() {
-  local ref="$1"
-  sudo ctr -n k8s.io images list | awk -v ref="$ref" '$1==ref {print $3; exit}'
-}
-
-image_complete() {
-  local ref="$1"
-  local out
-  out="$(sudo ctr -n k8s.io images check --quiet "name==$ref" 2>/dev/null || true)"
-  [[ "$out" == "$ref" ]]
-}
-
-ctr_pull_ref() {
-  # ctr does not apply Docker Hub's implicit docker.io/library-style name
-  # normalization. Kubernetes/Docker accept oaisoftwarealliance/oai-gnb:tag,
-  # while ctr interprets "oaisoftwarealliance" as a registry hostname.
-  local ref="$1"
-  local name="${ref%%[@:]*}"
-  local first="${name%%/*}"
-  if [[ "$name" != */* ]]; then
-    printf 'docker.io/library/%s\n' "$ref"
-  elif [[ "$first" != *.* && "$first" != *:* && "$first" != localhost ]]; then
-    printf 'docker.io/%s\n' "$ref"
-  else
-    printf '%s\n' "$ref"
-  fi
-}
+: > "$PAYLOAD/image-refs.tsv"
+STAGING_REFS=()
+index=0
 
 for record in "${POLICY_IMAGES[@]}"; do
-  IFS='|' read -r ref expected_digest mode <<<"$record"
-  current_digest="$(image_digest "$ref")"
+  IFS='|' read -r runtime_ref expected_digest mode <<<"$record"
+  index=$((index + 1))
+  staging_ref="$(printf 'localhost/5g-handover/image-%03d:bundle' "$index")"
 
   if [[ "$mode" == local ]]; then
-    [[ -n "$current_digest" ]] || {
-      echo "ERROR: required local runtime image is missing: $ref" >&2
-      echo "Run ./install.sh on the validated source host first, then rebuild the handover bundle." >&2
+    sudo docker image inspect "$runtime_ref" >/dev/null 2>&1 || {
+      echo "ERROR: required local image is not present in Docker: $runtime_ref" >&2
+      echo "The pinned srsRAN build must remain available in Docker on the validated source host." >&2
       exit 1
     }
-    image_complete "$ref" || {
-      echo "ERROR: required local runtime image is incomplete in containerd: $ref" >&2
-      echo "Rebuild/reimport the approved local image before creating the handover bundle." >&2
-      exit 1
-    }
-    continue
+    image_id="$(sudo docker image inspect --format '{{.Id}}' "$runtime_ref")"
+  elif [[ "$mode" == locked ]]; then
+    immutable="$runtime_ref"
+    if [[ "$runtime_ref" != *@sha256:* ]]; then
+      immutable="$runtime_ref@$expected_digest"
+    fi
+    echo "Pulling/staging locked image: $runtime_ref"
+    sudo docker pull --platform linux/amd64 "$immutable" >/dev/null
+    image_id="$(sudo docker image inspect --format '{{.Id}}' "$immutable")"
+    sudo docker image inspect --format '{{json .RepoDigests}}' "$immutable" | \
+      python3 - "$expected_digest" <<'PY'
+import json, sys
+expected=sys.argv[1]
+digests=json.load(sys.stdin) or []
+if not any(item.endswith("@" + expected) for item in digests):
+    raise SystemExit("ERROR: Docker pull did not resolve to the required digest")
+PY
+  else
+    echo "Pulling/staging registry image: $runtime_ref"
+    sudo docker pull --platform linux/amd64 "$runtime_ref" >/dev/null
+    image_id="$(sudo docker image inspect --format '{{.Id}}' "$runtime_ref")"
   fi
 
-  if [[ "$mode" == locked ]]; then
-    if [[ -n "$current_digest" && "$current_digest" == "$expected_digest" ]] && image_complete "$ref"; then
-      continue
-    fi
-
-    immutable="$ref"
-    if [[ "$ref" != *@sha256:* ]]; then
-      immutable="$ref@$expected_digest"
-    fi
-    pull_immutable="$(ctr_pull_ref "$immutable")"
-
-    if [[ -n "$current_digest" ]]; then
-      echo "Reconciling cached policy image to locked/complete state: $ref"
-      echo "  cached:   $current_digest"
-      echo "  required: $expected_digest"
-    else
-      echo "Pulling missing digest-locked image: $ref"
-    fi
-
-    sudo ctr -n k8s.io images pull --platform linux/amd64 "$pull_immutable"
-
-    if [[ "$pull_immutable" != "$ref" ]]; then
-      sudo ctr -n k8s.io images tag --force "$pull_immutable" "$ref" >/dev/null
-    fi
-
-    current_digest="$(image_digest "$ref")"
-    [[ "$current_digest" == "$expected_digest" ]] || {
-      echo "ERROR: digest reconciliation failed for policy image: $ref" >&2
-      echo "Expected: $expected_digest" >&2
-      echo "Found:    ${current_digest:-<missing>}" >&2
-      exit 1
-    }
-    continue
-  fi
-
-  if [[ -z "$current_digest" ]] || ! image_complete "$ref"; then
-    if [[ -n "$current_digest" ]]; then
-      echo "Repairing incomplete registry image: $ref"
-    else
-      echo "Pulling missing registry image: $ref"
-    fi
-    pull_ref="$(ctr_pull_ref "$ref")"
-    sudo ctr -n k8s.io images pull --platform linux/amd64 "$pull_ref"
-    if [[ "$pull_ref" != "$ref" ]]; then
-      sudo ctr -n k8s.io images tag --force "$pull_ref" "$ref" >/dev/null
-    fi
-    image_complete "$ref" || {
-      echo "ERROR: registry image is still incomplete after pull: $ref" >&2
-      exit 1
-    }
-  fi
+  sudo docker tag "$image_id" "$staging_ref"
+  STAGING_REFS+=("$staging_ref")
+  printf '%s\t%s\n' "$runtime_ref" "$staging_ref" >> "$PAYLOAD/image-refs.tsv"
 done
 
-echo "Collecting required validated image set..."
-mapfile -t IMAGE_REFS < <(python3 - "$REPO_ROOT/config/reference-versions.json" <<'PY'
-import json, sys
-d=json.load(open(sys.argv[1]))
-refs=set(d.get("images", {}).keys())
-for image in d["ran_images"]["components"].values():
-    if image.get("runtime_reference") == "local-tag":
-        refs.add(image["repository"] + ":" + image["tag"])
-    elif image.get("digest"):
-        refs.add(image["repository"] + "@" + image["digest"])
-    else:
-        refs.add(image["repository"] + ":" + image["tag"])
-for ref in sorted(refs):
-    print(ref)
-PY
-)
-
-[[ "${#IMAGE_REFS[@]}" -gt 0 ]] || {
+[[ "${#STAGING_REFS[@]}" -gt 0 ]] || {
   echo "ERROR: image policy produced no bundle references." >&2
   exit 1
 }
 
-for ref in "${IMAGE_REFS[@]}"; do
-  [[ -n "$(image_digest "$ref")" ]] || {
-    echo "ERROR: required bundle image reference is missing after reconciliation: $ref" >&2
-    exit 1
-  }
-  image_complete "$ref" || {
-    echo "ERROR: required bundle image is incomplete after reconciliation: $ref" >&2
-    exit 1
-  }
-done
-
-printf '%s\n' "${IMAGE_REFS[@]}" > "$PAYLOAD/image-refs.txt"
-
-echo "Exporting ${#IMAGE_REFS[@]} required validated container image references."
-echo "Unrelated/stale source-host cache entries are intentionally excluded."
+echo "Saving ${#STAGING_REFS[@]} required linux/amd64 images into the handover archive..."
 echo "This file can be large and may take several minutes..."
-sudo ctr -n k8s.io images export --platform linux/amd64 \
-  "$PAYLOAD/container-images.tar" "${IMAGE_REFS[@]}"
+sudo docker save -o "$PAYLOAD/container-images.tar" "${STAGING_REFS[@]}"
 sudo chown "$(id -u):$(id -g)" "$PAYLOAD/container-images.tar"
 
 (
   cd "$PAYLOAD"
-  sha256sum repository.tar.gz open5gs-subscribers.archive.gz oai-ue-subscriber.json container-images.tar image-refs.txt > SHA256SUMS
+  sha256sum repository.tar.gz open5gs-subscribers.archive.gz oai-ue-subscriber.json container-images.tar image-refs.tsv > SHA256SUMS
 )
 
 echo "Creating self-extracting handover installer..."
@@ -365,6 +279,80 @@ fi
 
 echo "Importing bundled container images into Kubernetes containerd..."
 sudo ctr -n k8s.io images import --platform linux/amd64 "\$WORK/container-images.tar" >/dev/null
+
+echo "Restoring runtime image references..."
+while IFS=
+if [[ -e "\$TARGET_REPO" ]]; then
+  echo "ERROR: \$TARGET_REPO already exists; refusing to overwrite it." >&2
+  exit 1
+fi
+
+mkdir -p "\$HOME"
+tar -xzf "\$WORK/repository.tar.gz" -C "\$HOME"
+
+cd "\$TARGET_REPO"
+actual_tree=\$(git init -q /tmp/5g-handover-git-\$$ 2>/dev/null || true)
+rm -rf /tmp/5g-handover-git-\$$ 2>/dev/null || true
+
+mkdir -p "\$PRIVATE_DIR"
+chmod 700 "\$PRIVATE_DIR"
+install -m 600 "\$WORK/open5gs-subscribers.archive.gz" \
+  "\$PRIVATE_DIR/open5gs-subscribers.archive.gz"
+install -m 600 "\$WORK/oai-ue-subscriber.json" \
+  "\$PRIVATE_DIR/oai-ue-subscriber.json"
+
+cp config/global.env.example config/global.env
+chmod 600 config/global.env
+python3 - "\$TARGET_REPO/config/global.env" "\$PRIVATE_DIR/open5gs-subscribers.archive.gz" <<'PY'
+from pathlib import Path
+import sys
+cfg=Path(sys.argv[1])
+subscriber=sys.argv[2]
+out=[]
+seen=False
+for line in cfg.read_text().splitlines():
+    if line.startswith("SUBSCRIBER_DATABASE_INPUT="):
+        out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
+        seen=True
+    else:
+        out.append(line)
+if not seen:
+    out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
+cfg.write_text("\n".join(out) + "\n")
+PY
+
+echo "Bundled inputs ready:"
+echo "  repository commit: \$EXPECTED_COMMIT"
+echo "  Open5GS private subscriber input: installed"
+echo "  OAI UE private subscriber input: installed"
+echo "  container image bundle: imported"
+echo
+echo "Starting complete 5G Orchestrator installation..."
+exec ./install.sh
+exit 0
+__PRIVATE_PAYLOAD_BELOW__
+EOF
+
+cat "$PAYLOAD_TAR" >> "$OUTPUT"
+chmod 600 "$OUTPUT"
+
+echo
+echo "Created final private handover bundle:"
+echo "  $OUTPUT"
+echo
+echo "Bundle size:"
+du -h "$OUTPUT"
+echo
+echo "This single file contains all required private subscriber inputs and the required validated linux/amd64 image set."
+echo "Never commit or publish it."
+echo
+echo "Transfer it securely to the target machine."
+echo "The target operator runs only:"
+echo "  bash ~/$(basename "$OUTPUT")"
+\t' read -r runtime_ref staging_ref; do
+  [[ -n "\$runtime_ref" && -n "\$staging_ref" ]] || continue
+  sudo ctr -n k8s.io images tag --force "\$staging_ref" "\$runtime_ref" >/dev/null
+done < "\$WORK/image-refs.tsv"
 
 echo "Installing pinned repository snapshot..."
 if [[ -e "\$TARGET_REPO" ]]; then
