@@ -6,6 +6,109 @@ This guide installs the complete 5G Orchestrator platform on a fresh Ubuntu mach
 
 ---
 
+## FINAL HANDOVER — one command on the target machine
+
+This is the recommended handover method for the lab/demo system.
+
+The operator receiving the machine does **not** clone the repository, copy subscriber files, build srsRAN, or pull RAN/container images manually. A validated source machine creates one private self-extracting file:
+
+```text
+5g-orchestrator-installer.run
+```
+
+That single handover file contains:
+
+- the exact tracked `5g-kubernetes` repository snapshot used to build the bundle;
+- the private Open5GS subscriber database input;
+- the complete `k8s.io` containerd image cache from the validated source machine;
+- every additional image declared in `config/reference-versions.json`;
+- all declared RAN runtime images, including the locally built pinned srsRAN image and OAI/UE images;
+- SHA-256 checksums for the embedded repository, subscriber input, image archive and image-reference inventory.
+
+The generated `.run` file is **private**. It contains subscriber data and can be very large because it embeds all container images. Never commit it to GitHub, upload it to a public file share, or email it insecurely.
+
+### A. Build the handover file on the validated source machine
+
+Use the already-validated machine after `./install.sh` has completed successfully and after the required RAN images have been exercised/cached.
+
+Example on the validated Precision machine:
+
+```bash
+cd ~/5g-kubernetes
+
+git checkout reproducible-installer
+git pull origin reproducible-installer
+
+scripts/build-private-installer.sh \
+  --subscriber-archive /home/administrator/open5gs-subscribers.archive.gz \
+  --output ~/5g-orchestrator-installer.run
+```
+
+The builder will automatically:
+
+1. verify the private subscriber input without printing its contents;
+2. verify that the source repository has no tracked local changes;
+3. require the pinned local srsRAN image to exist;
+4. pull any policy-declared registry image that is missing;
+5. export the complete Kubernetes/containerd image cache;
+6. archive the exact repository commit;
+7. checksum the embedded payload;
+8. create `~/5g-orchestrator-installer.run`.
+
+Check the output file:
+
+```bash
+ls -lh ~/5g-orchestrator-installer.run
+sha256sum ~/5g-orchestrator-installer.run
+```
+
+Record the SHA-256 value separately and transfer the file to the target machine using an approved secure method.
+
+### B. Target machine — the operator runs one command
+
+Copy only this file to the target user's home directory:
+
+```text
+~/5g-orchestrator-installer.run
+```
+
+Then the target operator runs exactly:
+
+```bash
+bash ~/5g-orchestrator-installer.run
+```
+
+The handover installer will automatically:
+
+1. verify the embedded payload checksums;
+2. install the minimum Ubuntu/containerd prerequisites;
+3. start containerd;
+4. import the complete bundled image archive into the Kubernetes `k8s.io` namespace;
+5. install the pinned repository snapshot as `~/5g-kubernetes`;
+6. install the private subscriber archive under `~/private-5g-input/` with restrictive permissions;
+7. generate `config/global.env` with the private subscriber input path;
+8. run the normal `./install.sh` workflow;
+9. build nothing from srsRAN source when the bundled approved local image is already present;
+10. continue through Kubernetes, infrastructure, OSM, Open5GS, monitoring and service installation.
+
+The target machine must be a fresh intended Ubuntu 24.04 lab host and the user must have sudo access.
+
+> **Internet note:** all container images are carried inside the handover file. The current installer can still use the network for Ubuntu packages, Helm/chart acquisition and pinned source/package metadata. This handover mode removes manual image transfers and registry pulls from the operator workflow; it is not yet a fully air-gapped OS/package installer.
+
+### C. Security rule
+
+Do not place any of the following in the public repository:
+
+- `5g-orchestrator-installer.run`;
+- Open5GS subscriber archives;
+- UE authentication JSON/files;
+- exported private credentials;
+- generated private image/input bundles.
+
+Only the builder script and installation instructions belong in Git.
+
+---
+
 ## 1. Prerequisites
 
 Recommended host:
@@ -59,7 +162,7 @@ Internet ping succeeds
 
 ---
 
-## 2. Install Git
+## 2. Manual/developer path — Install Git
 
 ```bash
 sudo apt update
@@ -75,7 +178,7 @@ git version 2.x.x
 
 ---
 
-## 3. Clone the project
+## 3. Manual/developer path — Clone the project
 
 ```bash
 cd ~
@@ -124,7 +227,7 @@ The installer also automatically discovers the host IP address and network inter
 
 ---
 
-## 5. Private subscriber database input
+## 5. Manual/developer path — Private subscriber database input
 
 The current installer still requires the authorized Open5GS subscriber database archive.
 
@@ -176,7 +279,7 @@ Do not print or share subscriber authentication material.
 
 ---
 
-## 6. Run the installer
+## 6. Manual/developer path — Run the installer
 
 ```bash
 cd ~/5g-kubernetes
