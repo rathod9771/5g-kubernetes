@@ -14,14 +14,26 @@ if [[ "$EUID" == 0 ]]; then
   exit 1
 fi
 export PYTHONDONTWRITEBYTECODE=1
-# Bootstrap only the parser prerequisite first. Validate watcher/private settings
-# before any Kubernetes/service configuration or full host bootstrap.
+
+# Bootstrap parser/network prerequisites.
 if ! python3 -c 'import yaml' >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1; then
   sudo apt-get update
   sudo apt-get install -y python3 python3-yaml iproute2
 fi
+
 source "$REPO_ROOT/scripts/common.sh"
 load_config --network --require install --require watcher --require osm
-python3 -B "$REPO_ROOT/scripts/installer/install.py" --preflight "$@"
-bash "$REPO_ROOT/scripts/installer/host.sh"
+
+if [[ "$#" -eq 2 ]]; then
+  # Legacy handover path: authenticate the supplied export before modifying the host.
+  python3 -B "$REPO_ROOT/scripts/installer/install.py" --preflight "$@"
+  bash "$REPO_ROOT/scripts/installer/host.sh"
+else
+  # Fresh-machine path: prepare the host, build the supported srsRAN image from the
+  # immutable upstream revision, then run the same policy preflight.
+  bash "$REPO_ROOT/scripts/installer/host.sh"
+  bash "$REPO_ROOT/scripts/build_srsran_from_source.sh"
+  python3 -B "$REPO_ROOT/scripts/installer/install.py" --preflight
+fi
+
 python3 -B "$REPO_ROOT/scripts/installer/install.py" "$@"
