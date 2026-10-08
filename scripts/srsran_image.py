@@ -161,7 +161,10 @@ def installed(image, run):
     # Fresh-machine path: authenticate the image by immutable source attestation.
     info = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'images', 'info',
                 reference(image)]).stdout
-    target = json.loads(info).get('target', {})
+    try:
+        target = json.loads(info).get('target', {})
+    except (json.JSONDecodeError, TypeError):
+        raise ValueError('Unapproved pinned-source srsRAN image metadata') from None
     manifest_digest = target.get('digest')
     if not manifest_digest:
         raise ValueError('Pinned srsRAN image has no containerd target digest')
