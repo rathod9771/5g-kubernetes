@@ -273,7 +273,7 @@ PY
 }
 
 for ref in "${IMAGE_REFS[@]}"; do
-  sudo ctr -n k8s.io images list -q | grep -Fxq "$ref" || {
+  [[ -n "$(image_digest "$ref")" ]] || {
     echo "ERROR: required bundle image reference is missing after reconciliation: $ref" >&2
     exit 1
   }
