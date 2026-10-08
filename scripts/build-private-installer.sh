@@ -272,7 +272,7 @@ sudo apt-get install -y ca-certificates containerd python3 python3-yaml iproute2
 sudo systemctl enable --now containerd
 
 if [[ -e /etc/kubernetes/admin.conf ]]; then
-  echo "ERROR: target already contains a Kubernetes control plane."
+  echo "ERROR: target already contains a Kubernetes control plane." >&2
   echo "Use this handover installer only on the intended fresh target host." >&2
   exit 1
 fi
@@ -281,7 +281,12 @@ echo "Importing bundled container images into Kubernetes containerd..."
 sudo ctr -n k8s.io images import --platform linux/amd64 "\$WORK/container-images.tar" >/dev/null
 
 echo "Restoring runtime image references..."
-while IFS=
+while IFS=\$'\t' read -r runtime_ref staging_ref; do
+  [[ -n "\$runtime_ref" && -n "\$staging_ref" ]] || continue
+  sudo ctr -n k8s.io images tag --force "\$staging_ref" "\$runtime_ref" >/dev/null
+done < "\$WORK/image-refs.tsv"
+
+echo "Installing pinned repository snapshot..."
 if [[ -e "\$TARGET_REPO" ]]; then
   echo "ERROR: \$TARGET_REPO already exists; refusing to overwrite it." >&2
   exit 1
@@ -291,8 +296,6 @@ mkdir -p "\$HOME"
 tar -xzf "\$WORK/repository.tar.gz" -C "\$HOME"
 
 cd "\$TARGET_REPO"
-actual_tree=\$(git init -q /tmp/5g-handover-git-\$$ 2>/dev/null || true)
-rm -rf /tmp/5g-handover-git-\$$ 2>/dev/null || true
 
 mkdir -p "\$PRIVATE_DIR"
 chmod 700 "\$PRIVATE_DIR"
@@ -306,14 +309,15 @@ chmod 600 config/global.env
 python3 - "\$TARGET_REPO/config/global.env" "\$PRIVATE_DIR/open5gs-subscribers.archive.gz" <<'PY'
 from pathlib import Path
 import sys
-cfg=Path(sys.argv[1])
-subscriber=sys.argv[2]
-out=[]
-seen=False
-for line in cfg.read_text().splitlines():
+cfg = Path(sys.argv[1])
+subscriber = sys.argv[2]
+lines = cfg.read_text().splitlines()
+out = []
+seen = False
+for line in lines:
     if line.startswith("SUBSCRIBER_DATABASE_INPUT="):
         out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
-        seen=True
+        seen = True
     else:
         out.append(line)
 if not seen:
@@ -344,76 +348,6 @@ echo "Bundle size:"
 du -h "$OUTPUT"
 echo
 echo "This single file contains all required private subscriber inputs and the required validated linux/amd64 image set."
-echo "Never commit or publish it."
-echo
-echo "Transfer it securely to the target machine."
-echo "The target operator runs only:"
-echo "  bash ~/$(basename "$OUTPUT")"
-\t' read -r runtime_ref staging_ref; do
-  [[ -n "\$runtime_ref" && -n "\$staging_ref" ]] || continue
-  sudo ctr -n k8s.io images tag --force "\$staging_ref" "\$runtime_ref" >/dev/null
-done < "\$WORK/image-refs.tsv"
-
-echo "Installing pinned repository snapshot..."
-if [[ -e "\$TARGET_REPO" ]]; then
-  echo "ERROR: \$TARGET_REPO already exists; refusing to overwrite it." >&2
-  exit 1
-fi
-
-mkdir -p "\$HOME"
-tar -xzf "\$WORK/repository.tar.gz" -C "\$HOME"
-
-cd "\$TARGET_REPO"
-actual_tree=\$(git init -q /tmp/5g-handover-git-\$$ 2>/dev/null || true)
-rm -rf /tmp/5g-handover-git-\$$ 2>/dev/null || true
-
-mkdir -p "\$PRIVATE_DIR"
-chmod 700 "\$PRIVATE_DIR"
-install -m 600 "\$WORK/open5gs-subscribers.archive.gz"   "\$PRIVATE_DIR/open5gs-subscribers.archive.gz"
-
-cp config/global.env.example config/global.env
-chmod 600 config/global.env
-python3 - "\$TARGET_REPO/config/global.env" "\$PRIVATE_DIR/open5gs-subscribers.archive.gz" <<'PY'
-from pathlib import Path
-import sys
-cfg=Path(sys.argv[1])
-subscriber=sys.argv[2]
-out=[]
-seen=False
-for line in cfg.read_text().splitlines():
-    if line.startswith("SUBSCRIBER_DATABASE_INPUT="):
-        out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
-        seen=True
-    else:
-        out.append(line)
-if not seen:
-    out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
-cfg.write_text("\n".join(out) + "\n")
-PY
-
-echo "Bundled inputs ready:"
-echo "  repository commit: \$EXPECTED_COMMIT"
-echo "  Open5GS private subscriber input: installed"
-echo "  OAI UE private subscriber input: installed"
-echo "  container image bundle: imported"
-echo
-echo "Starting complete 5G Orchestrator installation..."
-exec ./install.sh
-exit 0
-__PRIVATE_PAYLOAD_BELOW__
-EOF
-
-cat "$PAYLOAD_TAR" >> "$OUTPUT"
-chmod 600 "$OUTPUT"
-
-echo
-echo "Created final private handover bundle:"
-echo "  $OUTPUT"
-echo
-echo "Bundle size:"
-du -h "$OUTPUT"
-echo
-echo "This single file contains all required private subscriber inputs and the complete validated container image cache."
 echo "Never commit or publish it."
 echo
 echo "Transfer it securely to the target machine."
