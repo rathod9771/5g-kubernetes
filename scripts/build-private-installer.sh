@@ -214,6 +214,7 @@ for record in "${POLICY_IMAGES[@]}"; do
     if [[ "$ref" != *@sha256:* ]]; then
       immutable="$ref@$expected_digest"
     fi
+    pull_immutable="$(ctr_pull_ref "$immutable")"
 
     if [[ -n "$current_digest" ]]; then
       echo "Reconciling cached policy image to locked digest: $ref"
@@ -223,10 +224,10 @@ for record in "${POLICY_IMAGES[@]}"; do
       echo "Pulling missing digest-locked image: $ref"
     fi
 
-    sudo ctr -n k8s.io images pull --platform linux/amd64 "$immutable"
+    sudo ctr -n k8s.io images pull --platform linux/amd64 "$pull_immutable"
 
-    if [[ "$immutable" != "$ref" ]]; then
-      sudo ctr -n k8s.io images tag --force "$immutable" "$ref" >/dev/null
+    if [[ "$pull_immutable" != "$ref" ]]; then
+      sudo ctr -n k8s.io images tag --force "$pull_immutable" "$ref" >/dev/null
     fi
 
     current_digest="$(image_digest "$ref")"
