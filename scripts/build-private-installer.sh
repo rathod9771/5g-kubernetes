@@ -173,14 +173,21 @@ for ref in sorted(records):
 PY
 )
 
+mkdir -p "$PAYLOAD/container-images"
 : > "$PAYLOAD/image-refs.tsv"
-STAGING_REFS=()
-index=0
+VERIFY_NS="handover-verify-$$"
+sudo ctr namespaces create "$VERIFY_NS" >/dev/null 2>&1 || true
+cleanup_verify_ns() {
+  sudo ctr namespaces remove "$VERIFY_NS" >/dev/null 2>&1 || true
+}
+trap 'cleanup_verify_ns; rm -rf "$TMP"' EXIT
 
+index=0
 for record in "${POLICY_IMAGES[@]}"; do
   IFS='|' read -r runtime_ref expected_digest mode <<<"$record"
   index=$((index + 1))
   staging_ref="$(printf 'localhost/5g-handover/image-%03d:bundle' "$index")"
+  archive_name="$(printf 'image-%03d.tar' "$index")"
 
   if [[ "$mode" == local ]]; then
     sudo docker image inspect "$runtime_ref" >/dev/null 2>&1 || {
@@ -212,23 +219,30 @@ PY
   fi
 
   sudo docker tag "$image_id" "$staging_ref"
-  STAGING_REFS+=("$staging_ref")
-  printf '%s\t%s\n' "$runtime_ref" "$staging_ref" >> "$PAYLOAD/image-refs.tsv"
+
+  echo "Saving/verifying image $index: $runtime_ref"
+  sudo docker save -o "$PAYLOAD/container-images/$archive_name" "$staging_ref"
+  sudo chown "$(id -u):$(id -g)" "$PAYLOAD/container-images/$archive_name"
+
+  if ! sudo ctr -n "$VERIFY_NS" images import --platform linux/amd64       "$PAYLOAD/container-images/$archive_name" >/dev/null; then
+    echo "ERROR: source-side handover import verification failed for: $runtime_ref" >&2
+    echo "Archive: $archive_name" >&2
+    exit 1
+  fi
+
+  printf '%s\t%s\t%s\n' "$runtime_ref" "$staging_ref" "$archive_name" >> "$PAYLOAD/image-refs.tsv"
 done
 
-[[ "${#STAGING_REFS[@]}" -gt 0 ]] || {
+[[ "$index" -gt 0 ]] || {
   echo "ERROR: image policy produced no bundle references." >&2
   exit 1
 }
 
-echo "Saving ${#STAGING_REFS[@]} required linux/amd64 images into the handover archive..."
-echo "This file can be large and may take several minutes..."
-sudo docker save -o "$PAYLOAD/container-images.tar" "${STAGING_REFS[@]}"
-sudo chown "$(id -u):$(id -g)" "$PAYLOAD/container-images.tar"
+echo "Verified $index per-image linux/amd64 archives through containerd import."
 
 (
   cd "$PAYLOAD"
-  sha256sum repository.tar.gz open5gs-subscribers.archive.gz oai-ue-subscriber.json container-images.tar image-refs.tsv > SHA256SUMS
+  sha256sum repository.tar.gz open5gs-subscribers.archive.gz oai-ue-subscriber.json image-refs.tsv container-images/*.tar > SHA256SUMS
 )
 
 echo "Creating self-extracting handover installer..."
@@ -278,11 +292,80 @@ if [[ -e /etc/kubernetes/admin.conf ]]; then
 fi
 
 echo "Importing bundled container images into Kubernetes containerd..."
-sudo ctr -n k8s.io images import --platform linux/amd64 "\$WORK/container-images.tar" >/dev/null
+while IFS=\
 
-echo "Restoring runtime image references..."
-while IFS=\$'\t' read -r runtime_ref staging_ref; do
-  [[ -n "\$runtime_ref" && -n "\$staging_ref" ]] || continue
+echo "Installing pinned repository snapshot..."
+if [[ -e "\$TARGET_REPO" ]]; then
+  echo "ERROR: \$TARGET_REPO already exists; refusing to overwrite it." >&2
+  exit 1
+fi
+
+mkdir -p "\$HOME"
+tar -xzf "\$WORK/repository.tar.gz" -C "\$HOME"
+
+cd "\$TARGET_REPO"
+
+mkdir -p "\$PRIVATE_DIR"
+chmod 700 "\$PRIVATE_DIR"
+install -m 600 "\$WORK/open5gs-subscribers.archive.gz" \
+  "\$PRIVATE_DIR/open5gs-subscribers.archive.gz"
+install -m 600 "\$WORK/oai-ue-subscriber.json" \
+  "\$PRIVATE_DIR/oai-ue-subscriber.json"
+
+cp config/global.env.example config/global.env
+chmod 600 config/global.env
+python3 - "\$TARGET_REPO/config/global.env" "\$PRIVATE_DIR/open5gs-subscribers.archive.gz" <<'PY'
+from pathlib import Path
+import sys
+cfg = Path(sys.argv[1])
+subscriber = sys.argv[2]
+lines = cfg.read_text().splitlines()
+out = []
+seen = False
+for line in lines:
+    if line.startswith("SUBSCRIBER_DATABASE_INPUT="):
+        out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
+        seen = True
+    else:
+        out.append(line)
+if not seen:
+    out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
+cfg.write_text("\n".join(out) + "\n")
+PY
+
+echo "Bundled inputs ready:"
+echo "  repository commit: \$EXPECTED_COMMIT"
+echo "  Open5GS private subscriber input: installed"
+echo "  OAI UE private subscriber input: installed"
+echo "  container image bundle: imported"
+echo
+echo "Starting complete 5G Orchestrator installation..."
+exec ./install.sh
+exit 0
+__PRIVATE_PAYLOAD_BELOW__
+EOF
+
+cat "$PAYLOAD_TAR" >> "$OUTPUT"
+chmod 600 "$OUTPUT"
+
+echo
+echo "Created final private handover bundle:"
+echo "  $OUTPUT"
+echo
+echo "Bundle size:"
+du -h "$OUTPUT"
+echo
+echo "This single file contains all required private subscriber inputs and a source-verified per-image linux/amd64 archive set."
+echo "Never commit or publish it."
+echo
+echo "Transfer it securely to the target machine."
+echo "The target operator runs only:"
+echo "  bash ~/$(basename "$OUTPUT")"
+\t' read -r runtime_ref staging_ref archive_name; do
+  [[ -n "\$runtime_ref" && -n "\$staging_ref" && -n "\$archive_name" ]] || continue
+  echo "  importing: \$runtime_ref"
+  sudo ctr -n k8s.io images import --platform linux/amd64 \
+    "\$WORK/container-images/\$archive_name" >/dev/null
   sudo ctr -n k8s.io images tag --force "\$staging_ref" "\$runtime_ref" >/dev/null
 done < "\$WORK/image-refs.tsv"
 
