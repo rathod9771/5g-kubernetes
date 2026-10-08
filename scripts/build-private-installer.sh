@@ -197,11 +197,11 @@ for record in "${POLICY_IMAGES[@]}"; do
     echo "Pulling/staging locked image: $runtime_ref"
     sudo docker pull --platform linux/amd64 "$immutable" >/dev/null
     image_id="$(sudo docker image inspect --format '{{.Id}}' "$immutable")"
-    sudo docker image inspect --format '{{json .RepoDigests}}' "$immutable" | \
-      python3 - "$expected_digest" <<'PY'
+    repo_digests="$(sudo docker image inspect --format '{{json .RepoDigests}}' "$immutable")"
+    python3 - "$expected_digest" "$repo_digests" <<'PY'
 import json, sys
 expected=sys.argv[1]
-digests=json.load(sys.stdin) or []
+digests=json.loads(sys.argv[2]) or []
 if not any(item.endswith("@" + expected) for item in digests):
     raise SystemExit("ERROR: Docker pull did not resolve to the required digest")
 PY
