@@ -15,6 +15,7 @@ Do not commit:
 - `RANCHER_BOOTSTRAP_PASSWORD`
 - subscriber authentication keys
 - Open5GS subscriber database archives
+- OAI UE subscriber JSON containing `imsi`, `key` and `opc`
 
 The repository already ignores `config/global.env` and runtime state.
 
@@ -115,3 +116,26 @@ If a required private value is missing, the installer stops with an explicit con
 ## Security rule
 
 Keep private inputs outside public Git history. If credentials are ever committed accidentally, treat them as exposed and rotate them rather than relying only on deleting the commit.
+
+
+## Final handover bundle
+
+For the validated lab handover, do not copy these private files individually to the recipient.
+
+Use:
+
+```bash
+cd ~/5g-kubernetes
+scripts/build-private-installer.sh \
+  --subscriber-archive /path/to/open5gs-subscribers.archive.gz \
+  --ue-subscriber-input /path/to/oai-ue-subscriber.json \
+  --output ~/5g-orchestrator-installer.run
+```
+
+The generated `5g-orchestrator-installer.run` contains the private Open5GS subscriber archive, the private OAI UE JSON, the pinned repository snapshot, and the complete validated container-image cache. It must be treated as a private secret-bearing artifact and must never be committed or published.
+
+The target operator then runs only:
+
+```bash
+bash ~/5g-orchestrator-installer.run
+```
