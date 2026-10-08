@@ -250,33 +250,37 @@ PAYLOAD_TAR="$TMP/payload.tar"
 tar -C "$PAYLOAD" -cf "$PAYLOAD_TAR" .
 
 umask 077
-cat > "$OUTPUT" <<EOF
+
+cat > "$OUTPUT" <<'HEADER1'
 #!/usr/bin/env bash
 set -euo pipefail
-case \$- in *x*) set +x ;; esac
+case $- in *x*) set +x ;; esac
+HEADER1
 
-EXPECTED_COMMIT='$EXPECTED_COMMIT'
-TARGET_REPO="\${HOME}/5g-kubernetes"
-PRIVATE_DIR="\${HOME}/private-5g-input"
-WORK="\$(mktemp -d)"
-trap 'rm -rf "\$WORK"' EXIT
+printf "EXPECTED_COMMIT=%q\n" "$EXPECTED_COMMIT" >> "$OUTPUT"
 
-if [[ "\${EUID}" -eq 0 ]]; then
+cat >> "$OUTPUT" <<'HEADER2'
+TARGET_REPO="${HOME}/5g-kubernetes"
+PRIVATE_DIR="${HOME}/private-5g-input"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+if [[ "${EUID}" -eq 0 ]]; then
   echo "ERROR: run this installer as the intended normal user, not root." >&2
   exit 1
 fi
 
 sudo -v
 
-PAYLOAD_LINE=\$(awk '/^__PRIVATE_PAYLOAD_BELOW__\$/ {print NR + 1; exit}' "\$0")
-[[ -n "\$PAYLOAD_LINE" ]] || {
+PAYLOAD_LINE=$(awk '/^__PRIVATE_PAYLOAD_BELOW__$/ {print NR + 1; exit}' "$0")
+[[ -n "$PAYLOAD_LINE" ]] || {
   echo "ERROR: installer payload marker missing." >&2
   exit 1
 }
 
-tail -n +"\$PAYLOAD_LINE" "\$0" | tar -xf - -C "\$WORK"
+tail -n +"$PAYLOAD_LINE" "$0" | tar -xf - -C "$WORK"
 (
-  cd "\$WORK"
+  cd "$WORK"
   sha256sum -c SHA256SUMS
 )
 
@@ -292,29 +296,35 @@ if [[ -e /etc/kubernetes/admin.conf ]]; then
 fi
 
 echo "Importing bundled container images into Kubernetes containerd..."
-while IFS=\
+while IFS=$'\t' read -r runtime_ref staging_ref archive_name; do
+  [[ -n "$runtime_ref" && -n "$staging_ref" && -n "$archive_name" ]] || continue
+  echo "  importing: $runtime_ref"
+  sudo ctr -n k8s.io images import --platform linux/amd64 \
+    "$WORK/container-images/$archive_name" >/dev/null
+  sudo ctr -n k8s.io images tag --force "$staging_ref" "$runtime_ref" >/dev/null
+done < "$WORK/image-refs.tsv"
 
 echo "Installing pinned repository snapshot..."
-if [[ -e "\$TARGET_REPO" ]]; then
-  echo "ERROR: \$TARGET_REPO already exists; refusing to overwrite it." >&2
+if [[ -e "$TARGET_REPO" ]]; then
+  echo "ERROR: $TARGET_REPO already exists; refusing to overwrite it." >&2
   exit 1
 fi
 
-mkdir -p "\$HOME"
-tar -xzf "\$WORK/repository.tar.gz" -C "\$HOME"
+mkdir -p "$HOME"
+tar -xzf "$WORK/repository.tar.gz" -C "$HOME"
 
-cd "\$TARGET_REPO"
+cd "$TARGET_REPO"
 
-mkdir -p "\$PRIVATE_DIR"
-chmod 700 "\$PRIVATE_DIR"
-install -m 600 "\$WORK/open5gs-subscribers.archive.gz" \
-  "\$PRIVATE_DIR/open5gs-subscribers.archive.gz"
-install -m 600 "\$WORK/oai-ue-subscriber.json" \
-  "\$PRIVATE_DIR/oai-ue-subscriber.json"
+mkdir -p "$PRIVATE_DIR"
+chmod 700 "$PRIVATE_DIR"
+install -m 600 "$WORK/open5gs-subscribers.archive.gz" \
+  "$PRIVATE_DIR/open5gs-subscribers.archive.gz"
+install -m 600 "$WORK/oai-ue-subscriber.json" \
+  "$PRIVATE_DIR/oai-ue-subscriber.json"
 
 cp config/global.env.example config/global.env
 chmod 600 config/global.env
-python3 - "\$TARGET_REPO/config/global.env" "\$PRIVATE_DIR/open5gs-subscribers.archive.gz" <<'PY'
+python3 - "$TARGET_REPO/config/global.env" "$PRIVATE_DIR/open5gs-subscribers.archive.gz" <<'PY'
 from pathlib import Path
 import sys
 cfg = Path(sys.argv[1])
@@ -334,7 +344,7 @@ cfg.write_text("\n".join(out) + "\n")
 PY
 
 echo "Bundled inputs ready:"
-echo "  repository commit: \$EXPECTED_COMMIT"
+echo "  repository commit: $EXPECTED_COMMIT"
 echo "  Open5GS private subscriber input: installed"
 echo "  OAI UE private subscriber input: installed"
 echo "  container image bundle: imported"
@@ -343,7 +353,7 @@ echo "Starting complete 5G Orchestrator installation..."
 exec ./install.sh
 exit 0
 __PRIVATE_PAYLOAD_BELOW__
-EOF
+HEADER2
 
 cat "$PAYLOAD_TAR" >> "$OUTPUT"
 chmod 600 "$OUTPUT"
@@ -356,81 +366,6 @@ echo "Bundle size:"
 du -h "$OUTPUT"
 echo
 echo "This single file contains all required private subscriber inputs and a source-verified per-image linux/amd64 archive set."
-echo "Never commit or publish it."
-echo
-echo "Transfer it securely to the target machine."
-echo "The target operator runs only:"
-echo "  bash ~/$(basename "$OUTPUT")"
-\t' read -r runtime_ref staging_ref archive_name; do
-  [[ -n "\$runtime_ref" && -n "\$staging_ref" && -n "\$archive_name" ]] || continue
-  echo "  importing: \$runtime_ref"
-  sudo ctr -n k8s.io images import --platform linux/amd64 \
-    "\$WORK/container-images/\$archive_name" >/dev/null
-  sudo ctr -n k8s.io images tag --force "\$staging_ref" "\$runtime_ref" >/dev/null
-done < "\$WORK/image-refs.tsv"
-
-echo "Installing pinned repository snapshot..."
-if [[ -e "\$TARGET_REPO" ]]; then
-  echo "ERROR: \$TARGET_REPO already exists; refusing to overwrite it." >&2
-  exit 1
-fi
-
-mkdir -p "\$HOME"
-tar -xzf "\$WORK/repository.tar.gz" -C "\$HOME"
-
-cd "\$TARGET_REPO"
-
-mkdir -p "\$PRIVATE_DIR"
-chmod 700 "\$PRIVATE_DIR"
-install -m 600 "\$WORK/open5gs-subscribers.archive.gz" \
-  "\$PRIVATE_DIR/open5gs-subscribers.archive.gz"
-install -m 600 "\$WORK/oai-ue-subscriber.json" \
-  "\$PRIVATE_DIR/oai-ue-subscriber.json"
-
-cp config/global.env.example config/global.env
-chmod 600 config/global.env
-python3 - "\$TARGET_REPO/config/global.env" "\$PRIVATE_DIR/open5gs-subscribers.archive.gz" <<'PY'
-from pathlib import Path
-import sys
-cfg = Path(sys.argv[1])
-subscriber = sys.argv[2]
-lines = cfg.read_text().splitlines()
-out = []
-seen = False
-for line in lines:
-    if line.startswith("SUBSCRIBER_DATABASE_INPUT="):
-        out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
-        seen = True
-    else:
-        out.append(line)
-if not seen:
-    out.append("SUBSCRIBER_DATABASE_INPUT=" + subscriber)
-cfg.write_text("\n".join(out) + "\n")
-PY
-
-echo "Bundled inputs ready:"
-echo "  repository commit: \$EXPECTED_COMMIT"
-echo "  Open5GS private subscriber input: installed"
-echo "  OAI UE private subscriber input: installed"
-echo "  container image bundle: imported"
-echo
-echo "Starting complete 5G Orchestrator installation..."
-exec ./install.sh
-exit 0
-__PRIVATE_PAYLOAD_BELOW__
-EOF
-
-cat "$PAYLOAD_TAR" >> "$OUTPUT"
-chmod 600 "$OUTPUT"
-
-echo
-echo "Created final private handover bundle:"
-echo "  $OUTPUT"
-echo
-echo "Bundle size:"
-du -h "$OUTPUT"
-echo
-echo "This single file contains all required private subscriber inputs and the required validated linux/amd64 image set."
 echo "Never commit or publish it."
 echo
 echo "Transfer it securely to the target machine."
