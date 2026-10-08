@@ -4,7 +4,7 @@
 # The generated .run file contains:
 #   - the exact tracked repository snapshot at the current commit
 #   - the private Open5GS subscriber archive
-#   - a Docker-format linux/amd64 archive containing every image declared by
+#   - per-image Docker-format linux/amd64 archives for every image declared by
 #     config/reference-versions.json / ran_images
 #
 # Never commit or publish the generated .run file.
@@ -28,10 +28,11 @@ Options:
   --output PATH               Generated private handover installer
   -h, --help                  Show this help
 
-The source host must already be a validated installation with Docker and
-containerd running. The script stages every required image as linux/amd64 in
-Docker, verifies the local srsRAN image exists, saves only the required images,
-embeds the tracked repository snapshot and private inputs, and emits one .run file.
+The source host must already be a validated installation with Docker,
+containerd, and Skopeo available. The script exports each required image as a
+single-platform linux/amd64 archive, verifies every archive through containerd,
+verifies the local srsRAN image exists, embeds the tracked repository snapshot
+and private inputs, and emits one .run file.
 EOF
 }
 
@@ -119,6 +120,11 @@ command -v ctr >/dev/null 2>&1 || {
   echo "ERROR: ctr is required on the validated source host." >&2
   exit 1
 }
+command -v skopeo >/dev/null 2>&1 || {
+  echo "ERROR: skopeo is required on the validated source host." >&2
+  echo "Install it with: sudo apt-get update && sudo apt-get install -y skopeo" >&2
+  exit 1
+}
 sudo systemctl is-active --quiet docker || {
   echo "ERROR: Docker daemon is not active on the validated source host." >&2
   exit 1
@@ -150,7 +156,7 @@ echo "Creating pinned repository snapshot: $EXPECTED_COMMIT"
 git -C "$REPO_ROOT" archive --format=tar.gz --prefix=5g-kubernetes/ \
   -o "$PAYLOAD/repository.tar.gz" "$EXPECTED_COMMIT"
 
-echo "Staging every required linux/amd64 image in Docker..."
+echo "Staging every required linux/amd64 image as single-platform archives..."
 mapfile -t POLICY_IMAGES < <(python3 - "$REPO_ROOT/config/reference-versions.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
@@ -189,40 +195,47 @@ for record in "${POLICY_IMAGES[@]}"; do
   staging_ref="$(printf 'localhost/5g-handover/image-%03d:bundle' "$index")"
   archive_name="$(printf 'image-%03d.tar' "$index")"
 
+  archive_path="$PAYLOAD/container-images/$archive_name"
+
   if [[ "$mode" == local ]]; then
     sudo docker image inspect "$runtime_ref" >/dev/null 2>&1 || {
       echo "ERROR: required local image is not present in Docker: $runtime_ref" >&2
       echo "The pinned srsRAN build must remain available in Docker on the validated source host." >&2
       exit 1
     }
-    image_id="$(sudo docker image inspect --format '{{.Id}}' "$runtime_ref")"
+    local_platform="$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$runtime_ref")"
+    [[ "$local_platform" == "linux/amd64" ]] || {
+      echo "ERROR: required local image is not linux/amd64: $runtime_ref ($local_platform)" >&2
+      exit 1
+    }
+    echo "Saving/verifying local image $index: $runtime_ref"
+    sudo skopeo copy \
+      --override-os linux \
+      --override-arch amd64 \
+      "docker-daemon:$runtime_ref" \
+      "docker-archive:$archive_path:$staging_ref"
   elif [[ "$mode" == locked ]]; then
     immutable="$runtime_ref"
     if [[ "$runtime_ref" != *@sha256:* ]]; then
-      immutable="$runtime_ref@$expected_digest"
+      repo_without_tag="${runtime_ref%:*}"
+      immutable="$repo_without_tag@$expected_digest"
     fi
-    echo "Pulling/staging locked image: $runtime_ref"
-    sudo docker pull --platform linux/amd64 "$immutable" >/dev/null
-    image_id="$(sudo docker image inspect --format '{{.Id}}' "$immutable")"
-    repo_digests="$(sudo docker image inspect --format '{{json .RepoDigests}}' "$immutable")"
-    python3 - "$expected_digest" "$repo_digests" <<'PY'
-import json, sys
-expected=sys.argv[1]
-digests=json.loads(sys.argv[2]) or []
-if not any(item.endswith("@" + expected) for item in digests):
-    raise SystemExit("ERROR: Docker pull did not resolve to the required digest")
-PY
+    echo "Saving/verifying locked image $index: $runtime_ref"
+    sudo skopeo copy \
+      --override-os linux \
+      --override-arch amd64 \
+      "docker://$immutable" \
+      "docker-archive:$archive_path:$staging_ref"
   else
-    echo "Pulling/staging registry image: $runtime_ref"
-    sudo docker pull --platform linux/amd64 "$runtime_ref" >/dev/null
-    image_id="$(sudo docker image inspect --format '{{.Id}}' "$runtime_ref")"
+    echo "Saving/verifying registry image $index: $runtime_ref"
+    sudo skopeo copy \
+      --override-os linux \
+      --override-arch amd64 \
+      "docker://$runtime_ref" \
+      "docker-archive:$archive_path:$staging_ref"
   fi
 
-  sudo docker tag "$image_id" "$staging_ref"
-
-  echo "Saving/verifying image $index: $runtime_ref"
-  sudo docker save -o "$PAYLOAD/container-images/$archive_name" "$staging_ref"
-  sudo chown "$(id -u):$(id -g)" "$PAYLOAD/container-images/$archive_name"
+  sudo chown "$(id -u):$(id -g)" "$archive_path"
 
   if ! sudo ctr -n "$VERIFY_NS" images import --platform linux/amd64       "$PAYLOAD/container-images/$archive_name" >/dev/null; then
     echo "ERROR: source-side handover import verification failed for: $runtime_ref" >&2
