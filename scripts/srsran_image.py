@@ -159,20 +159,38 @@ def installed(image, run):
         raise ValueError('Containerd image name points to an unapproved manifest')
 
     # Fresh-machine path: authenticate the image by immutable source attestation.
-    info = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'images', 'info',
-                reference(image)]).stdout
+    # containerd 2.x does not provide `ctr images info`; the target digest is the
+    # DIGEST column from `ctr images list`. Docker may import an OCI index, so
+    # resolve the linux/amd64 child manifest before reading the image config.
+    target_digest = row[2]
+    target_blob = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'content', 'get',
+                       target_digest]).stdout
+    if 'sha256:' + hashlib.sha256(target_blob).hexdigest() != target_digest:
+        raise ValueError('Pinned srsRAN target content differs from its descriptor')
     try:
-        target = json.loads(info).get('target', {})
+        target = json.loads(target_blob)
     except (json.JSONDecodeError, TypeError):
         raise ValueError('Unapproved pinned-source srsRAN image metadata') from None
-    manifest_digest = target.get('digest')
-    if not manifest_digest:
-        raise ValueError('Pinned srsRAN image has no containerd target digest')
-    manifest_blob = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'content', 'get',
-                         manifest_digest]).stdout
-    if 'sha256:' + hashlib.sha256(manifest_blob).hexdigest() != manifest_digest:
-        raise ValueError('Pinned srsRAN manifest content differs from its descriptor')
-    manifest = json.loads(manifest_blob)
+
+    manifest_digest = target_digest
+    manifest = target
+    if target.get('manifests'):
+        candidates = [
+            item for item in target['manifests']
+            if item.get('platform', {}).get('os') == 'linux'
+            and item.get('platform', {}).get('architecture') == 'amd64'
+        ]
+        if len(candidates) != 1:
+            raise ValueError('Pinned srsRAN OCI index does not contain exactly one linux/amd64 manifest')
+        manifest_digest = candidates[0].get('digest')
+        if not manifest_digest:
+            raise ValueError('Pinned srsRAN OCI index child has no digest')
+        manifest_blob = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'content', 'get',
+                             manifest_digest]).stdout
+        if 'sha256:' + hashlib.sha256(manifest_blob).hexdigest() != manifest_digest:
+            raise ValueError('Pinned srsRAN manifest content differs from its descriptor')
+        manifest = json.loads(manifest_blob)
+
     config_digest = manifest.get('config', {}).get('digest')
     if not config_digest:
         raise ValueError('Pinned srsRAN manifest has no image configuration')
