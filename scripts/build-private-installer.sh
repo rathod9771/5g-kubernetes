@@ -13,6 +13,7 @@ case $- in *x*) set +x ;; esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUBSCRIBER_ARCHIVE="${HOME}/private-5g-input/open5gs-subscribers.archive.gz"
+UE_SUBSCRIBER_INPUT="${HOME}/private-5g-input/oai-ue-subscriber.json"
 OUTPUT="${HOME}/5g-orchestrator-installer.run"
 BRANCH="reproducible-installer"
 
@@ -23,6 +24,7 @@ Usage:
 
 Options:
   --subscriber-archive PATH   Private Open5GS subscriber archive
+  --ue-subscriber-input PATH  Private OAI UE JSON (imsi/key/opc)
   --output PATH               Generated private handover installer
   -h, --help                  Show this help
 
@@ -36,6 +38,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --subscriber-archive) SUBSCRIBER_ARCHIVE="$2"; shift 2 ;;
+    --ue-subscriber-input) UE_SUBSCRIBER_INPUT="$2"; shift 2 ;;
     --output) OUTPUT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "ERROR: unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -61,21 +64,50 @@ done
   echo "ERROR: subscriber archive not found: $SUBSCRIBER_ARCHIVE" >&2
   exit 1
 }
+[[ -f "$UE_SUBSCRIBER_INPUT" && ! -L "$UE_SUBSCRIBER_INPUT" ]] || {
+  echo "ERROR: private OAI UE subscriber input not found: $UE_SUBSCRIBER_INPUT" >&2
+  exit 1
+}
 
-python3 - "$SUBSCRIBER_ARCHIVE" <<'PY'
-import os, stat, sys
-p = sys.argv[1]
-fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+python3 - "$SUBSCRIBER_ARCHIVE" "$UE_SUBSCRIBER_INPUT" <<'PY'
+import json, os, re, stat, sys
+
+def secure_regular(path, label):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise SystemExit(f"ERROR: {label} must be a regular file")
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            raise SystemExit(f"ERROR: {label} must be mode 0600 or stricter")
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+archive_fd = secure_regular(sys.argv[1], "subscriber archive")
 try:
-    st = os.fstat(fd)
-    if not stat.S_ISREG(st.st_mode):
-        raise SystemExit("ERROR: subscriber input must be a regular file")
-    if stat.S_IMODE(st.st_mode) & 0o077:
-        raise SystemExit("ERROR: subscriber input must be mode 0600 or stricter")
-    if os.read(fd, 2) != b"\x1f\x8b":
-        raise SystemExit("ERROR: subscriber input is not gzip data")
+    if os.read(archive_fd, 2) != b"\x1f\x8b":
+        raise SystemExit("ERROR: subscriber archive is not gzip data")
 finally:
-    os.close(fd)
+    os.close(archive_fd)
+
+ue_fd = secure_regular(sys.argv[2], "OAI UE subscriber input")
+try:
+    with os.fdopen(ue_fd, "r") as stream:
+        ue_fd = None
+        data = json.load(stream)
+finally:
+    if ue_fd is not None:
+        os.close(ue_fd)
+
+if set(data) != {"imsi", "key", "opc"}:
+    raise SystemExit("ERROR: OAI UE subscriber JSON must contain exactly imsi, key and opc")
+if not isinstance(data["imsi"], str) or not re.fullmatch(r"[0-9]{15}", data["imsi"]):
+    raise SystemExit("ERROR: OAI UE IMSI format is invalid")
+for key in ("key", "opc"):
+    if not isinstance(data[key], str) or not re.fullmatch(r"[0-9a-fA-F]{32}", data[key]):
+        raise SystemExit("ERROR: OAI UE authentication field format is invalid")
 PY
 
 sudo -v
@@ -100,9 +132,10 @@ trap 'rm -rf "$TMP"' EXIT
 PAYLOAD="$TMP/payload"
 mkdir -p "$PAYLOAD"
 
-echo "Preparing private subscriber input..."
+echo "Preparing private inputs..."
 cp -- "$SUBSCRIBER_ARCHIVE" "$PAYLOAD/open5gs-subscribers.archive.gz"
-chmod 600 "$PAYLOAD/open5gs-subscribers.archive.gz"
+cp -- "$UE_SUBSCRIBER_INPUT" "$PAYLOAD/oai-ue-subscriber.json"
+chmod 600 "$PAYLOAD/open5gs-subscribers.archive.gz" "$PAYLOAD/oai-ue-subscriber.json"
 
 echo "Creating pinned repository snapshot: $EXPECTED_COMMIT"
 git -C "$REPO_ROOT" archive --format=tar.gz --prefix=5g-kubernetes/   -o "$PAYLOAD/repository.tar.gz" "$EXPECTED_COMMIT"
@@ -155,7 +188,7 @@ sudo chown "$(id -u):$(id -g)" "$PAYLOAD/container-images.tar"
 
 (
   cd "$PAYLOAD"
-  sha256sum repository.tar.gz open5gs-subscribers.archive.gz container-images.tar image-refs.txt > SHA256SUMS
+  sha256sum repository.tar.gz open5gs-subscribers.archive.gz oai-ue-subscriber.json container-images.tar image-refs.txt > SHA256SUMS
 )
 
 echo "Creating self-extracting handover installer..."
@@ -246,7 +279,8 @@ PY
 
 echo "Bundled inputs ready:"
 echo "  repository commit: \$EXPECTED_COMMIT"
-echo "  private subscriber input: installed"
+echo "  Open5GS private subscriber input: installed"
+echo "  OAI UE private subscriber input: installed"
 echo "  container image bundle: imported"
 echo
 echo "Starting complete 5G Orchestrator installation..."
@@ -265,7 +299,7 @@ echo
 echo "Bundle size:"
 du -h "$OUTPUT"
 echo
-echo "This single file contains private subscriber data and the complete validated container image cache."
+echo "This single file contains all required private subscriber inputs and the complete validated container image cache."
 echo "Never commit or publish it."
 echo
 echo "Transfer it securely to the target machine."
