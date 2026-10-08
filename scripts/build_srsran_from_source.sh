@@ -61,11 +61,29 @@ actual="$(git -C "$WORK/source" rev-parse HEAD)"
   exit 1
 }
 
+# The upstream 25.04 Dockerfile's build/run dependency modes omit ZeroMQ,
+# although this platform's CU/DU charts require the ZMQ radio driver.
+# Add only the missing build/runtime packages; keep the source revision itself pinned.
+python3 - "$WORK/source/docker/Dockerfile" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+build_old = "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git clang"
+build_new = "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git clang ccache libzmq3-dev"
+run_old = "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ntpdate"
+run_new = "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ntpdate libzmq5"
+if text.count(build_old) != 1 or text.count(run_old) != 1:
+    raise SystemExit("ERROR: pinned upstream Dockerfile dependency anchors changed")
+path.write_text(text.replace(build_old, build_new).replace(run_old, run_new))
+PY
+
 echo "Building srsRAN from pinned source. This can take a significant amount of time..."
 sudo docker build \
   --target runtime \
   --build-arg OS_VERSION=24.04 \
-  --build-arg MARCH=x86-64 \
+  --build-arg MARCH=native \
   --build-arg NUM_JOBS="$(nproc)" \
   --build-arg EXTRA_CMAKE_ARGS="-DENABLE_EXPORT=ON -DENABLE_ZEROMQ=ON" \
   --label "org.opencontainers.image.source=$SOURCE_REPO" \
