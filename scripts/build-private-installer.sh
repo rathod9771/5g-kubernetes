@@ -144,32 +144,85 @@ echo "Ensuring every policy-declared runtime image is available..."
 mapfile -t POLICY_IMAGES < <(python3 - "$REPO_ROOT/config/reference-versions.json" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1]))
-refs=set(d.get("images", {}).keys())
+
+# ref|digest|mode
+# mode=locked means the tag/reference must resolve to the exact policy digest.
+# mode=registry means the current policy intentionally defers the digest.
+# mode=local means bytes must already exist and must never be pulled.
+records={}
+
+for ref, digest in d.get("images", {}).items():
+    records[ref]=(digest, "locked")
+
 for image in d["ran_images"]["components"].values():
     if image.get("runtime_reference") == "local-tag":
-        refs.add(image["repository"] + ":" + image["tag"])
+        ref=image["repository"] + ":" + image["tag"]
+        records[ref]=("", "local")
     elif image.get("digest"):
-        refs.add(image["repository"] + "@" + image["digest"])
+        ref=image["repository"] + "@" + image["digest"]
+        records[ref]=(image["digest"], "locked")
     else:
-        refs.add(image["repository"] + ":" + image["tag"])
-for ref in sorted(refs):
-    print(ref)
+        ref=image["repository"] + ":" + image["tag"]
+        records[ref]=("", "registry")
+
+for ref in sorted(records):
+    digest, mode=records[ref]
+    print(ref + "|" + digest + "|" + mode)
 PY
 )
 
-for ref in "${POLICY_IMAGES[@]}"; do
-  if sudo ctr -n k8s.io images list -q | grep -Fxq "$ref"; then
+image_digest() {
+  local ref="$1"
+  sudo ctr -n k8s.io images list | awk -v ref="$ref" '$1==ref {print $3; exit}'
+}
+
+for record in "${POLICY_IMAGES[@]}"; do
+  IFS='|' read -r ref expected_digest mode <<<"$record"
+  current_digest="$(image_digest "$ref")"
+
+  if [[ "$mode" == local ]]; then
+    [[ -n "$current_digest" ]] || {
+      echo "ERROR: required local runtime image is missing: $ref" >&2
+      echo "Run ./install.sh on the validated source host first, then rebuild the handover bundle." >&2
+      exit 1
+    }
     continue
   fi
 
-  if [[ "$ref" == localhost/5g-kubernetes/srsran:* ]]; then
-    echo "ERROR: required locally-built srsRAN image is missing: $ref" >&2
-    echo "Run ./install.sh on the validated source host first, then rebuild the handover bundle." >&2
-    exit 1
+  if [[ "$mode" == locked ]]; then
+    if [[ -n "$current_digest" ]]; then
+      [[ "$current_digest" == "$expected_digest" ]] || {
+        echo "ERROR: cached policy image has the wrong digest: $ref" >&2
+        echo "Expected: $expected_digest" >&2
+        echo "Found:    $current_digest" >&2
+        exit 1
+      }
+      continue
+    fi
+
+    immutable="$ref"
+    if [[ "$ref" != *@sha256:* ]]; then
+      immutable="$ref@$expected_digest"
+    fi
+    echo "Pulling missing digest-locked image: $ref"
+    sudo ctr -n k8s.io images pull --platform linux/amd64 "$immutable"
+
+    if [[ "$immutable" != "$ref" ]]; then
+      sudo ctr -n k8s.io images tag "$immutable" "$ref" >/dev/null
+    fi
+
+    current_digest="$(image_digest "$ref")"
+    [[ "$current_digest" == "$expected_digest" ]] || {
+      echo "ERROR: pulled image did not resolve to the locked digest: $ref" >&2
+      exit 1
+    }
+    continue
   fi
 
-  echo "Pulling missing policy image: $ref"
-  sudo ctr -n k8s.io images pull --platform linux/amd64 "$ref"
+  if [[ -z "$current_digest" ]]; then
+    echo "Pulling missing registry image: $ref"
+    sudo ctr -n k8s.io images pull --platform linux/amd64 "$ref"
+  fi
 done
 
 echo "Collecting complete validated k8s.io image cache..."
