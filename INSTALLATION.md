@@ -20,6 +20,7 @@ That single handover file contains:
 
 - the exact tracked `5g-kubernetes` repository snapshot used to build the bundle;
 - the private Open5GS subscriber database input;
+- the private OAI UE subscriber JSON used for simulated UE/rfsim testing;
 - the complete `k8s.io` containerd image cache from the validated source machine;
 - every additional image declared in `config/reference-versions.json`;
 - all declared RAN runtime images, including the locally built pinned srsRAN image and OAI/UE images;
@@ -41,12 +42,13 @@ git pull origin reproducible-installer
 
 scripts/build-private-installer.sh \
   --subscriber-archive /home/administrator/open5gs-subscribers.archive.gz \
+  --ue-subscriber-input /home/administrator/private-5g-input/oai-ue-subscriber.json \
   --output ~/5g-orchestrator-installer.run
 ```
 
 The builder will automatically:
 
-1. verify the private subscriber input without printing its contents;
+1. verify both private subscriber inputs without printing their authentication values;
 2. verify that the source repository has no tracked local changes;
 3. require the pinned local srsRAN image to exist;
 4. pull any policy-declared registry image that is missing;
@@ -85,11 +87,12 @@ The handover installer will automatically:
 3. start containerd;
 4. import the complete bundled image archive into the Kubernetes `k8s.io` namespace;
 5. install the pinned repository snapshot as `~/5g-kubernetes`;
-6. install the private subscriber archive under `~/private-5g-input/` with restrictive permissions;
-7. generate `config/global.env` with the private subscriber input path;
-8. run the normal `./install.sh` workflow;
-9. build nothing from srsRAN source when the bundled approved local image is already present;
-10. continue through Kubernetes, infrastructure, OSM, Open5GS, monitoring and service installation.
+6. install the Open5GS subscriber archive and OAI UE subscriber JSON under `~/private-5g-input/` with restrictive permissions;
+7. generate `config/global.env` with the Open5GS private subscriber input path;
+8. preserve the OAI UE JSON for later `prepare_simulated_ue.py` use without printing authentication values;
+9. run the normal `./install.sh` workflow;
+10. build nothing from srsRAN source when the bundled approved local image is already present;
+11. continue through Kubernetes, infrastructure, OSM, Open5GS, monitoring and service installation.
 
 The target machine must be a fresh intended Ubuntu 24.04 lab host and the user must have sudo access.
 
@@ -101,7 +104,7 @@ Do not place any of the following in the public repository:
 
 - `5g-orchestrator-installer.run`;
 - Open5GS subscriber archives;
-- UE authentication JSON/files;
+- OAI/UE authentication JSON/files;
 - exported private credentials;
 - generated private image/input bundles.
 
