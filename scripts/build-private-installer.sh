@@ -29,10 +29,10 @@ Options:
   -h, --help                  Show this help
 
 The source host must already be a validated installation with Docker,
-containerd, and Skopeo available. The script exports each required image as a
-single-platform linux/amd64 archive, verifies every archive through containerd,
-verifies the local srsRAN image exists, embeds the tracked repository snapshot
-and private inputs, and emits one .run file.
+containerd, and Skopeo available. Registry images are exported as single-platform
+linux/amd64 archives with Skopeo; the validated local srsRAN image is exported
+directly from Docker. Every archive is verified through containerd before the
+tracked repository snapshot and private inputs are embedded into one .run file.
 EOF
 }
 
@@ -209,11 +209,7 @@ for record in "${POLICY_IMAGES[@]}"; do
       exit 1
     }
     echo "Saving/verifying local image $index: $runtime_ref"
-    sudo skopeo copy \
-      --override-os linux \
-      --override-arch amd64 \
-      "docker-daemon:$runtime_ref" \
-      "docker-archive:$archive_path:$staging_ref"
+    sudo docker save -o "$archive_path" "$runtime_ref"
   elif [[ "$mode" == locked ]]; then
     immutable="$runtime_ref"
     if [[ "$runtime_ref" != *@sha256:* ]]; then
