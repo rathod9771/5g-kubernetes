@@ -1,18 +1,19 @@
-name: OSM Package Onboarding
+name: OSM Catalog Preflight (read-only)
 
+# Catalog mutation is an operator-reviewed action, never a push side effect.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'osm-packages/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  onboard:
+  preflight:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-      - name: Onboard changed OSM packages
+      - name: Validate prepared packages without catalog mutation
         env:
           OSM_PASSWORD: ${{ secrets.OSM_PASSWORD }}
         run: |
-          bash scripts/osm-onboard.sh
+          python3 scripts/osm_onboard.py --ready --dry-run
