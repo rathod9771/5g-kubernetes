@@ -63,7 +63,8 @@ def register(app):
     @bp.get('/<kind>')
     def listing(kind):
         mapping={'workloads':'workloads','capabilities':'workloads','releases':'releases',
-                 'interoperability':'matrix','failure-analysis':'analysis','qualification-reports':'reports','pipeline-jobs':'jobs','publication-requests':'publication-requests','registry-publications':'registry-publications','deployments':'deployments'}
+                 'interoperability':'matrix','failure-analysis':'analysis','qualification-reports':'reports','pipeline-jobs':'jobs','publication-requests':'publication-requests','registry-publications':'registry-publications','deployments':'deployments',
+                 'instance-update-requests':'instance-update-requests'}
         if kind not in mapping:return jsonify(error='Unknown view'),404
         values=service().journal.list(g.telecom_principal,mapping[kind])
         from .freshness import current_evidence
@@ -184,6 +185,36 @@ def register(app):
     def deployment_observation():
         b=body('request_id','event_id')
         return jsonify(initial().refresh(g.telecom_principal,b['request_id'],b['event_id']))
+
+    def upgrade():
+        from .upgrade import InstanceUpdate
+        from .execution import Policy
+        return InstanceUpdate(service(),Policy.environment())
+
+    @bp.post('/instance-update-requests')
+    def instance_update_request():
+        b=body('deployment_id','publication_id','action','event_id')
+        return jsonify(upgrade().request(g.telecom_principal,b['deployment_id'],b['publication_id'],b['action'],b['event_id']))
+
+    @bp.post('/instance-update-approvals')
+    def instance_update_approval():
+        b=body('request_id','event_id')
+        return jsonify(upgrade().approve(g.telecom_principal,b['request_id'],b['event_id']))
+
+    @bp.post('/instance-update-cancellations')
+    def instance_update_cancellation():
+        b=body('request_id','event_id')
+        return jsonify(upgrade().cancel(g.telecom_principal,b['request_id'],b['event_id']))
+
+    @bp.post('/instance-updates')
+    def instance_update_submit():
+        b=body('request_id','approval_id')
+        return jsonify(upgrade().submit(g.telecom_principal,b['request_id'],b['approval_id']))
+
+    @bp.post('/instance-update-observations')
+    def instance_update_observation():
+        b=body('request_id','event_id')
+        return jsonify(upgrade().refresh(g.telecom_principal,b['request_id'],b['event_id']))
 
     @bp.after_request
     def privacy(response):

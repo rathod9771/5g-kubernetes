@@ -1,7 +1,7 @@
 'use strict';
 (() => {
   const views = {'External Workloads':'workloads','Capability Registry':'capabilities','CI/CD Releases':'releases',
-    'Interoperability Matrix':'interoperability','Failure Analysis':'failure-analysis','Qualification Reports':'qualification-reports','Pipeline Jobs':'pipeline-jobs','Publication Requests':'publication-requests','Registry Publications':'registry-publications','Initial Deployments':'deployments'};
+    'Interoperability Matrix':'interoperability','Failure Analysis':'failure-analysis','Qualification Reports':'qualification-reports','Pipeline Jobs':'pipeline-jobs','Publication Requests':'publication-requests','Registry Publications':'registry-publications','Initial Deployments':'deployments','Instance Updates':'instance-update-requests'};
   let selected='workloads', token='', busy=false;
   const output=document.getElementById('result');
   async function request(path, payload) {

@@ -23,7 +23,7 @@ const vm=require('vm'),assert=require('assert'),source=require('fs').readFileSyn
    AbortController,JSON,setTimeout,clearTimeout,
    fetch:async(path,opts)=>{requests.push({path,opts});return {ok:true,status:200,json:async()=>({items:[{name:'<img onerror=evil>'}]})};}};
  vm.runInNewContext(source,sandbox);
- assert.equal(get('views').children.length,10);
+ assert.equal(get('views').children.length,11);
  get('credential').value='offline-browser-only-'+ 'x'.repeat(40);
  await get('connect').onclick();await new Promise(setImmediate);
  assert.equal(requests.length,1);assert(requests[0].opts.headers.Authorization.startsWith('Bearer '));

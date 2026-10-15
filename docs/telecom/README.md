@@ -1,5 +1,12 @@
 # Telecom orchestrator research CI/CD
 
+P9 completes the researcher CI/CD loop with a guarded running-instance
+update/rollback adapter on top of P8's create-only OSM path. See
+[P9 status/implementation](P9.md) and [separately approved disposable test](P9-LIVE-TEST.md);
+live execution stays uncertified by default. P8 adds researcher-driven initial
+instantiation. See [P8 status/implementation](P8.md) and
+[separately approved disposable test](P8-LIVE-TEST.md).
+
 P7 implements authenticated source-to-registry publication and promotion gates. See
 [P7 status/security limits](P7.md) and [separately approved real test](P7-LIVE-TEST.md).
 Real infrastructure integration remains unverified; earlier phase records are historical.

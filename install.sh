@@ -2,13 +2,19 @@
 # Run only on the target Ubuntu system. Never run this during static validation.
 set -euo pipefail
 case $- in *x*) set +x ;; esac
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${1:-}" == --platform-only-plan ]]; then
+  # Platform-only profile: print the non-mutating research-only setup plan and
+  # exit. Never provisions, builds or removes the reference RAN/Core workloads
+  # below, imports no images/subscribers and starts no service.
+  exec env PYTHONPATH="$REPO_ROOT/scripts" python3 -m telecom.research_setup --mode research-only --reuse-existing --plan
+fi
 if [[ "$#" -gt 0 ]]; then
   [[ "$#" -eq 2 && "$1" == --srsran-image-archive && -n "$2" ]] || {
-    echo 'Usage: ./install.sh [--srsran-image-archive /path/to/approved-export.tar]' >&2
+    echo 'Usage: ./install.sh [--srsran-image-archive /path/to/approved-export.tar] [--platform-only-plan]' >&2
     exit 2
   }
 fi
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "$EUID" == 0 ]]; then
   echo 'ERROR: run install.sh as the intended service user with sudo available.' >&2
   exit 1

@@ -11,8 +11,12 @@ def plan():
             'start':'python3 docs/telecom/p6/research_only.py --port 5099',
             'bind':'127.0.0.1','production_service_restart':False,
             'buildkit_required_for_prebuilt_images':False,
+            'platform_only_profile':{'excludes_reference_ran_core':True,
+                'installer_entry_point':'./install.sh --platform-only-plan',
+                'installer_mutation':False,'description':'Prints this plan and exits; never provisions or removes reference RAN/Core workloads.'},
             'lifecycle':['initial-instantiation: explicit independent approval',
-                         'upgrade: NOT_VERIFIED','rollback: NOT_VERIFIED']}
+                         'update: OFFLINE_TESTED guarded adapter; live execution NOT_CERTIFIED by default',
+                         'rollback: OFFLINE_TESTED guarded adapter, limited to the immediately prior deployed release; live execution NOT_CERTIFIED by default']}
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
