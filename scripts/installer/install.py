@@ -882,11 +882,14 @@ def preflight(cfg):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preflight', action='store_true')
+    parser.add_argument('--validate-inputs', action='store_true', help='Validate private inputs and safety before host/image preparation')
     parser.add_argument('--srsran-image-archive', type=Path,
                         help='Approved Docker export; verified before bootstrap and imported into target containerd')
     args = parser.parse_args()
     cfg = resume_config(load_config(network=True, require=('install', 'osm')))
     preflight(cfg)
+    if args.validate_inputs:
+        return
     image = image_policy()['components']['srsran']
     if args.srsran_image_archive:
         inspect_archive(args.srsran_image_archive, image)

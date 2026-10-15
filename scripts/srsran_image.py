@@ -222,8 +222,8 @@ def installed(image, run):
     if cri.returncode:
         raise ValueError('Pinned srsRAN runtime reference is not CRI-resolvable')
     status = json.loads(cri.stdout).get('status', {})
-    if reference(image) not in status.get('repoTags', []):
-        raise ValueError('CRI runtime reference does not expose the pinned srsRAN tag')
+    if status.get('id') != config_digest or reference(image) not in status.get('repoTags', []):
+        raise ValueError('CRI runtime reference does not expose the verified pinned srsRAN configuration/tag')
     return True
 
 

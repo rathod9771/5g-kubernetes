@@ -23,6 +23,8 @@ fi
 
 source "$REPO_ROOT/scripts/common.sh"
 load_config --network --require install --require osm
+# Authenticate private inputs and reject unsafe active services before host changes.
+python3 -B "$REPO_ROOT/scripts/installer/install.py" --validate-inputs
 
 if [[ "$#" -eq 2 ]]; then
   # Legacy handover path: authenticate the supplied export before modifying the host.

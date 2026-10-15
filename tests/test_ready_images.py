@@ -218,9 +218,9 @@ class ImportTests(unittest.TestCase):
         row=(images.reference(image)+' OCI sha256:'+'0'*64+' 3GB linux/amd64 -\n').encode()
         run=mock.Mock(return_value=subprocess.CompletedProcess([],0,row))
         with tempfile.TemporaryDirectory() as d,mock.patch.object(importer,'convert') as convert:
-            with self.assertRaisesRegex(ValueError,'unapproved'):
+            with self.assertRaisesRegex(ValueError,'target content differs'):
                 importer.import_image('/synthetic/input',d,run,image)
-            convert.assert_not_called();self.assertEqual(run.call_count,1)
+            convert.assert_not_called();self.assertEqual(run.call_count,2)
 
     def test_partial_containerd_image_is_not_treated_as_reusable(self):
         image=images.policy()['components']['srsran']
@@ -259,7 +259,32 @@ class ImportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaisesRegex(ValueError,'supply'):importer.import_image(None,d,run,image)
         run.return_value.stdout=(images.reference(image)+' OCI sha256:'+'0'*64+' 3GB linux/amd64 -\n').encode()
-        with self.assertRaisesRegex(ValueError,'unapproved'):importer.installed(image,run)
+        with self.assertRaisesRegex(ValueError,'target content differs'):importer.installed(image,run)
+
+
+class PinnedSourceVerificationTests(unittest.TestCase):
+    def verify(self, wrong_id=False):
+        image=images.policy()['components']['srsran'];source=image['source']
+        digest=lambda b:'sha256:'+hashlib.sha256(b).hexdigest()
+        config=importer.canonical({'os':'linux','architecture':'amd64','config':{'Labels':{
+            'org.opencontainers.image.source':source['repository'],
+            'org.opencontainers.image.revision':source['commit'],
+            'org.opencontainers.image.version':source['version'],
+            'io.5g-kubernetes.acquisition':'pinned-source-build'}}})
+        config_id=digest(config)
+        manifest=importer.canonical({'schemaVersion':2,'config':{'digest':config_id}})
+        target=digest(manifest);ref=images.reference(image)
+        def run(command,**kwargs):
+            if command[-2:]==['images','list']:data=(ref+' OCI '+target+' 1MB linux/amd64 -\n').encode()
+            elif command[-1]==target:data=manifest
+            elif command[-1]==config_id:data=config
+            elif 'inspecti' in command:data=json.dumps({'status':{'id':'sha256:'+'0'*64 if wrong_id else config_id,'repoTags':[ref]}}).encode()
+            else:data=(ref+'\n').encode()
+            return subprocess.CompletedProcess(command,0,data)
+        return importer.installed(image,run)
+    def test_attested_source_and_cri_identity_match(self):self.assertTrue(self.verify())
+    def test_different_cri_config_is_rejected(self):
+        with self.assertRaisesRegex(ValueError,'verified pinned'):self.verify(True)
 
 
 class PendingReconciliationTests(unittest.TestCase):
