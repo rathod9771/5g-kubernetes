@@ -22,7 +22,7 @@ if ! python3 -c 'import yaml' >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1
 fi
 
 source "$REPO_ROOT/scripts/common.sh"
-load_config --network --require install --require watcher --require osm
+load_config --network --require install --require osm
 
 if [[ "$#" -eq 2 ]]; then
   # Legacy handover path: authenticate the supplied export before modifying the host.

@@ -57,43 +57,7 @@ def record_action(kind, detail):
 
 
 def trigger_failover(bler):
-    global last_action_time
-    now = time.time()
-    if now - last_action_time < ACTION_COOLDOWN_SECONDS:
-        log.info(
-            f"BLER {bler:.4f} exceeds threshold but still in cooldown "
-            f"({ACTION_COOLDOWN_SECONDS - (now - last_action_time):.0f}s left) -- not re-triggering"
-        )
-        return
-
-    payload = json.dumps({"ran": FAILOVER_SCENARIO}).encode()
-    req = urllib.request.Request(
-        f"{DASHBOARD_URL}/api/deploy",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=200) as resp:
-            body = json.loads(resp.read().decode())
-        last_action_time = now
-        record_action(
-            "ran_failover",
-            {
-                "reason": f"BLER {bler:.4f} exceeded threshold {BLER_THRESHOLD}",
-                "target_scenario": FAILOVER_SCENARIO,
-                "dashboard_response": body,
-            },
-        )
-    except (urllib.error.URLError, urllib.error.HTTPError) as e:
-        record_action(
-            "ran_failover_failed",
-            {
-                "reason": f"BLER {bler:.4f} exceeded threshold {BLER_THRESHOLD}",
-                "target_scenario": FAILOVER_SCENARIO,
-                "error": str(e),
-            },
-        )
+    raise PermissionError('Legacy automatic failover is disabled; no production recovery executor is authorized')
 
 
 def evaluate_once():

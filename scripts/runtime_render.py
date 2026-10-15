@@ -19,6 +19,8 @@ def systemd_quote(value, executable=False):
 
 
 def render_service(kind, cfg, user=None):
+    if kind == 'watcher':
+        raise ConfigError('Legacy autonomous watcher unit generation is disabled')
     user = user or getpass.getuser()
     if not re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_-]*\$?', user):
         raise ConfigError('Invalid service user name')

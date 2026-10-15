@@ -64,7 +64,7 @@ class AdversarialTests(unittest.TestCase):
     def test_actual_systemd_accepts_all_required_path_classes(self):
         for name in ['ordinary', 'spaces only', "quote's folder", 'literal $chars ; &', 'unicode-ü', 'percent%folder']:
             root = self.base / name
-            for kind, folder in [('dashboard', 'ran-selector'), ('watcher', 'layer3-autonomous'), ('rancher-forward', '')]:
+            for kind, folder in [('dashboard', 'ran-selector'), ('rancher-forward', '')]:
                 (root / folder).mkdir(parents=True, exist_ok=True)
                 cfg = {**self.cfg(), 'REPO_ROOT': str(root)}
                 unit = self.base / 'parser-review.service'
@@ -218,7 +218,8 @@ class AdversarialTests(unittest.TestCase):
 
     def test_watcher_validation_happens_before_installer_mutations(self):
         text=(ROOT/'install.sh').read_text()
-        self.assertIn('load_config --network --require install --require watcher',text)
+        self.assertIn('load_config --network --require install --require osm',text)
+        self.assertNotIn('--require watcher',text)
         with self.assertRaises(rc.ConfigError):self.cfg(require=('watcher',))
         self.cfg({'LAYER3_FAILOVER_SCENARIO':'cran-srsran'},require=('watcher',))
 
@@ -349,7 +350,7 @@ class AdversarialTests(unittest.TestCase):
     def test_service_launcher_uses_literal_paths_and_selected_context(self):
         import service_entry
         cfg=self.cfg({'DASHBOARD_PORT':'8092','RANCHER_PORT':'8444'})
-        for kind in ('dashboard','watcher','rancher-forward'):
+        for kind in ('dashboard','rancher-forward'):
             with mock.patch.object(service_entry,'ensure_osm_ca') as trust, mock.patch.object(service_entry,'load_config',return_value=cfg),mock.patch.object(sys,'argv',['service_entry.py',kind,str(self.base/'snapshot.json')]),mock.patch.object(service_entry.os,'execv') as execv,mock.patch.object(service_entry.os,'execvp',side_effect=RuntimeError('mock exec boundary')) as execvp,mock.patch.dict(os.environ,{'OSM_PASSWORD':'synthetic-inherited'}):
                 if kind=='rancher-forward':
                     with self.assertRaises(RuntimeError):service_entry.main()
