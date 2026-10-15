@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-from flask import Flask, request, jsonify, send_from_directory, g
+from flask import Flask, request, jsonify, send_from_directory, g, has_request_context
 import subprocess, yaml, os, json
 import time
+import functools
+import hashlib
+import monitoring
+import threading
 import sys
 from pathlib import Path
 import osm_client
@@ -125,8 +129,69 @@ def run(cmd):
     cfg = getattr(g, 'runtime_config', None) or load_config(require=('kubernetes',))
     # cmd is assembled internally; namespace has strict DNS validation. Paths are quoted.
     cmd = cmd.replace('kubectl ', 'kubectl --kubeconfig ' + shlex.quote(cfg['OSM_KUBECONFIG_PATH']) + ' ')
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    r = monitoring.run(cmd, shell=True, capture_output=True, text=True)
     return r.returncode, r.stdout, r.stderr
+
+
+def _monitor_scope():
+    # No credential is retained as a cache key. Partition by configuration,
+    # request authorization and persisted runtime identity/version.
+    cfg = getattr(g, 'runtime_config', None) or load_config()
+    versions = []
+    for path in [cfg.get('ACTIVE_STATE_PATH'), cfg.get('OSM_KUBECONFIG_PATH'),
+                 cfg.get('OSM_CA_CERT_PATH'), str(Path(REPO_PATH)/'config/global.env')]:
+        try:
+            stat = Path(path).stat()
+            versions.append((path, stat.st_mtime_ns, stat.st_size))
+        except (OSError, TypeError):
+            versions.append((path, None))
+    identity = [cfg, versions, request.headers.get('Authorization', ''),
+                request.headers.get('Cookie', ''), request.host]
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def monitored(ttl):
+    def decorate(fn):
+        @functools.wraps(fn)
+        def wrapped(*args, **kwargs):
+            if not has_request_context() or request.method != 'GET':
+                return fn(*args, **kwargs)
+            key = (_monitor_scope(), fn.__name__, repr(args), repr(kwargs), request.query_string)
+            return monitoring.cache.get(key, ttl, lambda: fn(*args, **kwargs))
+        return wrapped
+    return decorate
+
+
+# Reuse read-only OSM identity discovery for compatible monitoring requests.
+runtime_preflight = monitored(5)(runtime_preflight)
+
+# Limit expensive in-flight monitoring requests as well as subprocesses.
+_monitor_requests = threading.BoundedSemaphore(16)
+
+@app.before_request
+def monitoring_capacity():
+    if request.method == 'GET' and request.path.startswith('/api/'):
+        if not _monitor_requests.acquire(blocking=False):
+            return jsonify({'error': 'Monitoring capacity busy; retry'}), 503
+        g.monitoring_slot = True
+
+@app.teardown_request
+def release_monitoring_capacity(error):
+    if getattr(g, 'monitoring_slot', False):
+        g.monitoring_slot = False
+        _monitor_requests.release()
+
+
+@app.errorhandler(monitoring.BusyError)
+def monitoring_busy(error):
+    return jsonify({'error': str(error)}), 503
+
+
+@app.after_request
+def invalidate_monitoring(response):
+    if request.method != 'GET':
+        monitoring.cache.clear()
+    return response
 
 def get_pod_name(label):
     data = _kubectl_json(["get", "pods", "-n", _namespace(), "-o", "json"])
@@ -141,8 +206,11 @@ def index():
     return send_from_directory(UI_DIR, "index.html")
 
 @app.route("/api/pods")
+@monitored(5)
 def pods():
-    _, out, _ = run(f"kubectl get pods -n {_namespace()} -o json")
+    rc, out, err = run(f"kubectl get pods -n {_namespace()} -o json")
+    if rc:
+        return jsonify({"pods": [], "error": "Pod monitoring timed out or unavailable"})
     try:
         data = json.loads(out)
         result = []
@@ -170,7 +238,13 @@ def get_pod_name_by_label(label_value):
 def _kubectl_json(args):
     """Run kubectl and return parsed JSON, or None on failure."""
     try:
-        p = subprocess.run(_kubectl_argv(args), capture_output=True, text=True, timeout=8)
+        argv = _kubectl_argv(args)
+        def read():
+            return monitoring.run(argv, capture_output=True, text=True, timeout=8)
+        if has_request_context() and request.method == 'GET' and request.path != '/api/verify-clean':
+            p = monitoring.cache.get((_monitor_scope(), 'kubectl-json', tuple(argv)), 5, read)
+        else:
+            p = read()
         if p.returncode != 0:
             return None
         return json.loads(p.stdout)
@@ -280,6 +354,7 @@ def _pod_runtime(p):
     }
 
 
+@monitored(5)
 def _live_processes(p):
     """Read actual processes from each running container; never invent process names."""
     if not p:
@@ -301,7 +376,7 @@ def _live_processes(p):
             "done"
         )
         try:
-            q = subprocess.run(
+            q = monitoring.run(
                 _kubectl_argv(["exec", "-n", _namespace(), pod, "-c", cname, "--", "sh", "-c", cmd]),
                 capture_output=True, text=True, timeout=8
             )
@@ -327,6 +402,7 @@ def _live_processes(p):
 
 
 @app.route("/api/runtime/<key>")
+@monitored(5)
 def runtime(key):
     """Single live source for logs/process/status panels."""
     if key in ("cran", "vcran", "cloudran"):
@@ -355,6 +431,7 @@ def runtime(key):
     })
 
 
+@monitored(3)
 def _log_text_for_pod(pod, lines=60):
     """Get actual stdout logs for one pod, with live file logs for split srsRAN CU/DU."""
     name = pod.get("metadata", {}).get("name", "")
@@ -375,7 +452,7 @@ def _log_text_for_pod(pod, lines=60):
 
         if logfile:
             try:
-                q = subprocess.run(
+                q = monitoring.run(
                     _kubectl_argv(["exec", "-n", _namespace(), name, "-c", cname, "--",
                      "sh", "-c", f"tail -n {int(lines)} {logfile} 2>/dev/null"]),
                     capture_output=True, text=True, timeout=8
@@ -387,8 +464,8 @@ def _log_text_for_pod(pod, lines=60):
                 pass
 
         try:
-            q = subprocess.run(
-                _kubectl_argv(["logs", "-n", _namespace(), name, "-c", cname, f"--tail={int(lines)}"]),
+            q = monitoring.run(
+                _kubectl_argv(["logs", "-n", _namespace(), name, "-c", cname, f"--tail={int(lines)}", "--limit-bytes=262144"]),
                 capture_output=True, text=True, timeout=8
             )
             out = (q.stdout or q.stderr).strip()
@@ -403,7 +480,7 @@ def _log_text_for_pod(pod, lines=60):
         if cname not in ("cu", "du", "gnb", "oai-gnb"):
             continue
         try:
-            q = subprocess.run(
+            q = monitoring.run(
                 _kubectl_argv(["exec", "-n", _namespace(), name, "-c", cname, "--",
                  "sh", "-c", "cat /proc/net/sctp/assocs 2>/dev/null | tail -n +2"]),
                 capture_output=True, text=True, timeout=5
@@ -596,8 +673,18 @@ def _client_events(key):
     infra_ids = {s["id"] for s in statuses if s["id"] in {"cu", "du", "amf", "ng", "f1"}}
     infra_ok = all(s["state"] in {"Running", "Connected", "Completed"}
                    for s in statuses if s["id"] in infra_ids)
-    if bad:
+    experimental = SCENARIOS.get(ALIASES.get(key, key), {}).get("experimental", False)
+    expected = SCENARIOS.get(ALIASES.get(key, key), {}).get("pods", [])
+    missing = [name for name in expected if not any(
+        pod.get("metadata", {}).get("labels", {}).get("app") == name
+        for pod in targets)] if experimental else []
+    if missing:
+        overall, detail = "PARTIAL", "Missing experimental components: " + ", ".join(missing)
+    elif bad:
         overall, detail = "DEGRADED", "A recent error was detected in the live RAN logs"
+    elif experimental:
+        # A shared F1 log/association cannot establish both DU paths or F1-U.
+        overall, detail = "PARTIAL", "Experimental topology: per-DU F1 and user-plane acceptance remain unverified"
     elif all_ready and infra_ok:
         overall, detail = "OPERATIONAL", "RAN containers and required live control-plane connections are healthy"
     elif all_ready:
@@ -611,6 +698,7 @@ def _client_events(key):
             "updated": time.time()}
 
 @app.route("/api/events/<key>")
+@monitored(5)
 def client_events(key):
     if key in ("cran", "vcran", "cloudran"):
         return jsonify({"error": "Architecture-only key; provide a canonical scenario key from /api/scenarios"}), 400
@@ -619,6 +707,7 @@ def client_events(key):
     return jsonify(_client_events(ALIASES.get(key, key)))
 
 @app.route("/api/logs/<nf>")
+@monitored(3)
 def logs(nf):
     """Always resolve the requested component/scenario to the current Kubernetes pod."""
     if ALIASES.get(nf, nf) not in SCENARIOS and nf.upper() not in set(NF_LABELS) | set(POD_MAP) | {"UE"}:
@@ -659,6 +748,7 @@ def status():
         return jsonify({"active": "none", "error": str(e)})
 
 @app.route("/api/osm/status")
+@monitored(10)
 def osm_status():
     """OSM 19 + FluxCD health for the OSM panel."""
     out = {"pods": {"ready": 0, "total": 0}, "flux": [], "error": None}
@@ -731,7 +821,9 @@ def scenarios():
          "additive": v.get("additive", False),
          "releases": [r[0] for r in v["releases"]],
          "generation_status": v["generation_status"],
-         "blocked_reason": v["blocked_reason"]}
+         "blocked_reason": v["blocked_reason"],
+         "experimental": v.get("experimental", False),
+         "acceptance_status": v.get("acceptance_status")}
         for k, v in SCENARIOS.items() if k != "none"]})
 
 
@@ -785,6 +877,8 @@ def _deploy_locked(key):
     scen = dashboard_scenarios(registry)[key]
     if scenario["generation_status"] != "ready":
         return jsonify({"error": scenario["blocked_reason"]}), 409
+    if scenario.get('experimental') and (request.get_json(silent=True) or {}).get('experimental_acknowledged') is not True:
+        return jsonify({'error': 'Experimental static-only scenario requires explicit acknowledgement; runtime acceptance is outstanding'}), 409
     try:
         artifacts = validated_snapshot(Path(__file__).resolve().parents[1], DEFAULT_OUTPUT, scenario)
         cfg, context, catalog = runtime_preflight()
@@ -836,6 +930,8 @@ def adopt_pending():
 
 def _adopt_successful_pending(state, registry, requested_id, requested_operation):
     osm = state['osm']
+    if osm.get('experimental_recovery'):
+        raise ValueError('Experimental recovery is in progress; resume its targeted command first')
     pending = osm.get('pending_instance')
     already_adopted = pending is None
     if already_adopted:
@@ -903,6 +999,8 @@ def reconcile_pending():
 
 def _reconcile_failed_pending(state, registry, requested_id):
     osm = state['osm']
+    if osm.get('experimental_recovery'):
+        raise ValueError('Experimental recovery is in progress; resume its targeted command first')
     pending = osm.get('pending_instance')
     if not pending or pending.get('id') != requested_id:
         raise ValueError('Instance must match the recorded pending identity; requesting-stage ambiguity requires manual evidence')
@@ -951,8 +1049,12 @@ def _deploy_verified(key, registry, entries, scen, scenario, context, identities
     validate_state(config, registry, context)
     config.setdefault('osm', {})
     config['context'] = context
+    if config['osm'].get('experimental_recovery'):
+        raise ValueError('Experimental recovery is in progress; competing deployments are blocked')
     if config["osm"].get("pending_instance"):
         raise RuntimeError("Pending instance requires reconciliation before another deployment")
+    if scenario.get('experimental') and (config['osm'].get('active_instance_id') or config.get('active', 'none') != 'none'):
+        raise ValueError('Experimental deployment requires no active RAN instance; refusing teardown of the existing NS')
     if not scen.get("additive"):
         old = config["osm"].get("active_instance_id")
         old_key = registry["aliases"].get(config["osm"].get("active_scenario"), config["osm"].get("active_scenario"))
@@ -1021,6 +1123,7 @@ def verify_clean():
 
 
 @app.route("/api/hpa")
+@monitored(10)
 def hpa():
     """Live autoscaler state - the v-CRAN evidence."""
     _, out, _ = run(f"kubectl get hpa -n {_namespace()} --no-headers 2>/dev/null")
@@ -1035,6 +1138,7 @@ def hpa():
 
 
 
+@monitored(5)
 def _prom_query(promql):
     import urllib.request, urllib.parse, json as _json
     url = f"{load_config()['PROMETHEUS_URL']}/api/v1/query?query={urllib.parse.quote(promql)}"
@@ -1049,6 +1153,7 @@ def _prom_query(promql):
         return None
 
 @app.route("/api/latency")
+@monitored(5)
 def latency():
     """Real control-plane (SBI) TCP round-trip latency from the latency-probe exporter.
     Control-plane TCP connect latency exported by the live latency probe."""
@@ -1057,9 +1162,10 @@ def latency():
         return jsonify({"error": "no data from latency probe", "rtt_ms": None, "loss_pct": None})
     return jsonify({"rtt_ms": rtt * 1000, "loss_pct": 0, "target": "amf-sbi (control-plane)"})
 
+@monitored(5)
 def _ue_status_payload():
     """Return the same live UE state used by /api/ue-status, without HTTP."""
-    _, pod, _ = run(f"kubectl get pods -n {_namespace()} -l 'app in (oai-nr-ue,oai-nr-ue-cran)' -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
+    _, pod, _ = run(f"kubectl get pods -n {_namespace()} -l 'app in (oai-nr-ue,oai-nr-ue-cran,oai-nr-ue-hcran-oai-macro,oai-nr-ue-hcran-oai-small,oai-nr-ue-fran-oai-du)' -o jsonpath='{{.items[0].metadata.name}}' 2>/dev/null")
     pod = pod.strip().strip("'")
     registered = False
     pdu_session = False
@@ -1072,12 +1178,10 @@ def _ue_status_payload():
             pdu_session = True
             tun_ip = m.group(1)
         else:
-            _, out, _ = run(f"kubectl logs -n {_namespace()} {pod} 2>&1")
-            registered = "Registration complete" in out or "Received Registration Accept" in out
-            pdu_session = (
-                "Received PDU Session Establishment Accept" in out
-                or "PDU Session establishment is successful" in out
-            )
+            _, out, _ = run(f"kubectl logs -n {_namespace()} {pod} --tail=500 --limit-bytes=262144 2>&1")
+            historical_registered = "Registration complete" in out or "Received Registration Accept" in out
+            historical_pdu = ("Received PDU Session Establishment Accept" in out
+                              or "PDU Session establishment is successful" in out)
     rsrp = _prom_query("max(oai_gnb_ue_rsrp_dbm)")
     return {
         "registered": registered,
@@ -1086,14 +1190,20 @@ def _ue_status_payload():
         "pod": pod,
         "radio_connected": rsrp is not None,
         "rsrp_dbm": rsrp,
+        "registration_state": "inferred_from_live_tunnel" if tun_ip else "unknown",
+        "pdu_state": "active_tunnel" if tun_ip else "unknown",
+        "historical_registration": locals().get('historical_registered', False),
+        "historical_pdu_session": locals().get('historical_pdu', False),
     }
 
 @app.route("/api/ue-status")
+@monitored(5)
 def ue_status():
     """UE registration + radio link state from live OAI gNB/UE logs and Prometheus."""
     return jsonify(_ue_status_payload())
 
 @app.route("/api/istio/status")
+@monitored(10)
 def istio_status():
     """Real Istio state -- control plane health and actual per-NF sidecar
     injection, not a mockup. Checks whether each open5gs core NF's
@@ -1102,14 +1212,14 @@ def istio_status():
     _, phase, _ = run("kubectl get deployment istiod -n istio-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null")
     control_plane_ready = phase.strip().isdigit() and int(phase.strip()) >= 1
 
+    data = _kubectl_json(['get', 'pods', '-n', _namespace(), '-o', 'json']) or {}
     injected = {}
     for nf, label in NF_LABELS.items():
-        _, containers, _ = run(
-            f"kubectl get pods -n {_namespace()} -l app.kubernetes.io/name={label} "
-            "--no-headers 2>/dev/null | grep Running | head -1 | awk '{print $1}' | "
-            f"xargs -I{{}} kubectl get pod -n {_namespace()} {{}} -o jsonpath='{{.spec.containers[*].name}}' 2>/dev/null"
-        )
-        injected[nf] = "istio-proxy" in containers
+        matches = [p for p in data.get('items', [])
+                   if p.get('metadata', {}).get('labels', {}).get('app.kubernetes.io/name') == label
+                   and p.get('status', {}).get('phase') == 'Running']
+        injected[nf] = any(c.get('name') == 'istio-proxy' for p in matches
+                           for c in p.get('spec', {}).get('containers', []))
 
     return jsonify({
         "control_plane_ready": control_plane_ready,
@@ -1120,6 +1230,7 @@ def istio_status():
     })
 
 @app.route("/api/layer2-metrics")
+@monitored(5)
 def layer2_metrics():
     """Live Layer 2 summary for the dashboard: BLER, throughput, resource use, QoS."""
     return jsonify({

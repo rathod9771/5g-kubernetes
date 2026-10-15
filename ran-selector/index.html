@@ -568,8 +568,8 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
         <button class="arch-btn" data-arch="oran" onclick="selectArch(this,'oran','O-RAN',true)">O-RAN <span class="bdg-mini live">live</span></button>
         <button class="arch-btn" data-arch="cloudran" onclick="selectArch(this,'cloudran','Cloud-RAN',true)">Cloud-RAN <span class="bdg-mini live">live</span></button>
         <button class="arch-btn" data-arch="vcran" onclick="selectArch(this,'vcran','V-CRAN',true)">V-CRAN <span class="bdg-mini live">live</span></button>
-        <button class="arch-btn" data-arch="hcran" aria-disabled="true" onclick="selectArch(this,'hcran','H-CRAN',true)">H-CRAN <span class="bdg-mini">Disabled / Future</span></button>
-        <button class="arch-btn" data-arch="fran" aria-disabled="true" onclick="selectArch(this,'fran','F-RAN',true,true)">F-RAN <span class="bdg-mini">Disabled / Future</span></button>
+        <button class="arch-btn" data-arch="hcran" onclick="selectArch(this,'hcran','H-CRAN (experimental)',true)">H-CRAN <span class="bdg-mini">Experimental</span></button>
+        <button class="arch-btn" data-arch="fran" onclick="selectArch(this,'fran','Fog-RAN (experimental)',true)">Fog-RAN <span class="bdg-mini">Experimental</span></button>
       </div>
 
       <div id="stack-section" style="display:none">
@@ -591,6 +591,28 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
 </div>
 <script src="/assurance.js"></script>
 <script>
+// Bound automatic monitoring independently of backend process controls.
+const nativePollingInterval=window.setInterval.bind(window);
+window.setInterval=function(callback,ms){let running=false;const timer=nativePollingInterval(async()=>{
+  if(document.hidden||running)return;
+  const panel=[...Workspace.panels.values()].find(p=>p.timers.has(timer));
+  if(panel?.minimized)return;
+  running=true;try{await callback();}finally{running=false;}
+},ms);return timer;};
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden){loadPods();refreshLiveBar();}
+});
+const nativeDashboardFetch=window.fetch.bind(window);
+const monitoringFetches=new Map();
+window.fetch=function(url,options={}){
+  if((options.method||'GET')!=='GET'||options.signal||!String(url).startsWith('/api/'))return nativeDashboardFetch(url,options);
+  const key=JSON.stringify([String(url),options.headers||{},options.credentials||"same-origin"]);if(!monitoringFetches.has(key)){
+    const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),15000);
+    const pending=nativeDashboardFetch(url,{...options,signal:controller.signal}).finally(()=>{clearTimeout(timeout);monitoringFetches.delete(key);});
+    monitoringFetches.set(key,pending);
+  }
+  return monitoringFetches.get(key).then(response=>response.clone());
+};
 // Persistent read-only functionality workspace. Deployment state stays server-owned.
 const Workspace={panels:new Map(),maximized:null,nextZ:0,
   ensureDesktop(){
@@ -669,7 +691,12 @@ const Workspace={panels:new Map(),maximized:null,nextZ:0,
   error(id){const p=this.panels.get(id);if(p){p.error.hidden=false;p.error.textContent='Refresh failed — retry';}},
   async refreshPanel(id){const p=this.panels.get(id);if(!p||p.busy)return;p.busy=true;p.refreshButton.disabled=true;p.refreshButton.classList.add('refreshing');p.error.hidden=true;
     try{await p.options.refresh?.();}catch(error){if(error.name!=='AbortError')this.error(id);}finally{p.busy=false;p.refreshButton.disabled=false;p.refreshButton.classList.remove('refreshing');}},
-  async request(id,url,options={}){const p=this.panels.get(id);if(!p)throw new DOMException('Panel closed','AbortError');const controller=new AbortController();p.controllers.add(controller);
+  pendingRequests:new Map(),
+  request(id,url,options={}){const key=JSON.stringify([id,url,options]);
+    if(this.pendingRequests.has(key))return this.pendingRequests.get(key);
+    const pending=this._request(id,url,options).finally(()=>this.pendingRequests.delete(key));
+    this.pendingRequests.set(key,pending);return pending;},
+  async _request(id,url,options={}){const p=this.panels.get(id);if(!p)throw new DOMException('Panel closed','AbortError');const controller=new AbortController();p.controllers.add(controller);
     let timedOut=false;const timeout=setTimeout(()=>{timedOut=true;controller.abort();},15000);
     try{const response=await fetch(url,{...options,signal:controller.signal});if(!response.ok)throw new Error('Request failed');const data=options.responseType==='text'?await response.text():await response.json();if(this.panels.get(id)!==p)throw new DOMException('Panel closed','AbortError');if(data.error)throw new Error('API unavailable');return data;}catch(error){if(timedOut)throw new Error('Refresh request timed out');throw error;}finally{clearTimeout(timeout);p.controllers.delete(controller);}}
 };
@@ -1158,7 +1185,10 @@ setInterval(loadPods,20000);
 let selectedArch=null, selectedStack=null;
 
 const DISABLED_SCENARIO_MESSAGE='This scenario is not enabled in the current validated release.';
-function dashboardScenarioEnabled(key){return !/^(hcran(?:-|$)|fran(?:-|$)|oran-srsran$)/.test(key);}
+function dashboardScenarioEnabled(key){
+  if(['hcran','fran','hcran-oai','hcran-srsran','fran-oai','fran-srsran'].includes(key))return true;
+  return !/^(hcran(?:-|$)|fran(?:-|$)|oran-srsran$)/.test(key);
+}
 function rejectDisabledScenario(key){if(dashboardScenarioEnabled(key))return false;showInfoModal(DISABLED_SCENARIO_MESSAGE);return true;}
 function updateStackAvailability(){
   document.querySelectorAll('.stack-btn').forEach(button=>{
@@ -1557,11 +1587,13 @@ async function refreshSwitchedScenario(key,name,sub){
 }
 
 async function runDeployCombo(comboKey,name,sub){
-  if(/^(hcran(?:-|$)|fran(?:-|$)|oran-srsran$)/.test(comboKey)){showInfoModal("This scenario is not enabled in the current validated release.");return;}
+  if(!["hcran-oai","hcran-srsran","fran-oai","fran-srsran"].includes(comboKey)&&/^(hcran(?:-|$)|fran(?:-|$)|oran-srsran$)/.test(comboKey)){showInfoModal("This scenario is not enabled in the current validated release.");return;}
   if(switchInFlight)return;
+  const experimental=/^(hcran|fran)-(oai|srsran)$/.test(comboKey);
+  if(experimental&&!window.confirm('Experimental profile: static validation only. Multi-DU/fog runtime and UE connectivity are unverified. Deploy explicitly?'))return;
   switchInFlight=true;
   const baseline=lastDeployedCombo;
-  const requestBody={ran:comboKey,arch:selectedArch.key,stack:selectedStack?selectedStack.key:null};
+  const requestBody={ran:comboKey,arch:selectedArch.key,stack:selectedStack?selectedStack.key:null,experimental_acknowledged:experimental};
   const badge=document.getElementById("clean-badge");
   badge.textContent="\u23f3 Switching...";
   badge.style.background="#2a1a0a";
@@ -1624,12 +1656,12 @@ async function refreshUEPanel(){
     if(st){
       const ok=!!d.registered;
       st.className="panel-status "+(ok?"ok":"");
-      st.innerHTML=`<span class="pulse"></span>${ok?"REGISTERED":"NOT REGISTERED"}`;
+      st.innerHTML=`<span class="pulse"></span>${ok?"REGISTERED":d.registration_state==="unknown"?"UNKNOWN":"NOT REGISTERED"}`;
     }
     const set=(id,v,cls)=>{const e=document.getElementById(id);if(e){e.textContent=v;e.className="info-val "+(cls||"");}};
     set("uei-pod",d.pod||"—","blue");
-    set("uei-reg",d.registered?"REGISTERED":"NOT REGISTERED",d.registered?"ok":"");
-    set("uei-pdu",d.pdu_session?"ACTIVE":"NONE",d.pdu_session?"ok":"");
+    set("uei-reg",d.registered?"REGISTERED":d.registration_state==="unknown"?"UNKNOWN":"NOT REGISTERED",d.registered?"ok":"");
+    set("uei-pdu",d.pdu_session?"ACTIVE":d.pdu_state==="unknown"?"UNKNOWN":"NONE",d.pdu_session?"ok":"");
     set("uei-tun",d.tun||"—","blue");
     set("uei-rsrp",d.rsrp_dbm==null?"—":d.rsrp_dbm.toFixed(1)+" dBm",d.rsrp_dbm!=null?"ok":"");
   }catch(e){panelError('ue',e);}
@@ -1638,9 +1670,9 @@ async function refreshUEPanel(){
 async function refreshLiveBar(){
   try{
     const us = await (await fetch("/api/ue-status")).json();
-    document.getElementById("lb-ue").textContent = "UE: " + (us.registered ? "REGISTERED" : "NOT REGISTERED");
+    document.getElementById("lb-ue").textContent = "UE: " + (us.registered ? "REGISTERED" : us.registration_state==="unknown" ? "UNKNOWN" : "NOT REGISTERED");
     document.getElementById("lb-ue").style.color = us.registered ? "#00ff88" : "#ff4455";
-    document.getElementById("lb-pdu").textContent = "PDU: " + (us.pdu_session ? "ACTIVE" : "NONE");
+    document.getElementById("lb-pdu").textContent = "PDU: " + (us.pdu_session ? "ACTIVE" : us.pdu_state==="unknown" ? "UNKNOWN" : "NONE");
     document.getElementById("lb-pdu").style.color = us.pdu_session ? "#00ff88" : "#ff4455";
     document.getElementById("lb-tun").textContent = us.tun ? "tun: " + us.tun : "";
   }catch(e){}
@@ -1678,6 +1710,8 @@ const COMBO_DISPLAY = {
   "hcran-oai":       ["hcran",    "H-CRAN + OAI",       "Heterogeneous macro + small cell (OAI)"],
   "vcran-srsran":    ["vcran",    "V-CRAN + srsRAN",    "CU/DU split with autoscaling (srsRAN)"],
   "vcran-oai":       ["vcran",    "V-CRAN + OAI",       "CU/DU split with autoscaling (OAI)"],
+  "fran-oai": ["fran", "Fog-RAN + OAI (experimental)", "Central CU + edge DU + local processing"],
+  "fran-srsran": ["fran", "Fog-RAN + srsRAN (experimental)", "Central CU + edge DU + local processing"],
   "fran":            ["fran",     "F-RAN",              "Fog RAN edge/MEC breakout"]
 };
 async function restoreDeployedState(){

@@ -21,7 +21,7 @@ const sandbox={console,document:{querySelectorAll:selector=>selector==='.stack-b
 vm.createContext(sandbox);vm.runInContext(input.selection+input.deploy,sandbox);
 sandbox.runDeployCombo=key=>calls.push(key);
 (async()=>{
-for(const arch of ['hcran','fran']){sandbox.selectArch(node(),arch,arch,true);assert(messages.pop().includes('not enabled'));}
+for(const key of ['hcran-oai','hcran-srsran','fran-oai','fran-srsran'])assert(sandbox.dashboardScenarioEnabled(key));
 for(const arch of ['cran','vcran','cloudran','oran'])for(const stack of ['srsran','oai']){
  sandbox.selectArch(node(),arch,arch,true);sandbox.selectStack(node(),stack,stack);
  await sandbox.deployCombo();
@@ -31,7 +31,7 @@ assert.equal(stackButton['aria-disabled'],'true');assert(stackButton.innerHTML.i
 sandbox.selectArch(node(),'cran','C-RAN',true);assert.equal(stackButton['aria-disabled'],'false');assert(!stackButton.innerHTML.includes('Disabled / Future'));
 assert.deepEqual(calls,['cran-srsran','cran-oai','vcran-srsran','vcran-oai','cloudran-srsran','cloudran-oai','oran-oai']);
 vm.runInContext(input.direct,sandbox);
-for(const key of ['hcran-oai','hcran-srsran','fran','fran-oai','oran-srsran']){await sandbox.runDeployCombo(key,key,'');assert(messages.pop().includes('not enabled'));}
+for(const key of ['fran','oran-srsran']){await sandbox.runDeployCombo(key,key,'');assert(messages.pop().includes('not enabled'));}
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
         result=subprocess.run(['node','-e',harness],input=json.dumps(dict(selection=selection,deploy=deploy,direct=direct)),capture_output=True,text=True,timeout=15)
