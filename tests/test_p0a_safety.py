@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Independent safety expectations. Network/lifecycle calls are always mocked."""
 import contextlib
 import copy
@@ -233,18 +234,18 @@ class BackendSafetyTests(unittest.TestCase):
         self.kubectl = self.stack.enter_context(mock.patch.object(b, '_kubectl_json', side_effect=AssertionError('unexpected cluster access')))
 
     def post(self, key='cran-oai'):
-        return self.backend.app.test_client().post('/api/deploy', json={'ran': key})
+        return legacy_logic_client(self.backend.app).post('/api/deploy', json={'ran': key})
 
     def test_injection_payload_rejected_without_subprocess(self):
         with mock.patch.object(self.backend.subprocess, 'run', side_effect=AssertionError('payload executed')):
             for endpoint in ['logs', 'runtime', 'events']:
-                response = self.backend.app.test_client().get('/api/' + endpoint + '/' + quote('x;printf audit_marker;#', safe=''))
+                response = legacy_logic_client(self.backend.app).get('/api/' + endpoint + '/' + quote('x;printf audit_marker;#', safe=''))
                 self.assertEqual(response.status_code, 400)
             self.kubectl.assert_not_called()
             self.commands.assert_not_called()
 
     def test_malformed_json_and_types_rejected_before_lifecycle(self):
-        client = self.backend.app.test_client()
+        client = legacy_logic_client(self.backend.app)
         for value in [None, [], 'cran-oai', {}, {'ran': []}, {'ran': {}}, {'ran': 1}]:
             self.assertEqual(client.post('/api/deploy', json=value).status_code, 400)
         self.assertEqual(client.post('/api/deploy', data='{broken', content_type='application/json').status_code, 400)

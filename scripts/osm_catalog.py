@@ -60,7 +60,9 @@ class Catalog:
                 context.load_verify_locations(cadata=certificate)
             opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), NoRedirect())
             with opener.open(request, timeout=30) as response:
-                return response.read()
+                content=response.read(16*1024*1024+1)
+                if len(content)>16*1024*1024: raise CatalogError('OSM response budget exceeded')
+                return content
         except urllib.error.HTTPError as error:
             if error.code == 401:
                 raise AuthorizationError('OSM authorization expired') from None

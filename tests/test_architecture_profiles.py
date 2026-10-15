@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Static topology and fog processing checks; no cluster or OSM requests."""
 import copy
 import json
@@ -154,7 +155,7 @@ class ArchitectureTests(unittest.TestCase):
         self.assertEqual(self.registry['aliases']['cran'],'cran-srsran')
         import test_pending_adoption as adoption
         b=adoption.backend
-        catalog=b.app.test_client().get('/api/scenarios').json['scenarios']
+        catalog=legacy_logic_client(b.app).get('/api/scenarios').json['scenarios']
         for key in KEYS:
             item=next(x for x in catalog if x['key']==key)
             self.assertTrue(item['experimental'])

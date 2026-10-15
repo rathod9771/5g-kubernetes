@@ -59,35 +59,52 @@ cache = Cache()
 slots = threading.BoundedSemaphore(4)
 
 
-def run(command, *, shell=False, capture_output=True, text=True, timeout=8):
+def run(command, *, shell=False, capture_output=True, text=True, timeout=8, env=None, max_rss=None):
     """Kill the entire monitoring command group on timeout, including pipe children."""
     if not slots.acquire(timeout=2):
         return subprocess.CompletedProcess(command, 124, '', 'Monitoring capacity busy; retry')
     try:
         with subprocess.Popen(command, shell=shell, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, start_new_session=True) as proc:
-            buffers={proc.stdout:bytearray(),proc.stderr:bytearray()}
-            deadline=time.monotonic()+timeout;total=0;reason=None
-            with selectors.DefaultSelector() as selector:
-                for stream in buffers:
-                    os.set_blocking(stream.fileno(),False)
-                    selector.register(stream,selectors.EVENT_READ)
-                while selector.get_map() or proc.poll() is None:
-                    if time.monotonic()>=deadline:reason='Monitoring command timed out';break
-                    for key,_ in selector.select(.02):
-                        chunk=os.read(key.fileobj.fileno(),65536)
-                        if not chunk:selector.unregister(key.fileobj);continue
-                        total+=len(chunk)
-                        if total>2*1024*1024:reason='Monitoring output limit exceeded';break
-                        buffers[key.fileobj].extend(chunk)
-                    if reason:break
-                if reason:
-                    try:os.killpg(proc.pid,signal.SIGKILL)
-                    except ProcessLookupError:pass
-                    proc.wait(timeout=5)
-                    return subprocess.CompletedProcess(command,124,'' if text else b'',reason if text else reason.encode())
-            out,err=(bytes(buffers[stream]) for stream in (proc.stdout,proc.stderr))
-            if text:out,err=out.decode('utf-8','replace'),err.decode('utf-8','replace')
-            return subprocess.CompletedProcess(command,proc.wait(timeout=5),out,err)
+                              stderr=subprocess.PIPE, start_new_session=True, env=env) as proc:
+            try:
+                buffers={proc.stdout:bytearray(),proc.stderr:bytearray()}
+                deadline=time.monotonic()+timeout;total=0;reason=None;tracked={}
+                if max_rss is not None:
+                    from assurance.memory import tree_memory, MemoryMeasurementError
+                with selectors.DefaultSelector() as selector:
+                    for stream in buffers:
+                        os.set_blocking(stream.fileno(),False)
+                        selector.register(stream,selectors.EVENT_READ)
+                    while selector.get_map() or proc.poll() is None:
+                        if time.monotonic()>=deadline:reason='Monitoring command timed out';break
+                        if max_rss is not None and proc.poll() is None:
+                            try:
+                                if tree_memory(proc.pid,tracked)['rss_sum_bytes']>max_rss:
+                                    reason='Offline command RSS budget exceeded';break
+                            except MemoryMeasurementError:
+                                if proc.poll() is None:
+                                    reason='Offline memory accounting unavailable';break
+                        for key,_ in selector.select(.02):
+                            chunk=os.read(key.fileobj.fileno(),65536)
+                            if not chunk:selector.unregister(key.fileobj);continue
+                            total+=len(chunk)
+                            if total>2*1024*1024:reason='Monitoring output limit exceeded';break
+                            buffers[key.fileobj].extend(chunk)
+                        if reason:break
+                    if reason:
+                        try:os.killpg(proc.pid,signal.SIGKILL)
+                        except ProcessLookupError:pass
+                        proc.wait(timeout=5)
+                        return subprocess.CompletedProcess(command,124,'' if text else b'',reason if text else reason.encode())
+                out,err=(bytes(buffers[stream]) for stream in (proc.stdout,proc.stderr))
+                if text:out,err=out.decode('utf-8','replace'),err.decode('utf-8','replace')
+                return subprocess.CompletedProcess(command,proc.wait(timeout=5),out,err)
+            except BaseException:
+                # A cancelled parent or accounting/parser error must not leave a child.
+                try: os.killpg(proc.pid,signal.SIGKILL)
+                except ProcessLookupError: pass
+                proc.wait(timeout=5)
+                raise
+
     finally:
         slots.release()

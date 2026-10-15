@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Local/static regressions; all mutations occur in disposable test directories."""
 
 import copy
@@ -243,7 +244,7 @@ class DashboardTests(unittest.TestCase):
         spec.loader.exec_module(cls.backend)
 
     def test_registry_api_preserves_keys_and_exposes_blocks(self):
-        client = self.backend.app.test_client()
+        client = legacy_logic_client(self.backend.app)
         result = client.get("/api/scenarios").get_json()["scenarios"]
         self.assertEqual(len(result), 13)
         by_key = {entry["key"]: entry for entry in result}
@@ -257,7 +258,7 @@ class DashboardTests(unittest.TestCase):
         patcher = mock.patch.object(self.backend, "CONFIG_FILE", str(Path(temporary.name) / "active.yaml"))
         patcher.start()
         self.addCleanup(patcher.stop)
-        client = self.backend.app.test_client()
+        client = legacy_logic_client(self.backend.app)
         with mock.patch.object(self.backend.osm_client, "terminate_ns", side_effect=AssertionError("lifecycle invoked")), mock.patch.object(self.backend.osm_client, "instantiate_ns", side_effect=AssertionError("lifecycle invoked")), mock.patch.object(self.backend, "run", side_effect=AssertionError("command invoked")):
             response = client.post("/api/deploy", json={"ran": "oran-srsran"})
             self.assertEqual(response.status_code, 409)

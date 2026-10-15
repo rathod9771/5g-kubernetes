@@ -1,0 +1,4 @@
+apiVersion: v2
+name: disposable-http
+version: 0.1.0
+description: Harmless non-root HTTP onboarding test; operator must supply verified image

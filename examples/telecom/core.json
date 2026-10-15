@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "name": "sample-core",
+  "version": "0.1.0",
+  "roles": [
+    "amf",
+    "smf",
+    "upf",
+    "nrf"
+  ],
+  "source": {
+    "kind": "oci",
+    "repository": "example.invalid/research/core",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "image": {
+    "repository": "example.invalid/research/core",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "platform": "linux/amd64"
+  },
+  "interfaces": {
+    "N2": {
+      "transport": "SCTP",
+      "endpoint": "core-sandbox.example.invalid",
+      "port": 38412,
+      "mtu": 1500
+    },
+    "N3": {
+      "transport": "GTP-U",
+      "endpoint": "core-sandbox.example.invalid",
+      "port": 2152,
+      "mtu": 1500
+    },
+    "N4": {
+      "transport": "PFCP",
+      "endpoint": "core-sandbox.example.invalid",
+      "port": 8805,
+      "mtu": 1500
+    },
+    "N6": {
+      "transport": "IP",
+      "endpoint": "core-sandbox.example.invalid",
+      "port": null,
+      "mtu": 1500
+    },
+    "SBI": {
+      "transport": "HTTPS",
+      "endpoint": "core-sandbox.example.invalid",
+      "port": 443,
+      "mtu": 1500
+    }
+  },
+  "plmn": "00101",
+  "tac": 1,
+  "slices": [
+    {
+      "sst": 1,
+      "sd": "000001"
+    }
+  ],
+  "dnns": [
+    "internet"
+  ],
+  "resources": {
+    "cpu_millicores": 100,
+    "memory_mib": 64
+  },
+  "hardware": {
+    "mode": "simulation",
+    "devices": [],
+    "hugepages_mib": 0
+  },
+  "monitoring": {
+    "required_metrics": [
+      "up"
+    ],
+    "optional_metrics": []
+  }
+}

@@ -530,6 +530,12 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
 </style>
 </head>
 <body>
+<div style="padding:8px"><label>Operator API token <input id="legacy-credential" type="password" autocomplete="off"></label>
+<button id="legacy-connect">Use token for this page</button><span id="legacy-auth-state"> Operator authentication is required. Lifecycle switching is disabled.</span></div>
+<script src="/legacy-auth.js"></script>
+
+<a href="/telecom" style="display:block;padding:8px">Telecom Research CI/CD (offline sandbox)</a>
+
 <div id="liveBar" style="display:flex;gap:18px;align-items:center;padding:8px 16px;background:#0d1424;border-bottom:1px solid #1e2a45;font-size:13px;font-family:monospace;flex-wrap:wrap;">
   <span style="color:#8899bb;">LIVE</span>
   <span id="lb-ue" style="color:#666;">UE: ...</span>

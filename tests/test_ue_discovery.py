@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Live UE discovery covers generated and legacy OAI labels without deployment."""
 import shlex
 import subprocess
@@ -31,7 +32,7 @@ class UEDiscoveryTests(unittest.TestCase):
                 with mock.patch.object(backend, '_namespace', return_value='test'), \
                      mock.patch.object(backend, 'run', side_effect=run), \
                      mock.patch.object(backend, '_prom_query', return_value=None):
-                    response = backend.app.test_client().get('/api/ue-status')
+                    response = legacy_logic_client(backend.app).get('/api/ue-status')
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json['pod'], pod)
                 self.assertEqual(response.json['tun'], '10.45.0.2')

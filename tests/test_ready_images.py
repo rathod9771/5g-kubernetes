@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Local regression contracts for approved images, safe import and simulator UE."""
 import copy
 import hashlib
@@ -378,7 +379,7 @@ class PendingReconciliationTests(unittest.TestCase):
         b=self.backend
         with mock.patch.object(b,'CONFIG_FILE',str(self.path)),mock.patch.object(b,'validated_snapshot') as snapshot:
             for key in ['oran-srsran','hcran-srsran','hcran-oai']:
-                self.assertEqual(b.app.test_client().post('/api/deploy',json={'ran':key}).status_code,409)
+                self.assertEqual(legacy_logic_client(b.app).post('/api/deploy',json={'ran':key}).status_code,409)
             snapshot.assert_not_called()
 
 

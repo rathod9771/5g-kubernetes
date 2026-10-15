@@ -3,7 +3,7 @@ import hmac
 import os
 from pathlib import Path
 import time
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 from .store import Store, JournalBusy
 from .engine import Engine
 from .catalog import load_catalog
@@ -16,6 +16,11 @@ def register(app, cfg_loader):
     def engine():
         return Engine(Store(Path(cfg_loader()['RUNTIME_DIR'])/'assurance.sqlite'),load_catalog(),time.time)
     def authorized(name):
+        # The host dashboard can provide a tenant-bound central operator identity.
+        principal=getattr(g,'telecom_principal',None)
+        if principal is not None:
+            # Central operator credentials do not attest upstream telemetry.
+            return name=='L3_OPERATOR_TOKEN' and 'operator' in principal.roles
         configured=os.environ.get(name,'')
         supplied=request.headers.get('Authorization','')
         return len(configured)>=32 and hmac.compare_digest(supplied,'Bearer '+configured)

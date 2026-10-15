@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Dashboard release gating and repository guide, without lifecycle calls."""
 import json
 from pathlib import Path
@@ -45,7 +46,7 @@ for(const key of ['fran','oran-srsran']){await sandbox.runDeployCombo(key,key,''
 
     def test_documentation_route_and_controls(self):
         import test_pending_adoption as adoption
-        client=adoption.backend.app.test_client()
+        client=legacy_logic_client(adoption.backend.app)
         response=client.get('/api/docs/dashboard-and-ran-architecture-guide.md')
         self.assertEqual(response.status_code,200)
         self.assertEqual(response.data,GUIDE.read_bytes())

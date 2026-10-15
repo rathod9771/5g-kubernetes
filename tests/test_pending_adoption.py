@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Pending-success recovery without OSM lifecycle actions or state ambiguity."""
 import contextlib
 import copy
@@ -35,7 +36,7 @@ class PendingAdoptionTests(unittest.TestCase):
         self.terminate=stack.enter_context(mock.patch.object(backend.osm_client,'terminate_ns',return_value='cleanup-op'))
         self.delete=stack.enter_context(mock.patch.object(backend.osm_client,'delete_ns_instance',return_value=True))
         self.instantiate=stack.enter_context(mock.patch.object(backend.osm_client,'instantiate_ns'))
-        self.client=backend.app.test_client()
+        self.client=legacy_logic_client(backend.app)
         self.cleanup_allowed=False
 
     def tearDown(self):

@@ -1272,5 +1272,23 @@ register_assurance(app, load_config)
 def assurance_script():
     return send_from_directory(UI_DIR, 'assurance.js')
 
+# New lifecycle surface is an authenticated offline sandbox; legacy writes fail closed.
+from telecom.security import install_legacy_guard
+from telecom.api import register as register_telecom
+install_legacy_guard(app)
+register_telecom(app)
+
+@app.route('/telecom')
+def telecom_dashboard():
+    return send_from_directory(UI_DIR, 'telecom.html')
+
+@app.route('/legacy-auth.js')
+def legacy_auth_javascript():
+    return send_from_directory(UI_DIR, 'legacy-auth.js')
+
+@app.route('/telecom.js')
+def telecom_javascript():
+    return send_from_directory(UI_DIR, 'telecom.js')
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(load_config()['DASHBOARD_PORT']), debug=False)

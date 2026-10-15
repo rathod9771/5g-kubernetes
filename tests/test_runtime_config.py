@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Portable configuration contracts with synthetic data. No live services used."""
 import contextlib
 import importlib.util
@@ -377,7 +378,7 @@ class DiscoveryTests(unittest.TestCase):
         backend = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(backend)
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(backend, 'CONFIG_FILE', str(Path(tmp) / 'state.yaml')), mock.patch.object(backend, 'validated_snapshot', return_value={}), mock.patch.object(backend, 'runtime_preflight', side_effect=rc.ConfigError('ambiguous VIM')), mock.patch.object(backend.osm_client, 'terminate_ns') as terminate:
-            response = backend.app.test_client().post('/api/deploy', json={'ran': 'cran-oai'})
+            response = legacy_logic_client(backend.app).post('/api/deploy', json={'ran': 'cran-oai'})
             self.assertEqual(response.status_code, 409)
             terminate.assert_not_called()
 
@@ -393,7 +394,7 @@ class DiscoveryTests(unittest.TestCase):
             catalog.verify.return_value = {'ns': PROJECT}
             context = {'project_id': PROJECT, 'vim_id': VIM, 'namespace': PROJECT}
             with mock.patch.object(backend, 'CONFIG_FILE', str(state)), mock.patch.object(backend, 'validated_snapshot', return_value={}), mock.patch.object(backend, 'runtime_preflight', return_value=({'DEPLOYMENT_PROFILE': 'rfsim'}, context, catalog)), mock.patch.object(backend.osm_client, 'terminate_ns') as terminate:
-                response = backend.app.test_client().post('/api/deploy', json={'ran': 'cran-oai'})
+                response = legacy_logic_client(backend.app).post('/api/deploy', json={'ran': 'cran-oai'})
                 self.assertEqual(response.status_code, 500)
                 terminate.assert_not_called()
 

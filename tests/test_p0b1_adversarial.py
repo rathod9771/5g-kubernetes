@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Independent portability regressions. All APIs/binaries use synthetic fixtures."""
 import getpass
 import importlib.util
@@ -245,7 +246,7 @@ class AdversarialTests(unittest.TestCase):
         state=self.base/'state.yaml';state.write_text(yaml.safe_dump({'active':'none','osm':{'additive_instances':'bad'},'context':context}))
         verified=mock.Mock();verified.verify.return_value={'ns':PROJECT}
         with mock.patch.object(b,'CONFIG_FILE',str(state)),mock.patch.object(b,'validated_snapshot',return_value={}),mock.patch.object(b,'runtime_preflight',return_value=(cfg,context,verified)),mock.patch.object(b.osm_client,'instantiate_ns') as instantiate,mock.patch.object(b.osm_client,'terminate_ns') as terminate:
-            response=b.app.test_client().post('/api/deploy',json={'ran':'fran'})
+            response=legacy_logic_client(b.app).post('/api/deploy',json={'ran':'fran'})
             self.assertNotEqual(response.status_code,200)
             instantiate.assert_not_called();terminate.assert_not_called()
         self.assertNotIn('pending_instance',yaml.safe_load(state.read_text())['osm'])
@@ -320,7 +321,7 @@ class AdversarialTests(unittest.TestCase):
         state=self.base/'state.yaml';state.write_text(yaml.safe_dump({'active':'cran-srsran','osm':{'active_instance_id':VIM,'active_scenario':'cran-srsran'},'context':old}))
         before=state.read_bytes();verified=mock.Mock();verified.verify.return_value={'ns':PROJECT}
         with mock.patch.object(b,'CONFIG_FILE',str(state)),mock.patch.object(b,'validated_snapshot',return_value={}),mock.patch.object(b,'runtime_preflight',return_value=(cfg,new,verified)),mock.patch.object(b.osm_client,'instantiate_ns') as instantiate,mock.patch.object(b.osm_client,'terminate_ns') as terminate:
-            response=b.app.test_client().post('/api/deploy',json={'ran':'cran-oai'})
+            response=legacy_logic_client(b.app).post('/api/deploy',json={'ran':'cran-oai'})
             self.assertNotEqual(response.status_code,200)
             instantiate.assert_not_called();terminate.assert_not_called()
         self.assertEqual(before,state.read_bytes())

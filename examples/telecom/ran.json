@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "name": "sample-ran",
+  "version": "0.1.0",
+  "roles": [
+    "cu",
+    "du"
+  ],
+  "source": {
+    "kind": "oci",
+    "repository": "example.invalid/research/ran",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "image": {
+    "repository": "example.invalid/research/ran",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "platform": "linux/amd64"
+  },
+  "interfaces": {
+    "F1-C": {
+      "transport": "SCTP",
+      "endpoint": "ran-sandbox.example.invalid",
+      "port": 38472,
+      "mtu": 1500
+    },
+    "F1-U": {
+      "transport": "GTP-U",
+      "endpoint": "ran-sandbox.example.invalid",
+      "port": 2152,
+      "mtu": 1500
+    },
+    "N2": {
+      "transport": "SCTP",
+      "endpoint": "ran-sandbox.example.invalid",
+      "port": 38412,
+      "mtu": 1500
+    },
+    "N3": {
+      "transport": "GTP-U",
+      "endpoint": "ran-sandbox.example.invalid",
+      "port": 2152,
+      "mtu": 1500
+    }
+  },
+  "plmn": "00101",
+  "tac": 1,
+  "slices": [
+    {
+      "sst": 1,
+      "sd": "000001"
+    }
+  ],
+  "dnns": [
+    "internet"
+  ],
+  "resources": {
+    "cpu_millicores": 100,
+    "memory_mib": 64
+  },
+  "hardware": {
+    "mode": "simulation",
+    "devices": [],
+    "hugepages_mib": 0
+  },
+  "monitoring": {
+    "required_metrics": [
+      "up"
+    ],
+    "optional_metrics": []
+  }
+}

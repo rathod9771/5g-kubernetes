@@ -1,0 +1,4 @@
+apiVersion: v2
+name: sample-core
+version: 0.1.0
+description: Offline simulation fixture only; no executable NF image is supplied

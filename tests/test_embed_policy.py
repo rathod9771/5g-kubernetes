@@ -1,3 +1,4 @@
+from legacy_logic_client import legacy_logic_client
 """Embedding security-header decisions use synthetic headers and verified TLS."""
 import importlib.util
 from pathlib import Path
@@ -39,5 +40,5 @@ class EmbedPolicyTests(unittest.TestCase):
 
     def test_unknown_application_rejected_without_requests(self):
         with mock.patch.object(adoption.backend.embed_policy,'inspect') as probe:
-            response=adoption.backend.app.test_client().get('/api/embed-policy/arbitrary')
+            response=legacy_logic_client(adoption.backend.app).get('/api/embed-policy/arbitrary')
         self.assertEqual(response.status_code,400);probe.assert_not_called()

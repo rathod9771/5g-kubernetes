@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "name": "disposable-http",
+  "version": "0.1.0",
+  "roles": [
+    "x-harmless-http"
+  ],
+  "source": {
+    "kind": "oci",
+    "repository": "example.invalid/research/disposable-http",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "image": {
+    "repository": "example.invalid/research/disposable-http",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "platform": "linux/amd64"
+  },
+  "interfaces": {},
+  "plmn": "00101",
+  "tac": 1,
+  "slices": [
+    {
+      "sst": 1,
+      "sd": "000001"
+    }
+  ],
+  "dnns": [
+    "internet"
+  ],
+  "resources": {
+    "cpu_millicores": 100,
+    "memory_mib": 64
+  },
+  "hardware": {
+    "mode": "simulation",
+    "devices": [],
+    "hugepages_mib": 0
+  },
+  "monitoring": {
+    "required_metrics": [],
+    "optional_metrics": []
+  }
+}
