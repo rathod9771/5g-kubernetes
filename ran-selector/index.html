@@ -589,6 +589,7 @@ body.theme-dark ::-webkit-scrollbar-thumb{background:#33445f}
     </div>
   </div>
 </div>
+<script src="/assurance.js"></script>
 <script>
 // Persistent read-only functionality workspace. Deployment state stays server-owned.
 const Workspace={panels:new Map(),maximized:null,nextZ:0,
@@ -1138,48 +1139,17 @@ async function refreshLayer2Panel(){
 }
 
 async function showLayer3Panel(btn){
-  clearTop();
-  btn.classList.add("active");
-  localStorage.setItem("activeTopPanel","layer3");
-  const m=panelCanvas('layer3','Layer 3',refreshLayer3Panel,()=>{clearInterval(window._l3interval);});if(!m)return;
-  m.innerHTML=`<div class="content-area layer3-content">
-    <div class="panel fill-panel layer3-panel">
-      <div class="panel-hdr">
-        <div><div class="panel-title" style="color:#a855f7">Layer 3 — Autonomous Optimization</div><div class="panel-sub">Watches Layer 2's BLER · auto fails-over to H-CRAN when SLA degrades</div></div>
-        <button class="close-btn" onclick="blank()">✕</button>
-      </div>
-      <div class="panel-body layer3-body" id="l3-body">
-        <div class="loading-txt">Loading autonomous action log...</div>
-      </div>
-    </div>
-  </div>`;
+  clearTop(); btn.classList.add("active"); localStorage.setItem("activeTopPanel","layer3");
+  const m=panelCanvas('layer3','Layer 3 Service Assurance',refreshLayer3Panel,()=>{clearInterval(window._l3interval);});if(!m)return;
+  m.innerHTML='<div class="content-area layer3-content"><div class="panel fill-panel layer3-panel"><div class="panel-hdr"><div><div class="panel-title">Layer 3 — Service Assurance</div><div class="panel-sub">Observe-only by default · production executor disabled · cached evidence</div></div><button class="close-btn" onclick="blank()">✕</button></div><div class="panel-body layer3-body" id="l3-body">Loading assurance journal…</div></div></div>';
   refreshLayer3Panel();
   window._l3interval && clearInterval(window._l3interval);
-  window._l3interval = panelTimer('layer3',setInterval(refreshLayer3Panel, 10000));
+  window._l3interval=panelTimer('layer3',setInterval(refreshLayer3Panel,30000));
 }
-
 async function refreshLayer3Panel(){
-  const body = document.getElementById("l3-body");
-  if(!body) { clearInterval(window._l3interval); return; }
-  try{
-    const d = await Workspace.request("layer3","/api/layer3-actions");
-    if(!d.actions || d.actions.length === 0){
-      body.innerHTML = '<div class="loading-txt">No autonomous actions yet — SLA has stayed within threshold.</div>';
-      return;
-    }
-    body.innerHTML = '<div class="process-list">' + d.actions.map(a => {
-      const ok = a.kind === "ran_failover";
-      const t = new Date(a.timestamp).toLocaleString();
-      return `<div class="proc-item">
-        <div class="proc-dot" style="background:${ok?'#15803c':'#dc2626'}"></div>
-        <div>
-          <div class="proc-name">${ok?'Failover triggered':'Failover failed'} → ${a.target_scenario}</div>
-          <div class="proc-desc">${a.reason} · ${t}</div>
-        </div>
-        <div class="proc-badge pbg-run">${ok ? (a.dashboard_response?.status||'') : 'error'}</div>
-      </div>`;
-    }).join("") + '</div>';
-  }catch(e){panelError('layer3',e);}
+  const body=document.getElementById('l3-body');if(!body)return;
+  try{const d=await Workspace.request('layer3','/api/assurance');window.renderAssurance(body,d);}
+  catch(e){panelError('layer3',e);}
 }
 
 loadPods();

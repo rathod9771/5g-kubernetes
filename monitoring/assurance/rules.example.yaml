@@ -1,0 +1,141 @@
+groups:
+- name: layer3.candidates
+  interval: 60s
+  rules:
+  - alert: KubernetesNodeNotReady
+    expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+    for: 2m
+    keep_firing_for: 2m
+    labels:
+      severity: CRITICAL
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: KubernetesNodeNotReady candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#kubernetesnodenotready
+  - alert: KubernetesMemoryPressure
+    expr: kube_node_status_condition{condition="MemoryPressure",status="true"} ==
+      1
+    for: 5m
+    keep_firing_for: 2m
+    labels:
+      severity: MAJOR
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: KubernetesMemoryPressure candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#kubernetesmemorypressure
+  - alert: KubernetesDiskPressure
+    expr: kube_node_status_condition{condition="DiskPressure",status="true"} == 1
+    for: 5m
+    keep_firing_for: 2m
+    labels:
+      severity: MAJOR
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: KubernetesDiskPressure candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#kubernetesdiskpressure
+  - alert: HostCPUContentionHigh
+    expr: rate(node_pressure_cpu_waiting_seconds_total[5m]) > 0.20
+    for: 10m
+    keep_firing_for: 2m
+    labels:
+      severity: WARNING
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: HostCPUContentionHigh candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#hostcpucontentionhigh
+  - alert: ContainerRestartsHigh
+    expr: sum by (namespace,pod) (increase(kube_pod_container_status_restarts_total[10m]))
+      > 3
+    for: 5m
+    keep_firing_for: 2m
+    labels:
+      severity: WARNING
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: ContainerRestartsHigh candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#containerrestartshigh
+  - alert: ContainerOOMKilled
+    expr: (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} ==
+      1) and on (namespace,pod,container) (increase(kube_pod_container_status_restarts_total[10m])
+      > 0)
+    for: 1m
+    keep_firing_for: 2m
+    labels:
+      severity: MAJOR
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: ContainerOOMKilled candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#containeroomkilled
+  - alert: PersistentVolumeDegraded
+    expr: kube_persistentvolumeclaim_status_phase{phase=~"Lost|Pending"} == 1
+    for: 10m
+    keep_firing_for: 2m
+    labels:
+      severity: WARNING
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: PersistentVolumeDegraded candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#persistentvolumedegraded
+  - alert: PrometheusTargetDown
+    expr: up == 0
+    for: 5m
+    keep_firing_for: 2m
+    labels:
+      severity: WARNING
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: PrometheusTargetDown candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#prometheustargetdown
+  - alert: PrometheusScrapeFailed
+    expr: (scrape_samples_scraped == 0) and on (job,instance) (up == 1)
+    for: 5m
+    keep_firing_for: 2m
+    labels:
+      severity: WARNING
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: PrometheusScrapeFailed candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#prometheusscrapefailed
+  - alert: FogDNSDiscoveryStale
+    expr: fog_du_dns_stale == 1
+    for: 5m
+    keep_firing_for: 2m
+    labels:
+      severity: WARNING
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: FogDNSDiscoveryStale candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#fogdnsdiscoverystale
+  - alert: UERegistrationFailureRateHigh
+    expr: (sum(rate(fivegs_amffunction_rm_reginitfail[5m])) / clamp_min(sum(rate(fivegs_amffunction_rm_reginitreq[5m])),
+      0.001) > 0.10) and (sum(increase(fivegs_amffunction_rm_reginitreq[5m])) > 20)
+    for: 10m
+    keep_firing_for: 2m
+    labels:
+      severity: MAJOR
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: UERegistrationFailureRateHigh candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#ueregistrationfailureratehigh
+  - alert: MetricsMissing
+    expr: absent(up{job="node-exporter"})
+    for: 5m
+    keep_firing_for: 2m
+    labels:
+      severity: WARNING
+      assurance: layer3
+      simulation: 'false'
+    annotations:
+      summary: MetricsMissing candidate; investigate supporting evidence
+      runbook_url: docs/layer3/alarm-catalog.md#metricsmissing

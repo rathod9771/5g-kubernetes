@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Local assurance observation (not a 3GPP MnS wire schema)",
+  "type": "object",
+  "required": ["alarm_type", "timestamp", "resource"],
+  "properties": {
+    "alarm_type": {"type": "string", "minLength": 1, "maxLength": 200},
+    "timestamp": {"oneOf": [{"type": "number", "minimum": 0}, {"type": "string", "format": "date-time"}]},
+    "resource": {"type": "string", "minLength": 1, "maxLength": 200},
+    "service": {"type": "string", "maxLength": 200},
+    "cluster": {"type": "string", "maxLength": 200},
+    "namespace": {"type": "string", "maxLength": 200},
+    "severity": {"enum": ["CRITICAL", "MAJOR", "MINOR", "WARNING", "INFO"]},
+    "status": {"enum": ["firing", "resolved"]},
+    "provenance": {"enum": ["LIVE", "SIMULATED"]},
+    "observations": {"type": "object", "maxProperties": 64}
+  },
+  "description": "Runtime normalization enforces finite values, timezone, bounded identities, reviewed evidence-key allowlist and caller-selected provenance. Simulation events are accepted only by the sandbox engine."
+}

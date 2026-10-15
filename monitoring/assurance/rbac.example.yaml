@@ -1,0 +1,60 @@
+# REVIEW ONLY: namespace is a placeholder, not the protected production namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: layer3-observer
+  namespace: assurance-review
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: layer3-workload-observer
+  namespace: REVIEWED-WORKLOAD-NAMESPACE
+rules:
+  - apiGroups: ['']
+    resources: [pods, services, endpoints, events, persistentvolumeclaims]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: [get, list]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: layer3-workload-observer
+  namespace: REVIEWED-WORKLOAD-NAMESPACE
+subjects:
+  - kind: ServiceAccount
+    name: layer3-observer
+    namespace: assurance-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: layer3-workload-observer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: layer3-node-observer
+rules:
+  - apiGroups: ['']
+    resources: [nodes]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: layer3-node-observer
+subjects:
+  - kind: ServiceAccount
+    name: layer3-observer
+    namespace: assurance-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: layer3-node-observer
+# No secrets, write verbs, pods/exec, pods/log or cluster-admin. SCTP inspection
+# needs separate operator-collected evidence; do not grant arbitrary exec.

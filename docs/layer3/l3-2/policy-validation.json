@@ -1,0 +1,2103 @@
+{
+  "observed_at": 1791952175.0161262,
+  "classification_counts": {
+    "SUPPORTED": 8,
+    "UNAVAILABLE": 9,
+    "PARTIALLY_SUPPORTED": 27
+  },
+  "meaning": "SUPPORTED means source/expression contract verified, not production alert approval or independent fault-trigger validation. No threshold has an approved service baseline.",
+  "policies": {
+    "KubernetesNodeNotReady": {
+      "status": "SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "kube_node_status_condition"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "kube_node_status_condition"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "kube_node_status_condition": [
+          "__name__",
+          "condition",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "node",
+          "pod",
+          "service",
+          "status"
+        ]
+      },
+      "label_variants": {
+        "kube_node_status_condition": {
+          "condition": [
+            "DiskPressure",
+            "MemoryPressure",
+            "NetworkUnavailable",
+            "PIDPressure",
+            "Ready"
+          ],
+          "status": [
+            "false",
+            "true",
+            "unknown"
+          ],
+          "job": [
+            "kube-state-metrics"
+          ],
+          "namespace": [
+            "monitoring"
+          ]
+        }
+      },
+      "metric_types": {
+        "kube_node_status_condition": "gauge"
+      },
+      "threshold": "kube_node_status_condition{condition=\"Ready\",status=\"true\"} == 0",
+      "prometheus_window": {
+        "for": "2m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "CRITICAL",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.001012515975162387,
+        "expr": "kube_node_status_condition{condition=\"Ready\",status=\"true\"} == 0",
+        "for": "2m",
+        "keep_firing_for": "2m"
+      },
+      "notes": []
+    },
+    "KubernetesMemoryPressure": {
+      "status": "SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "kube_node_status_condition"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "kube_node_status_condition"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "kube_node_status_condition": [
+          "__name__",
+          "condition",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "node",
+          "pod",
+          "service",
+          "status"
+        ]
+      },
+      "label_variants": {
+        "kube_node_status_condition": {
+          "condition": [
+            "DiskPressure",
+            "MemoryPressure",
+            "NetworkUnavailable",
+            "PIDPressure",
+            "Ready"
+          ],
+          "status": [
+            "false",
+            "true",
+            "unknown"
+          ],
+          "job": [
+            "kube-state-metrics"
+          ],
+          "namespace": [
+            "monitoring"
+          ]
+        }
+      },
+      "metric_types": {
+        "kube_node_status_condition": "gauge"
+      },
+      "threshold": "kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"} == 1",
+      "prometheus_window": {
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.0008364320383407176,
+        "expr": "kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"} == 1",
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "notes": []
+    },
+    "KubernetesDiskPressure": {
+      "status": "SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "kube_node_status_condition"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "kube_node_status_condition"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "kube_node_status_condition": [
+          "__name__",
+          "condition",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "node",
+          "pod",
+          "service",
+          "status"
+        ]
+      },
+      "label_variants": {
+        "kube_node_status_condition": {
+          "condition": [
+            "DiskPressure",
+            "MemoryPressure",
+            "NetworkUnavailable",
+            "PIDPressure",
+            "Ready"
+          ],
+          "status": [
+            "false",
+            "true",
+            "unknown"
+          ],
+          "job": [
+            "kube-state-metrics"
+          ],
+          "namespace": [
+            "monitoring"
+          ]
+        }
+      },
+      "metric_types": {
+        "kube_node_status_condition": "gauge"
+      },
+      "threshold": "kube_node_status_condition{condition=\"DiskPressure\",status=\"true\"} == 1",
+      "prometheus_window": {
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.0006818340043537319,
+        "expr": "kube_node_status_condition{condition=\"DiskPressure\",status=\"true\"} == 1",
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "notes": []
+    },
+    "HostCPUContentionHigh": {
+      "status": "SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "node_pressure_cpu_waiting_seconds_total"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "node_pressure_cpu_waiting_seconds_total"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "node_pressure_cpu_waiting_seconds_total": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "pod",
+          "service"
+        ]
+      },
+      "label_variants": {
+        "node_pressure_cpu_waiting_seconds_total": {
+          "job": [
+            "node-exporter"
+          ],
+          "namespace": [
+            "monitoring"
+          ]
+        }
+      },
+      "metric_types": {
+        "node_pressure_cpu_waiting_seconds_total": "counter"
+      },
+      "threshold": "rate(node_pressure_cpu_waiting_seconds_total[5m]) > 0.20",
+      "prometheus_window": {
+        "for": "10m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "host_pressure",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.000680348020978272,
+        "expr": "rate(node_pressure_cpu_waiting_seconds_total[5m]) > 0.20",
+        "for": "10m",
+        "keep_firing_for": "2m"
+      },
+      "notes": [
+        "PSI some waiting fraction, not CPU utilization; >0.20 for 10m is an unapproved local baseline, never a RAN-switch trigger"
+      ]
+    },
+    "HostCPUFullPressureHigh": {
+      "status": "UNAVAILABLE",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [
+        "node_pressure_cpu_stalled_seconds_total"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [
+        "node_pressure_cpu_stalled_seconds_total"
+      ],
+      "metadata_only_metrics": [],
+      "labels": {
+        "node_pressure_cpu_stalled_seconds_total": "Family not inspected by scoped label query"
+      },
+      "label_variants": {
+        "node_pressure_cpu_stalled_seconds_total": {}
+      },
+      "metric_types": {
+        "node_pressure_cpu_stalled_seconds_total": "UNVERIFIED"
+      },
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "host_pressure",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": []
+    },
+    "PodCrashLoop": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes container waiting.reason CrashLoopBackOff; live Prometheus series absent",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "ContainerOOMKilled": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "kube_pod_container_status_last_terminated_reason",
+        "kube_pod_container_status_restarts_total"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "kube_pod_container_status_last_terminated_reason",
+        "kube_pod_container_status_restarts_total"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "kube_pod_container_status_last_terminated_reason": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "pod",
+          "reason",
+          "service",
+          "uid"
+        ],
+        "kube_pod_container_status_restarts_total": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "pod",
+          "service",
+          "uid"
+        ]
+      },
+      "label_variants": {
+        "kube_pod_container_status_last_terminated_reason": {
+          "reason": [
+            "Completed",
+            "Error",
+            "Unknown"
+          ],
+          "job": [
+            "kube-state-metrics"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c",
+            "cattle-capi-system",
+            "cattle-fleet-local-system",
+            "cattle-fleet-system",
+            "cattle-system",
+            "cattle-turtles-system",
+            "cert-manager",
+            "istio-system",
+            "kube-flannel",
+            "kube-system",
+            "longhorn-system",
+            "monitoring",
+            "osm"
+          ]
+        },
+        "kube_pod_container_status_restarts_total": {
+          "job": [
+            "kube-state-metrics"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c",
+            "cattle-capi-system",
+            "cattle-fleet-local-system",
+            "cattle-fleet-system",
+            "cattle-system",
+            "cattle-turtles-system",
+            "cert-manager",
+            "fleet-local",
+            "ingress-nginx",
+            "istio-system",
+            "kube-flannel",
+            "kube-system",
+            "longhorn-system",
+            "monitoring",
+            "osm"
+          ]
+        }
+      },
+      "metric_types": {
+        "kube_pod_container_status_last_terminated_reason": "gauge",
+        "kube_pod_container_status_restarts_total": "counter"
+      },
+      "threshold": "(kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"} == 1) and on (namespace,pod,container) (increase(kube_pod_container_status_restarts_total[10m]) > 0)",
+      "prometheus_window": {
+        "for": "1m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.0010789479711093009,
+        "expr": "(kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"} == 1) and on (namespace,pod,container) (increase(kube_pod_container_status_restarts_total[10m]) > 0)",
+        "for": "1m",
+        "keep_firing_for": "2m"
+      },
+      "notes": [
+        "reason label exists; OOMKilled variant not observed; no fault injection performed"
+      ]
+    },
+    "ContainerRestartsHigh": {
+      "status": "SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "kube_pod_container_status_restarts_total"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "kube_pod_container_status_restarts_total"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "kube_pod_container_status_restarts_total": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "pod",
+          "service",
+          "uid"
+        ]
+      },
+      "label_variants": {
+        "kube_pod_container_status_restarts_total": {
+          "job": [
+            "kube-state-metrics"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c",
+            "cattle-capi-system",
+            "cattle-fleet-local-system",
+            "cattle-fleet-system",
+            "cattle-system",
+            "cattle-turtles-system",
+            "cert-manager",
+            "fleet-local",
+            "ingress-nginx",
+            "istio-system",
+            "kube-flannel",
+            "kube-system",
+            "longhorn-system",
+            "monitoring",
+            "osm"
+          ]
+        }
+      },
+      "metric_types": {
+        "kube_pod_container_status_restarts_total": "counter"
+      },
+      "threshold": "sum by (namespace,pod) (increase(kube_pod_container_status_restarts_total[10m])) > 3",
+      "prometheus_window": {
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.001276433002203703,
+        "expr": "sum by (namespace,pod) (increase(kube_pod_container_status_restarts_total[10m])) > 3",
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "notes": []
+    },
+    "PersistentVolumeDegraded": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "kube_persistentvolumeclaim_status_phase"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "kube_persistentvolumeclaim_status_phase"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "kube_persistentvolumeclaim_status_phase": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "persistentvolumeclaim",
+          "phase",
+          "pod",
+          "service"
+        ]
+      },
+      "label_variants": {
+        "kube_persistentvolumeclaim_status_phase": {
+          "phase": [
+            "Bound",
+            "Lost",
+            "Pending"
+          ],
+          "job": [
+            "kube-state-metrics"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c",
+            "monitoring",
+            "osm"
+          ]
+        }
+      },
+      "metric_types": {
+        "kube_persistentvolumeclaim_status_phase": "gauge"
+      },
+      "threshold": "kube_persistentvolumeclaim_status_phase{phase=~\"Lost|Pending\"} == 1",
+      "prometheus_window": {
+        "for": "10m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.0007760659791529179,
+        "expr": "kube_persistentvolumeclaim_status_phase{phase=~\"Lost|Pending\"} == 1",
+        "for": "10m",
+        "keep_firing_for": "2m"
+      },
+      "notes": [
+        "PVC phase only; does not cover Longhorn volume/replica degradation"
+      ]
+    },
+    "RANPodUnavailable": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes Ready condition and validated role/NS ownership",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "DUUnavailable": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes DU Ready; kernel F1 SCTP optional evidence",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "propose_du_recovery",
+      "action_class": "C",
+      "required_supporting_evidence": [
+        "pod_ready",
+        "f1_association"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "CUUnavailable": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes CU Ready; F1 and NGAP kernel SCTP optional evidence",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "propose_cu_recovery",
+      "action_class": "C",
+      "required_supporting_evidence": [
+        "pod_ready",
+        "ngap_association",
+        "f1_association"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "F1AssociationLost": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Operator-collected CU/DU kernel SCTP tables; no scheduled protocol exporter",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "investigate_f1",
+      "action_class": "C",
+      "required_supporting_evidence": [
+        "f1_association",
+        "pod_ready"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "NGAPAssociationLost": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Operator-collected CU kernel SCTP table; no scheduled protocol exporter",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "investigate_ngap",
+      "action_class": "C",
+      "required_supporting_evidence": [
+        "ngap_association",
+        "core_healthy"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "RANConfigurationFailure": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Optional bounded timestamped OAI/srsRAN log parser; no live scheduler",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "RANCPUContention": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [
+        "node_pressure_cpu_waiting_seconds_total",
+        "container_cpu_usage_seconds_total"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "node_pressure_cpu_waiting_seconds_total",
+        "container_cpu_usage_seconds_total"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "node_pressure_cpu_waiting_seconds_total": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "pod",
+          "service"
+        ],
+        "container_cpu_usage_seconds_total": "Family not inspected by scoped label query"
+      },
+      "label_variants": {
+        "node_pressure_cpu_waiting_seconds_total": {
+          "job": [
+            "node-exporter"
+          ],
+          "namespace": [
+            "monitoring"
+          ]
+        },
+        "container_cpu_usage_seconds_total": {}
+      },
+      "metric_types": {
+        "node_pressure_cpu_waiting_seconds_total": "counter",
+        "container_cpu_usage_seconds_total": "counter"
+      },
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "host_pressure",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "Host/pod CPU does not establish RAN service impact; independent radio/control-plane evidence absent"
+      ]
+    },
+    "RANProtocolErrorRateHigh": {
+      "status": "UNAVAILABLE",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [],
+      "unavailable_measurements": [
+        "protocol error counter"
+      ],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "RANPerformanceDegraded": {
+      "status": "UNAVAILABLE",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [
+        "oai_gnb_ue_dl_bler_ratio",
+        "oai_gnb_ue_ul_bler_ratio"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [
+        "oai_gnb_ue_dl_bler_ratio",
+        "oai_gnb_ue_ul_bler_ratio"
+      ],
+      "metadata_only_metrics": [
+        "oai_gnb_ue_dl_bler_ratio",
+        "oai_gnb_ue_ul_bler_ratio"
+      ],
+      "labels": {
+        "oai_gnb_ue_dl_bler_ratio": "Family not inspected by scoped label query",
+        "oai_gnb_ue_ul_bler_ratio": "Family not inspected by scoped label query"
+      },
+      "label_variants": {
+        "oai_gnb_ue_dl_bler_ratio": {},
+        "oai_gnb_ue_ul_bler_ratio": {}
+      },
+      "metric_types": {
+        "oai_gnb_ue_dl_bler_ratio": "gauge",
+        "oai_gnb_ue_ul_bler_ratio": "gauge"
+      },
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": []
+    },
+    "AMFUnavailable": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes AMF Ready; protocol availability not independently measured",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "CRITICAL",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "SMFUnavailable": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes SMF Ready; SBI/PFCP not independently measured",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "CRITICAL",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "UPFUnavailable": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes UPF Ready; measured user-plane test absent",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "CRITICAL",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "NRFDiscoveryFailure": {
+      "status": "UNAVAILABLE",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [],
+      "unavailable_measurements": [
+        "nrf discovery failure counter"
+      ],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "CRITICAL",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "SBIRequestFailureRateHigh": {
+      "status": "UNAVAILABLE",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [],
+      "unavailable_measurements": [
+        "sbi failure counter"
+      ],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "CRITICAL",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "UERegistrationFailureRateHigh": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "fivegs_amffunction_rm_reginitfail",
+        "fivegs_amffunction_rm_reginitreq"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "fivegs_amffunction_rm_reginitfail",
+        "fivegs_amffunction_rm_reginitreq"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "fivegs_amffunction_rm_reginitfail": [
+          "__name__",
+          "cause",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "pod"
+        ],
+        "fivegs_amffunction_rm_reginitreq": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "pod"
+        ]
+      },
+      "label_variants": {
+        "fivegs_amffunction_rm_reginitfail": {
+          "job": [
+            "monitoring/open5gs-metrics"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c"
+          ]
+        },
+        "fivegs_amffunction_rm_reginitreq": {
+          "job": [
+            "monitoring/open5gs-metrics"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c"
+          ]
+        }
+      },
+      "metric_types": {
+        "fivegs_amffunction_rm_reginitfail": "counter",
+        "fivegs_amffunction_rm_reginitreq": "counter"
+      },
+      "threshold": "(sum(rate(fivegs_amffunction_rm_reginitfail[5m])) / clamp_min(sum(rate(fivegs_amffunction_rm_reginitreq[5m])), 0.001) > 0.10) and (sum(increase(fivegs_amffunction_rm_reginitreq[5m])) > 20)",
+      "prometheus_window": {
+        "for": "10m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.001719741034321487,
+        "expr": "(sum(rate(fivegs_amffunction_rm_reginitfail[5m])) / clamp_min(sum(rate(fivegs_amffunction_rm_reginitreq[5m])), 0.001) > 0.10) and (sum(increase(fivegs_amffunction_rm_reginitreq[5m])) > 20)",
+        "for": "10m",
+        "keep_firing_for": "2m"
+      },
+      "notes": [
+        "Failure counter has cause label; request counter does not. Both metadata types counter; ratio totals match current target. Minimum attempts >20/5m; no traffic baseline and no live fault test. MAJOR floor aligns with example; critical escalation requires separate service-impact/protection evidence."
+      ]
+    },
+    "PDUSessionFailureRateHigh": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [
+        "fivegs_smffunction_sm_pdusessioncreationreq"
+      ],
+      "unavailable_measurements": [
+        "matched pdu failure counter"
+      ],
+      "verified_metrics": [
+        "fivegs_smffunction_sm_pdusessioncreationreq"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "fivegs_smffunction_sm_pdusessioncreationreq": "Family not inspected by scoped label query"
+      },
+      "label_variants": {
+        "fivegs_smffunction_sm_pdusessioncreationreq": {}
+      },
+      "metric_types": {
+        "fivegs_smffunction_sm_pdusessioncreationreq": "counter"
+      },
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "CRITICAL",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": []
+    },
+    "PFCPAssociationLost": {
+      "status": "UNAVAILABLE",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [],
+      "unavailable_measurements": [
+        "pfcp association gauge"
+      ],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "CRITICAL",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "UPFUserPlaneDegraded": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [
+        "fivegs_ep_n3_gtp_indatapktn3upf"
+      ],
+      "unavailable_measurements": [
+        "user plane loss or latency"
+      ],
+      "verified_metrics": [
+        "fivegs_ep_n3_gtp_indatapktn3upf"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "fivegs_ep_n3_gtp_indatapktn3upf": "Family not inspected by scoped label query"
+      },
+      "label_variants": {
+        "fivegs_ep_n3_gtp_indatapktn3upf": {}
+      },
+      "metric_types": {
+        "fivegs_ep_n3_gtp_indatapktn3upf": "counter"
+      },
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "CRITICAL",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": []
+    },
+    "FogApplicationUnavailable": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes fog Ready plus known NS ownership; application probe unconfigured",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "propose_fog_recovery",
+      "action_class": "C",
+      "required_supporting_evidence": [
+        "pod_ready",
+        "ownership_verified"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "FogProcessingLatencyHigh": {
+      "status": "UNAVAILABLE",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [],
+      "unavailable_measurements": [
+        "fog processing latency histogram"
+      ],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "FogProcessingErrorRateHigh": {
+      "status": "UNAVAILABLE",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [],
+      "unavailable_measurements": [
+        "fog error counter"
+      ],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "FogDNSDiscoveryStale": {
+      "status": "SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "fog_du_dns_stale"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "fog_du_dns_stale"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "fog_du_dns_stale": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "namespace",
+          "pod"
+        ]
+      },
+      "label_variants": {
+        "fog_du_dns_stale": {
+          "job": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c/fran-oai-fog"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c"
+          ]
+        }
+      },
+      "metric_types": {
+        "fog_du_dns_stale": "gauge"
+      },
+      "threshold": "fog_du_dns_stale == 1",
+      "prometheus_window": {
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.0013415240100584924,
+        "expr": "fog_du_dns_stale == 1",
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "notes": []
+    },
+    "FogCPUThrottlingHigh": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [
+        "container_cpu_cfs_throttled_seconds_total",
+        "container_cpu_cfs_periods_total"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "container_cpu_cfs_periods_total"
+      ],
+      "missing_metrics": [
+        "container_cpu_cfs_throttled_seconds_total"
+      ],
+      "metadata_only_metrics": [
+        "container_cpu_cfs_throttled_seconds_total"
+      ],
+      "labels": {
+        "container_cpu_cfs_throttled_seconds_total": "Family not inspected by scoped label query",
+        "container_cpu_cfs_periods_total": "Family not inspected by scoped label query"
+      },
+      "label_variants": {
+        "container_cpu_cfs_throttled_seconds_total": {},
+        "container_cpu_cfs_periods_total": {}
+      },
+      "metric_types": {
+        "container_cpu_cfs_throttled_seconds_total": "counter",
+        "container_cpu_cfs_periods_total": "counter"
+      },
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "Counter families may exist for other workloads; fog container-scoped nonzero series and error correlation not established"
+      ]
+    },
+    "OSMLifecycleOperationFailed": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Authenticated OSM operationState with NS/operation identity",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "operation_failed",
+        "osm_trustworthy"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "OSMLifecycleOperationStalled": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Authenticated OSM operation statusEnteredTime; 900s local candidate, not validated baseline",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "OSMServiceDegraded": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "OSM NS state plus Kubernetes workloads; protocol state independent",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "OSMComponentUnavailable": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes osm namespace readiness; new collector does not read this namespace",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 60,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "MAJOR",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "PrometheusTargetDown": {
+      "status": "SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "up"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "up"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "up": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "metrics_path",
+          "namespace",
+          "node",
+          "pod",
+          "service"
+        ]
+      },
+      "label_variants": {
+        "up": {
+          "job": [
+            "apiserver",
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c/fran-oai-fog",
+            "coredns",
+            "kube-controller-manager",
+            "kube-etcd",
+            "kube-prometheus-stack-alertmanager",
+            "kube-prometheus-stack-grafana",
+            "kube-prometheus-stack-operator",
+            "kube-prometheus-stack-prometheus",
+            "kube-proxy",
+            "kube-scheduler",
+            "kube-state-metrics",
+            "kubelet",
+            "monitoring/latency-probe-metrics",
+            "monitoring/open5gs-metrics",
+            "monitoring/ran-exporter-metrics",
+            "node-exporter"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c",
+            "default",
+            "kube-system",
+            "monitoring"
+          ]
+        }
+      },
+      "metric_types": {
+        "up": "Prometheus internal gauge"
+      },
+      "threshold": "up == 0",
+      "prometheus_window": {
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 0,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 4,
+        "latency_seconds": 0.001203322026412934,
+        "expr": "up == 0",
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "notes": []
+    },
+    "PrometheusScrapeFailed": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "scrape_samples_scraped",
+        "up"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "scrape_samples_scraped",
+        "up"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "scrape_samples_scraped": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "metrics_path",
+          "namespace",
+          "node",
+          "pod",
+          "service"
+        ],
+        "up": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "metrics_path",
+          "namespace",
+          "node",
+          "pod",
+          "service"
+        ]
+      },
+      "label_variants": {
+        "scrape_samples_scraped": {
+          "job": [
+            "apiserver",
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c/fran-oai-fog",
+            "coredns",
+            "kube-controller-manager",
+            "kube-etcd",
+            "kube-prometheus-stack-alertmanager",
+            "kube-prometheus-stack-grafana",
+            "kube-prometheus-stack-operator",
+            "kube-prometheus-stack-prometheus",
+            "kube-proxy",
+            "kube-scheduler",
+            "kube-state-metrics",
+            "kubelet",
+            "monitoring/latency-probe-metrics",
+            "monitoring/open5gs-metrics",
+            "monitoring/ran-exporter-metrics",
+            "node-exporter"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c",
+            "default",
+            "kube-system",
+            "monitoring"
+          ]
+        },
+        "up": {
+          "job": [
+            "apiserver",
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c/fran-oai-fog",
+            "coredns",
+            "kube-controller-manager",
+            "kube-etcd",
+            "kube-prometheus-stack-alertmanager",
+            "kube-prometheus-stack-grafana",
+            "kube-prometheus-stack-operator",
+            "kube-prometheus-stack-prometheus",
+            "kube-proxy",
+            "kube-scheduler",
+            "kube-state-metrics",
+            "kubelet",
+            "monitoring/latency-probe-metrics",
+            "monitoring/open5gs-metrics",
+            "monitoring/ran-exporter-metrics",
+            "node-exporter"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c",
+            "default",
+            "kube-system",
+            "monitoring"
+          ]
+        }
+      },
+      "metric_types": {
+        "scrape_samples_scraped": "Prometheus internal gauge",
+        "up": "Prometheus internal gauge"
+      },
+      "threshold": "(scrape_samples_scraped == 0) and on (job,instance) (up == 1)",
+      "prometheus_window": {
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 0,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.0015435960376635194,
+        "expr": "(scrape_samples_scraped == 0) and on (job,instance) (up == 1)",
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "notes": [
+        "Empty successful scrape is not necessarily a scrape failure; use target health for connection failures"
+      ]
+    },
+    "MetricsMissing": {
+      "status": "SUPPORTED",
+      "source": "Prometheus candidate",
+      "required_metrics": [
+        "up"
+      ],
+      "unavailable_measurements": [],
+      "verified_metrics": [
+        "up"
+      ],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {
+        "up": [
+          "__name__",
+          "container",
+          "endpoint",
+          "instance",
+          "job",
+          "metrics_path",
+          "namespace",
+          "node",
+          "pod",
+          "service"
+        ]
+      },
+      "label_variants": {
+        "up": {
+          "job": [
+            "apiserver",
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c/fran-oai-fog",
+            "coredns",
+            "kube-controller-manager",
+            "kube-etcd",
+            "kube-prometheus-stack-alertmanager",
+            "kube-prometheus-stack-grafana",
+            "kube-prometheus-stack-operator",
+            "kube-prometheus-stack-prometheus",
+            "kube-proxy",
+            "kube-scheduler",
+            "kube-state-metrics",
+            "kubelet",
+            "monitoring/latency-probe-metrics",
+            "monitoring/open5gs-metrics",
+            "monitoring/ran-exporter-metrics",
+            "node-exporter"
+          ],
+          "namespace": [
+            "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c",
+            "default",
+            "kube-system",
+            "monitoring"
+          ]
+        }
+      },
+      "metric_types": {
+        "up": "Prometheus internal gauge"
+      },
+      "threshold": "absent(up{job=\"node-exporter\"})",
+      "prometheus_window": {
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "local_persistence_seconds": 0,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": {
+        "query_status": "success",
+        "result_series": 0,
+        "latency_seconds": 0.0010237189708277583,
+        "expr": "absent(up{job=\"node-exporter\"})",
+        "for": "5m",
+        "keep_firing_for": "2m"
+      },
+      "notes": []
+    },
+    "MonitoringPipelineDegraded": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Read-only Prometheus API, timestamp(up) and active targets",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 0,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "AlertmanagerUnavailable": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Read-only Alertmanager API status/failure; metric rule unimplemented",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 0,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "InsufficientClusterCapacity": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Kubernetes allocatable/Ready; requests/scheduling correlation unimplemented",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 0,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "NetworkCongestion": {
+      "status": "UNAVAILABLE",
+      "source": "Optional/unavailable metric adapter",
+      "required_metrics": [],
+      "unavailable_measurements": [
+        "measured packet loss counter"
+      ],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 0,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    },
+    "EmergencyServiceProtection": {
+      "status": "PARTIALLY_SUPPORTED",
+      "source": "Operational protected NS identity; no actual IMS/QoS emergency implementation",
+      "required_metrics": [],
+      "unavailable_measurements": [],
+      "verified_metrics": [],
+      "missing_metrics": [],
+      "metadata_only_metrics": [],
+      "labels": {},
+      "label_variants": {},
+      "metric_types": {},
+      "threshold": "No validated metric threshold",
+      "prometheus_window": null,
+      "local_persistence_seconds": 0,
+      "max_age_seconds": 120,
+      "max_gap_seconds": 90,
+      "severity_floor": "WARNING",
+      "action": "observe_notify",
+      "action_class": "A",
+      "required_supporting_evidence": [
+        "protected_state"
+      ],
+      "automation_eligible": false,
+      "production_execution": "DISABLED",
+      "live_query_validation": null,
+      "notes": [
+        "No verified Prometheus metric rule; API/policy evidence only"
+      ]
+    }
+  }
+}

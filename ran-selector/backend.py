@@ -1153,5 +1153,13 @@ def layer3_actions():
         pass
     return jsonify({"actions": actions})
 
+# Assurance is lazy: registration starts no collector or watcher.
+from assurance.api import register as register_assurance
+register_assurance(app, load_config)
+
+@app.route('/assurance.js')
+def assurance_script():
+    return send_from_directory(UI_DIR, 'assurance.js')
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(load_config()['DASHBOARD_PORT']), debug=False)
