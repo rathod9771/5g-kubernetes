@@ -363,7 +363,7 @@ def load_config(root=ROOT, environ=None, home=None, network=False, require=(), q
     failover = registry['aliases'].get(cfg['LAYER3_FAILOVER_SCENARIO'], cfg['LAYER3_FAILOVER_SCENARIO'])
     if failover and not any(s['key'] == failover for s in registry['scenarios']):
         raise ConfigError('LAYER3_FAILOVER_SCENARIO must name a registered scenario')
-    if 'watcher' in require and not any(s['key'] == failover and s['generation_status'] == 'ready' for s in registry['scenarios']):
+    if 'watcher' in require and not any(s['key'] == failover and s['generation_status'] == 'ready' and not s.get('experimental') for s in registry['scenarios']):
         raise ConfigError('Watcher requires an explicitly configured ready LAYER3_FAILOVER_SCENARIO')
     if 'kubernetes' in require:
         for key in ['KUBECONFIG_PATH', 'OSM_KUBECONFIG_PATH']:

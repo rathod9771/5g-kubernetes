@@ -49,7 +49,7 @@ class PackageTests(unittest.TestCase):
 
     def test_registry_keys_aliases_and_canonical_oran_authority(self):
         entries = dashboard_scenarios(self.registry)
-        self.assertEqual(len(entries), 12)
+        self.assertEqual(len(entries), 14)
         self.assertEqual(select_scenarios(self.registry, ["srsran"])[0]["key"], "cran-srsran")
         oran = next(s for s in self.registry["scenarios"] if s["key"] == "oran-oai")
         self.assertEqual([c["source"] for c in oran["charts"]], ["helm/oran-oai/cu", "helm/oran-oai/du"])
@@ -245,7 +245,7 @@ class DashboardTests(unittest.TestCase):
     def test_registry_api_preserves_keys_and_exposes_blocks(self):
         client = self.backend.app.test_client()
         result = client.get("/api/scenarios").get_json()["scenarios"]
-        self.assertEqual(len(result), 11)
+        self.assertEqual(len(result), 13)
         by_key = {entry["key"]: entry for entry in result}
         self.assertEqual(by_key["oran-oai"]["generation_status"], "ready")
         self.assertEqual(by_key["oran-oai"]["releases"], ["oran-oai-cu", "oran-oai-du"])

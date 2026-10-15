@@ -335,36 +335,59 @@
     },
     {
       "key": "hcran-srsran",
-      "display_name": "H-CRAN + srsRAN (macro + small cell)",
+      "display_name": "H-CRAN + srsRAN (experimental)",
       "ran_type": "hcran",
       "implementation": "srsRAN",
       "deployment_mechanism": "osm",
-      "generation_status": "blocked",
-      "blocked_reason": "Packaged AMF discovery fix is absent from canonical source; existing KNF describes one KDU rather than macro + small cell.",
+      "generation_status": "ready",
+      "blocked_reason": null,
       "knf_package": "hcran_srsran_knf",
       "nsd_package": "hcran_srsran_ns",
-      "descriptor_version": "1.0",
+      "descriptor_version": "2.0",
       "charts": [
         {
+          "kdu": "cu",
+          "release_name": "hcran-srsran-cu",
+          "source": "helm/cran-srsran/cu",
+          "values_files": [
+            "helm/cran-srsran/cu/values-hcran.yaml"
+          ],
+          "image_bindings": {
+            "image": "srsran"
+          },
+          "role": "ran"
+        },
+        {
           "kdu": "macro",
-          "release_name": "hcran-macro",
-          "source": "helm/hcran-srsran",
-          "values_files": []
+          "release_name": "hcran-srsran-macro",
+          "source": "helm/cran-srsran/du",
+          "values_files": [
+            "helm/cran-srsran/du/values-hcran-macro.yaml"
+          ],
+          "image_bindings": {
+            "image": "srsran"
+          },
+          "role": "ran"
         },
         {
           "kdu": "small",
-          "release_name": "hcran-small",
-          "source": "helm/hcran-srsran",
+          "release_name": "hcran-srsran-small",
+          "source": "helm/cran-srsran/du",
           "values_files": [
-            "helm/hcran-srsran/values-small.yaml"
-          ]
+            "helm/cran-srsran/du/values-hcran-small.yaml"
+          ],
+          "image_bindings": {
+            "image": "srsran"
+          },
+          "role": "ran"
         }
       ],
       "pods": [
-        "hcran-macro",
-        "hcran-small"
+        "hcran-srsran-cu",
+        "hcran-srsran-macro",
+        "hcran-srsran-small"
       ],
-      "selector": null,
+      "selector": "ran-type=hcran",
       "additive": false,
       "reviewed_legacy": {
         "path": "osm-packages/hcran_srsran_knf",
@@ -372,40 +395,75 @@
         "archive_sha256": "cc5c682e33fc45040e92a2b770b502b7f749aabf00b3b3509a13a5bdd458b856"
       },
       "member_id": "hcran-srsran",
-      "preserved_fixes": []
+      "preserved_fixes": [
+        "Canonical stable-AMF discovery",
+        "Pod-IP substitution",
+        "SST 1 / SD 010203",
+        "Istio opt-out"
+      ],
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": true
+      },
+      "experimental": true,
+      "acceptance_status": "STATIC VALIDATED",
+      "source_decision": "Canonical C-RAN charts plus architecture profiles. Legacy package/source trees remain untouched; their stable-AMF fix is retained by canonical CU startup. Multi-DU and physical edge placement require runtime acceptance."
     },
     {
       "key": "hcran-oai",
-      "display_name": "H-CRAN + OAI (macro + small cell)",
+      "display_name": "H-CRAN + OAI (experimental)",
       "ran_type": "hcran",
       "implementation": "OAI",
       "deployment_mechanism": "osm",
-      "generation_status": "blocked",
-      "blocked_reason": "Packaged AMF discovery fix is absent from canonical source; existing KNF describes one KDU rather than macro + small cell.",
+      "generation_status": "ready",
+      "blocked_reason": null,
       "knf_package": "hcran_oai_knf",
       "nsd_package": "hcran_oai_ns",
-      "descriptor_version": "1.0",
+      "descriptor_version": "2.0",
       "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "hcran-oai-cu",
+          "source": "helm/cran-oai/cu",
+          "values_files": [
+            "helm/cran-oai/cu/values-hcran.yaml"
+          ],
+          "image_bindings": {
+            "image": "oai-cu"
+          },
+          "role": "ran"
+        },
         {
           "kdu": "macro",
           "release_name": "hcran-oai-macro",
-          "source": "helm/hcran-oai",
-          "values_files": []
+          "source": "helm/cran-oai/du",
+          "values_files": [
+            "helm/cran-oai/du/values-hcran-macro.yaml"
+          ],
+          "image_bindings": {
+            "image": "oai-du"
+          },
+          "role": "ran"
         },
         {
           "kdu": "small",
           "release_name": "hcran-oai-small",
-          "source": "helm/hcran-oai",
+          "source": "helm/cran-oai/du",
           "values_files": [
-            "helm/hcran-oai/values-small.yaml"
-          ]
+            "helm/cran-oai/du/values-hcran-small.yaml"
+          ],
+          "image_bindings": {
+            "image": "oai-du"
+          },
+          "role": "ran"
         }
       ],
       "pods": [
+        "hcran-oai-cu",
         "hcran-oai-macro",
         "hcran-oai-small"
       ],
-      "selector": null,
+      "selector": "ran-type=hcran",
       "additive": false,
       "reviewed_legacy": {
         "path": "osm-packages/hcran_oai_knf",
@@ -413,7 +471,19 @@
         "archive_sha256": "9690e8138e04afb30e077f029e2d0037a144b6b9b646f948005f1b029463bfcf"
       },
       "member_id": "hcran-oai",
-      "preserved_fixes": []
+      "preserved_fixes": [
+        "Canonical stable-AMF discovery",
+        "Pod-IP substitution",
+        "SST 1 / SD 010203",
+        "Istio opt-out"
+      ],
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": true
+      },
+      "experimental": true,
+      "acceptance_status": "STATIC VALIDATED",
+      "source_decision": "Canonical C-RAN charts plus architecture profiles. Legacy package/source trees remain untouched; their stable-AMF fix is retained by canonical CU startup. Multi-DU and physical edge placement require runtime acceptance."
     },
     {
       "key": "vcran-srsran",
@@ -588,6 +658,158 @@
       "selector": null,
       "additive": false,
       "preserved_fixes": []
+    },
+    {
+      "key": "fran-oai",
+      "display_name": "Fog-RAN + OAI (experimental)",
+      "ran_type": "fran",
+      "implementation": "OAI",
+      "deployment_mechanism": "osm",
+      "generation_status": "ready",
+      "blocked_reason": null,
+      "knf_package": "fran_oai_knf",
+      "nsd_package": "fran_oai_ns",
+      "descriptor_version": "2.0",
+      "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "fran-oai-cu",
+          "source": "helm/cran-oai/cu",
+          "values_files": [
+            "helm/cran-oai/cu/values-fran.yaml"
+          ],
+          "image_bindings": {
+            "image": "oai-cu"
+          },
+          "role": "ran"
+        },
+        {
+          "kdu": "du",
+          "release_name": "fran-oai-du",
+          "source": "helm/cran-oai/du",
+          "values_files": [
+            "helm/cran-oai/du/values-fran.yaml"
+          ],
+          "image_bindings": {
+            "image": "oai-du"
+          },
+          "role": "ran"
+        },
+        {
+          "kdu": "fog",
+          "release_name": "fran-oai-fog",
+          "source": "helm/fog-compute",
+          "values_files": [
+            "helm/fog-compute/values-oai.yaml"
+          ],
+          "image_bindings": {
+            "image": "ue-discovery"
+          },
+          "role": "fog"
+        }
+      ],
+      "pods": [
+        "fran-oai-cu",
+        "fran-oai-du",
+        "fran-oai-fog"
+      ],
+      "selector": "ran-type=fran",
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/fran_knf",
+        "tree_sha256": "eb3cb8dabced1687eea48f819f92f4ef69d064a9248b1be8a1d8f6e14918cb67",
+        "archive_sha256": "d47751c6f4e0b9801ab9f18848a2eb7ffb9e4236c09132398b52d38092da70d5"
+      },
+      "member_id": "fran-oai",
+      "preserved_fixes": [
+        "Canonical stable-AMF discovery",
+        "Pod-IP substitution",
+        "SST 1 / SD 010203",
+        "Istio opt-out"
+      ],
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": true
+      },
+      "experimental": true,
+      "acceptance_status": "STATIC VALIDATED",
+      "source_decision": "Canonical C-RAN charts plus architecture profiles. Legacy package/source trees remain untouched; their stable-AMF fix is retained by canonical CU startup. Multi-DU and physical edge placement require runtime acceptance."
+    },
+    {
+      "key": "fran-srsran",
+      "display_name": "Fog-RAN + srsRAN (experimental)",
+      "ran_type": "fran",
+      "implementation": "srsRAN",
+      "deployment_mechanism": "osm",
+      "generation_status": "ready",
+      "blocked_reason": null,
+      "knf_package": "fran_srsran_knf",
+      "nsd_package": "fran_srsran_ns",
+      "descriptor_version": "2.0",
+      "charts": [
+        {
+          "kdu": "cu",
+          "release_name": "fran-srsran-cu",
+          "source": "helm/cran-srsran/cu",
+          "values_files": [
+            "helm/cran-srsran/cu/values-fran.yaml"
+          ],
+          "image_bindings": {
+            "image": "srsran"
+          },
+          "role": "ran"
+        },
+        {
+          "kdu": "du",
+          "release_name": "fran-srsran-du",
+          "source": "helm/cran-srsran/du",
+          "values_files": [
+            "helm/cran-srsran/du/values-fran.yaml"
+          ],
+          "image_bindings": {
+            "image": "srsran"
+          },
+          "role": "ran"
+        },
+        {
+          "kdu": "fog",
+          "release_name": "fran-srsran-fog",
+          "source": "helm/fog-compute",
+          "values_files": [
+            "helm/fog-compute/values-srsran.yaml"
+          ],
+          "image_bindings": {
+            "image": "ue-discovery"
+          },
+          "role": "fog"
+        }
+      ],
+      "pods": [
+        "fran-srsran-cu",
+        "fran-srsran-du",
+        "fran-srsran-fog"
+      ],
+      "selector": "ran-type=fran",
+      "additive": false,
+      "reviewed_legacy": {
+        "path": "osm-packages/fran_knf",
+        "tree_sha256": "eb3cb8dabced1687eea48f819f92f4ef69d064a9248b1be8a1d8f6e14918cb67",
+        "archive_sha256": "d47751c6f4e0b9801ab9f18848a2eb7ffb9e4236c09132398b52d38092da70d5"
+      },
+      "member_id": "fran-srsran",
+      "preserved_fixes": [
+        "Canonical stable-AMF discovery",
+        "Pod-IP substitution",
+        "SST 1 / SD 010203",
+        "Istio opt-out"
+      ],
+      "validation_policy": {
+        "split_ran": true,
+        "forbid_hpa": true
+      },
+      "experimental": true,
+      "acceptance_status": "STATIC VALIDATED",
+      "source_decision": "Canonical C-RAN charts plus architecture profiles. Legacy package/source trees remain untouched; their stable-AMF fix is retained by canonical CU startup. Multi-DU and physical edge placement require runtime acceptance."
     }
   ],
   "blocked_components": [

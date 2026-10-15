@@ -14,7 +14,8 @@ from local_safety import atomic_write
 from runtime_config import ROOT, load_config, private_text
 from runtime_images import policy, reference
 from scenario_registry import load_registry, select_scenarios
-from osm_packages import chart_files
+from osm_packages import chart_files, render as render_chart
+from runtime_images import chart_values
 
 
 def private_destination(path, root=ROOT):
@@ -27,8 +28,43 @@ def private_destination(path, root=ROOT):
     return path
 
 
-def render(subscriber, scenario, namespace, cfg, root=ROOT):
-    if scenario['key'] not in ('cran-oai', 'vcran-oai', 'cloudran-oai') or scenario['generation_status'] != 'ready':
+SCENARIOS = ('cran-oai', 'vcran-oai', 'cloudran-oai', 'hcran-oai', 'fran-oai')
+
+
+def selected_du(scenario, cell):
+    if scenario['key'] == 'hcran-oai':
+        if cell not in ('macro', 'small'):
+            raise ValueError('H-CRAN UE requires an explicit macro or small cell')
+        role = cell
+    else:
+        if cell not in (None, 'du'):
+            raise ValueError('This scenario supports only the edge/default DU')
+        role = 'du'
+    return next(c for c in scenario['charts'] if c['kdu'] == role)
+
+
+def validate_experimental_carrier(root, chart):
+    # Reuse only the known split-RFSIM carrier; fail closed on future drift.
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        images = Path(directory) / 'images.json'
+        images.write_text(json.dumps(chart_values(root, chart)))
+        docs = render_chart(Path(root)/chart['source'], chart['release_name'],
+                            [Path(root)/p for p in chart['values_files']] + [images])
+    text = next(d for d in docs if d['kind']=='ConfigMap')['data']['gnb.conf']
+    expected = {'absoluteFrequencySSB':630048, 'dl_frequencyBand':78,
+                'dl_absoluteFrequencyPointA':628776, 'dl_subcarrierSpacing':1,
+                'dl_carrierBandwidth':106, 'ul_frequencyBand':78,
+                'ul_subcarrierSpacing':1, 'ul_carrierBandwidth':106, 'serverport':4043}
+    for key, value in expected.items():
+        if not re.search(r'\b'+key+r'\s*=\s*'+str(value)+r'\s*;',text):
+            raise ValueError('Experimental DU carrier is incompatible with the approved UE configuration')
+    if 'serveraddr = "server"' not in text:
+        raise ValueError('Experimental DU must provide an RF simulator server')
+
+
+def render(subscriber, scenario, namespace, cfg, root=ROOT, cell=None):
+    if scenario['key'] not in SCENARIOS or scenario['generation_status'] != 'ready':
         raise ValueError('Simulated split UE requires a ready OAI scenario')
     if cfg['DEPLOYMENT_PROFILE'] != 'rfsim' or not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]*[a-z0-9])?', namespace):
         raise ValueError('Simulated UE requires rfsim and an explicit valid workload namespace')
@@ -48,8 +84,12 @@ def render(subscriber, scenario, namespace, cfg, root=ROOT):
     pod = deployment['spec']['template']['spec']
     pod['initContainers'][0]['image'] = reference(images['ue-discovery'])
     pod['containers'][0]['image'] = reference(images['oai-ue'])
-    du = next(c for c in scenario['charts'] if c['kdu'] == 'du')
+    du = selected_du(scenario, cell)
     values = json.loads(chart_files(root, du)[0]['values.yaml'])
+    if scenario.get('experimental'):
+        if values.get('rf',{}).get('mode') != 'rfsim':
+            raise ValueError('Experimental UE requires a DU RF simulator')
+        validate_experimental_carrier(root, du)
     for env in pod['initContainers'][0]['env']:
         if env['name'] == 'GNB_LABEL_SELECTOR':
             env['value'] = 'app=' + values['fullname']
@@ -64,12 +104,29 @@ def render(subscriber, scenario, namespace, cfg, root=ROOT):
                               data={key: (directory / source).read_text()}))
     deployment['metadata']['namespace'] = namespace
     documents.append(deployment)
+    if scenario.get('experimental'):
+        name = 'oai-nr-ue-' + scenario['key'] + '-' + du['kdu']
+        replacements = {'oai-nr-ue-cran':name, 'oai-nr-ue':name+'-sa',
+                        'oai-nr-ue-pod-reader':name+'-reader',
+                        'oai-nr-ue-config':name+'-config',
+                        'oai-nr-ue-cran-init':name+'-init',
+                        'oai-nr-ue-cran-discovery-script':name+'-discovery'}
+        def rename(value):
+            if isinstance(value,str):return replacements.get(value,value)
+            if isinstance(value,list):return [rename(v) for v in value]
+            if isinstance(value,dict):return {k:rename(v) for k,v in value.items()}
+            return value
+        documents = rename(documents)
+        for document in documents:
+            if document['kind']=='Deployment':
+                document['metadata'].setdefault('annotations',{})['5g-kubernetes/ue-cell'] = du['kdu']
     return documents
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--scenario', required=True, choices=['cran-oai', 'vcran-oai', 'cloudran-oai'])
+    parser.add_argument('--scenario', required=True, choices=SCENARIOS)
+    parser.add_argument('--cell', choices=['macro','small','du'], help='Required macro/small selection for H-CRAN')
     parser.add_argument('--subscriber-input', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
@@ -80,7 +137,7 @@ def main():
         raise ValueError('Subscriber input must be owner-only and owned by the invoking user')
     subscriber = json.loads(text)
     scenario = select_scenarios(load_registry(), [args.scenario])[0]
-    documents = render(subscriber, scenario, cfg['OSM_PROJECT_NAMESPACE'], cfg)
+    documents = render(subscriber, scenario, cfg['OSM_PROJECT_NAMESPACE'], cfg, cell=args.cell)
     output = private_destination(args.output)
     output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     atomic_write(output, yaml.safe_dump_all(documents, sort_keys=False).encode())

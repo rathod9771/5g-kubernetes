@@ -61,7 +61,7 @@ class ImagePolicyTests(unittest.TestCase):
         self.assertEqual(len(set(refs)), 1)
 
     def test_blocked_scenarios_cannot_be_selected(self):
-        for key in ['oran-srsran', 'hcran-srsran', 'hcran-oai']:
+        for key in ['oran-srsran']:
             with self.assertRaisesRegex(ValueError, 'BLOCKED'):
                 select_scenarios(load_registry(), [key])
 

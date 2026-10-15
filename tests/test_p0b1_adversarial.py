@@ -234,7 +234,7 @@ class AdversarialTests(unittest.TestCase):
         self.assertNotIn('Platform:',result.stdout)
 
     def test_benchmark_selects_only_nonadditive_ready_ran(self):
-        registry=load_registry();selected=[s['key'] for s in registry['scenarios'] if s['generation_status']=='ready' and not s['additive']]
+        registry=load_registry();selected=[s['key'] for s in registry['scenarios'] if s['generation_status']=='ready' and not s['additive'] and not s.get('experimental')]
         self.assertEqual(set(selected),{'cran-srsran','cran-oai','cloudran-srsran','cloudran-oai','vcran-srsran','vcran-oai','oran-oai'})
         self.assertIn('and not s["additive"]',(ROOT/'bench-all-ran.sh').read_text())
 

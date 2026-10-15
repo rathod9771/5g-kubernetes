@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "fullname",
+    "duFullname",
+    "image",
+    "monitoring",
+    "resources"
+  ],
+  "properties": {
+    "fullname": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,50}$"
+    },
+    "duFullname": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,50}$"
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

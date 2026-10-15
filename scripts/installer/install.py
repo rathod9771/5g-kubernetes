@@ -694,7 +694,7 @@ class Installer:
             raise ConfigError('Reference subscriber existence check failed')
 
     def baseline(self):
-        self.packages([s['key'] for s in self.registry['scenarios'] if s['generation_status'] == 'ready'])
+        self.packages([s['key'] for s in self.registry['scenarios'] if s['generation_status'] == 'ready' and not s.get('experimental')])
         state_path = Path(self.cfg['ACTIVE_STATE_PATH'])
         with exclusive_lock(self.directory / '.lifecycle.lock'):
             if state_path.exists():

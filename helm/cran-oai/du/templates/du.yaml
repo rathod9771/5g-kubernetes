@@ -6,7 +6,22 @@ data:
   du-init.sh: |
     #!/bin/bash
     export POD_IP=$(awk 'END{print $1}' /etc/hosts)
+{{- if .Values.experimentalTransport }}
+    # OSM may install KDUs concurrently; resolve dependencies before starting.
+    deadline=$((SECONDS + 120))
+    while :; do
+      CU_IP=$(timeout 5 getent ahostsv4 {{ .Values.cuFullname }} | awk 'NR==1{print $1}')
+      [ -n "${CU_IP}" ] && break
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "Dependency discovery failed: {{ .Values.cuFullname }}" >&2
+        exit 1
+      fi
+      sleep 1
+    done
+    export CU_IP
+{{- else }}
     export CU_IP=$(getent hosts {{ .Values.cuFullname }} | awk '{print $1}')
+{{- end }}
     echo "OAI DU (C-RAN, rf.mode={{ .Values.rf.mode }}): POD_IP=${POD_IP} CU_IP=${CU_IP}"
     mkdir -p /tmp/conf
     sed -e "s|CU_IP|${CU_IP}|g" -e "s|POD_IP|${POD_IP}|g" /opt/oai-gnb/etc/gnb.conf > /tmp/conf/du.conf
@@ -26,20 +41,20 @@ data:
     gNBs =
     (
      {
-        gNB_ID = 0xe00;
-        gNB_DU_ID = 0xe00;
+        gNB_ID = {{ if .Values.radio }}{{ .Values.radio.gnbId | int64 }}{{ else }}0xe00{{ end }};
+        gNB_DU_ID = {{ if .Values.radio }}{{ .Values.radio.duId | int64 }}{{ else }}0xe00{{ end }};
         gNB_name  =  "du-rfsim";
 
         tracking_area_code  =  1;
         plmn_list = ({ mcc = 208; mnc = 93; mnc_length = 2; snssaiList = ({ sst = 1; sd = 0x010203; }) });
 
-        nr_cellid = 12345678L;
+        nr_cellid = {{ if .Values.radio }}{{ .Values.radio.cellId | int64 }}{{ else }}12345678{{ end }}L;
 
         min_rxtxtime = 4;
 
         servingCellConfigCommon = (
         {
-          physCellId                                               = 0;
+          physCellId                                               = {{ if .Values.radio }}{{ .Values.radio.pci }}{{ else }}0{{ end }};
 
           absoluteFrequencySSB                                      = 630048;
           dl_frequencyBand                                          = 78;
@@ -97,7 +112,7 @@ data:
           nrofUplinkSlots                                              = 2;
           nrofUplinkSymbols                                            = 4;
 
-          ssPBCH_BlockPower                                            = -25;
+          ssPBCH_BlockPower                                            = {{ if .Values.radio }}{{ .Values.radio.ssbPower }}{{ else }}-25{{ end }};
          }
 
       );
@@ -194,7 +209,7 @@ metadata:
     component: du
     rf-mode: {{ .Values.rf.mode }}
 spec:
-  replicas: 1
+  replicas: {{ if hasKey .Values "replicaCount" }}{{ .Values.replicaCount }}{{ else }}1{{ end }}
   selector:
     matchLabels:
       app: {{ .Values.fullname }}
@@ -208,6 +223,18 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
       - name: du
         image: {{ required "Supply approved image values with scripts/runtime_images.py" .Values.image.reference | quote }}
@@ -253,3 +280,9 @@ spec:
     port: 38472
     targetPort: 38472
     protocol: SCTP
+{{- if .Values.experimentalTransport }}
+  - name: f1u
+    port: 38472
+    targetPort: 38472
+    protocol: UDP
+{{- end }}

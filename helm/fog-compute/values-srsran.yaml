@@ -1,0 +1,13 @@
+fullname: fran-srsran-fog
+ranType: fran
+duFullname: fran-srsran-du
+nodeSelector: {}
+affinity: {}
+tolerations: []
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

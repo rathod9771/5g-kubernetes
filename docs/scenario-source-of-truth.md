@@ -54,8 +54,10 @@ trees. Experimental direct-Helm deployment scripts also remain outside generatio
 The ready CU/DU source decision follows commit `6dbf6b2`: shared implementation
 with C-RAN/Cloud-RAN/vCRAN profiles. This is an intentional migration from older
 monolithic/forked packages, not a claim that those implementations are identical.
-The older copies are preserved. Latest vCRAN profiles explicitly exclude HPA;
-older packaged HPA templates are not carried into generated artifacts.
+The older copies are preserved. vC-RAN/srsRAN has an optional canonical CU HPA, disabled by default and
+bounded to one replica until state-aware multi-CU validation is acknowledged.
+vC-RAN/OAI keeps its existing no-HPA policy. Older packaged HPA templates are
+not maintained as a second source. See [vC-RAN autoscaling](vcran-autoscaling.md).
 
 Known package fixes already present in these canonical CU sources are retained:
 stable `amf-ngap-stable` discovery, Pod-IP substitution, explicit slice SD and
@@ -112,7 +114,7 @@ The builder preflights every selected scenario before writing artifacts:
 - Helm lint and rendering of canonical sources with profiles and generated
   charts with baked defaults; rendered objects must match.
 - Expected deployment identities, cross-KDU resource collisions, retained fixes
-  and the no-HPA vCRAN decision.
+  and the scenario-specific HPA policy.
 
 Validation recomputes all expected files from canonical sources and compares
 every staging file, provenance record and archive byte. Missing files, extra

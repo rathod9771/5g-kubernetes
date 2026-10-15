@@ -1,0 +1,17 @@
+fullname: fran-oai-cu
+ranType: fran
+replicaCount: 1
+nodeSelector: {}
+affinity: {}
+tolerations: []
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    cpu: '1'
+    memory: 2Gi
+radio:
+  gnbId: 3586
+  cellId: 58753025
+experimentalTransport: true

@@ -1,0 +1,21 @@
+fullname: hcran-oai-small
+ranType: hcran
+replicaCount: 1
+nodeSelector: {}
+affinity: {}
+tolerations: []
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: '1'
+    memory: 2Gi
+radio:
+  gnbId: 3585
+  cellId: 58736642
+  duId: 101
+  pci: 102
+  ssbPower: -35
+cuFullname: hcran-oai-cu
+experimentalTransport: true
