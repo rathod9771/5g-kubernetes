@@ -9,6 +9,22 @@ from assurance.periodic import Trial
 from assurance.store import Store
 from assurance.locking import exclusive
 
+def descendant_state(stat_path):
+    """Read a /proc/<pid>/stat process-state char, tolerating the pid vanishing.
+
+    Both FileNotFoundError (ENOENT: the /proc/<pid> entry is already gone) and
+    ProcessLookupError (ESRCH: the kernel can still raise this from a read() on
+    /proc/<pid>/stat if the task is reaped during the read itself, not just
+    between an earlier exists() check and this read) mean the process is gone,
+    which is a legitimate cleanup outcome -- not a test failure. Any other
+    exception is a real, unrelated problem and must still propagate.
+    """
+    try:
+        return stat_path.read_text().rsplit(')', 1)[1].split()[0]
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+
+
 class DiagnosticTests(unittest.TestCase):
     def run_failure(self,code=None,command=None,**kwargs):
         reader=KubernetesReader({},'',**kwargs)
@@ -56,7 +72,34 @@ class DiagnosticTests(unittest.TestCase):
             code='import subprocess,sys,time,pathlib\np=subprocess.Popen([sys.executable,"-c","import time;time.sleep(30)"])\npathlib.Path('+repr(str(pidfile))+').write_text(str(p.pid))\ntime.sleep(30)'
             self.run_failure(code,timeout=.3)
             pid=int(pidfile.read_text());p=Path('/proc',str(pid),'stat')
-            if p.exists():self.assertEqual(p.read_text().rsplit(')',1)[1].split()[0],'Z')
+            state=descendant_state(p)
+            # Both outcomes below are legitimate: the killed descendant may
+            # already be fully reaped (state is None), or still present as a
+            # zombie awaiting reaping. A verified surviving, running
+            # descendant (any other state) still fails this assertion.
+            if state is not None:self.assertEqual(state,'Z')
+
+    def test_descendant_state_toctou_and_survivor_handling(self):
+        # Deterministic coverage for descendant_state()'s race tolerance
+        # (test_cleanup_descendant above depends on a real kernel-timing race
+        # that may not reproduce on every run/host).
+        class StatStub:
+            def __init__(self,outcome):self.outcome=outcome
+            def read_text(self):
+                if isinstance(self.outcome,BaseException):raise self.outcome
+                return self.outcome
+        # Already reaped before the read (the pre-existing exists()-then-read
+        # gap): ENOENT.
+        self.assertIsNone(descendant_state(StatStub(FileNotFoundError())))
+        # Reaped during the read itself (the TOCTOU race this fix targets): ESRCH.
+        self.assertIsNone(descendant_state(StatStub(ProcessLookupError())))
+        # Zombie, awaiting reaping: also a legitimate cleanup outcome.
+        self.assertEqual(descendant_state(StatStub('123 (python3) Z 1 0 0 0 -1 0 0')),'Z')
+        # A verified surviving, still-running descendant must be reported,
+        # never conflated with the reaped/zombie cases above.
+        self.assertEqual(descendant_state(StatStub('123 (python3) R 1 0 0 0 -1 0 0')),'R')
+        # Unrelated exceptions must never be hidden.
+        with self.assertRaises(PermissionError):descendant_state(StatStub(PermissionError()))
     def test_trial_error_record_and_lock_release(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);store=Store(root/'assurance.sqlite')
