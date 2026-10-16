@@ -822,6 +822,47 @@ class CoreInstantiationTests(unittest.TestCase):
         self.assertIn('required field nsName missing',str(caught.exception))
         self.assertNotIn('PRIVATE',str(caught.exception));self.assertNotIn('provenance',str(caught.exception))
 
+    def test_non_instantiate_http_error_reports_method_and_sanitized_endpoint(self):
+        # Diagnosing the Dell's opaque "OSM HTTP request failed: HTTP 422" required
+        # reading install.py source to even guess which endpoint failed. Every
+        # non-instantiate request now names its method and a UUID-redacted path.
+        import urllib.error
+        from osm_catalog import Catalog,OSMHTTPError
+        c=Catalog('https://example.invalid','PRIVATE_TOKEN')
+        uid='11111111-2222-3333-4444-555555555555'
+        error=urllib.error.HTTPError('https://example.invalid',500,'private',{},io.BytesIO(b'PRIVATE_RESPONSE_SENTINEL'))
+        opener=mock.Mock();opener.open.side_effect=error
+        with mock.patch('urllib.request.build_opener',return_value=opener):
+            with self.assertRaises(OSMHTTPError) as caught:c.request('GET','/admin/v1/vim_accounts/'+uid)
+        message=str(caught.exception)
+        self.assertIn('GET /admin/v1/vim_accounts/<id> failed: HTTP 500',message)
+        self.assertNotIn(uid,message);self.assertNotIn('PRIVATE_RESPONSE_SENTINEL',message)
+
+    def test_http_422_on_user_password_edit_classifies_without_leaking_response(self):
+        # Verified root cause of the Dell HTTP 422: the pinned OSM v19 NBI
+        # (osm_nbi/validation.py user_passwd_schema) rejects PATCH
+        # /admin/v1/users/<id> with 422 if the new password fails its
+        # complexity regex. The classification below is static, endpoint-shape
+        # based text -- it must never depend on, or echo, the server's actual
+        # response body (which itself may contain the submitted password, per
+        # jsonschema's own pattern-mismatch error format).
+        import urllib.error
+        from osm_catalog import Catalog,OSMHTTPError
+        c=Catalog('https://example.invalid','PRIVATE_TOKEN')
+        uid='11111111-2222-3333-4444-555555555555'
+        error=urllib.error.HTTPError('https://example.invalid',422,'private',{},
+                                     io.BytesIO(b"'PRIVATE_ATTEMPTED_PASSWORD' does not match pattern"))
+        opener=mock.Mock();opener.open.side_effect=error
+        with mock.patch('urllib.request.build_opener',return_value=opener):
+            with self.assertRaises(OSMHTTPError) as caught:
+                c.request('PATCH','/admin/v1/users/'+uid,b'PRIVATE_REQUEST_BODY')
+        message=str(caught.exception)
+        self.assertIn('PATCH /admin/v1/users/<id> failed: HTTP 422',message)
+        self.assertIn('password policy',message)
+        self.assertNotIn(uid,message)
+        self.assertNotIn('PRIVATE_ATTEMPTED_PASSWORD',message)
+        self.assertNotIn('PRIVATE_REQUEST_BODY',message)
+
     def test_nbi_backend_is_plain_http_and_ingress_stays_tls(self):
         d=api_ingress({'OSM_HOST':'https://gui.example.invalid:30843','OSM_NAMESPACE':'osm'})
         self.assertEqual(d['metadata']['annotations']['nginx.ingress.kubernetes.io/backend-protocol'],'HTTP')
@@ -1150,7 +1191,7 @@ class KubeconfigPrerequisiteTests(unittest.TestCase):
 
     def credentials(self, **overrides):
         base = {'OSM_HOST': 'https://gui.example.invalid:30843', 'OSM_USER': 'admin',
-                'OSM_PASSWORD': 'offline-test-only-not-a-real-secret',
+                'OSM_PASSWORD': 'Offline-test-only-1!',
                 'OSM_PROJECT': 'admin', 'GRAFANA_ADMIN_PASSWORD': 'offline-test-only-grafana',
                 'RANCHER_BOOTSTRAP_PASSWORD': 'offline-test-only-rancher'}
         base.update(overrides)
@@ -1399,3 +1440,55 @@ class ContainerdReconciliationTests(unittest.TestCase):
         self.assertIn('reconcile_result', source)
         self.assertIn('== changed', source)
         self.assertNotIn('containerd config default | sed', source)
+
+
+class OsmPasswordPolicyTests(unittest.TestCase):
+    """Diagnosing the Dell HTTP 422 traced to osm_nbi/validation.py's
+    user_passwd_schema (verified against the pinned OSM v19 NBI's own master
+    source): PATCH /admin/v1/users/<id> rejects a password that does not match
+    '^.*(?=.{8,})((?=.*[!@#$%^&*()-_=+{};:,<.>]){1})(?=.*\\d)((?=.*[a-z]){1})
+    ((?=.*[A-Z]){1}).*$'. load_config() now enforces the identical rule
+    offline, turning a mid-install, hard-to-diagnose 422 into an immediate,
+    actionable local failure before any OSM request is ever made.
+    """
+
+    def credentials(self, **overrides):
+        base = {'OSM_HOST': 'https://gui.example.invalid:30843', 'OSM_USER': 'admin',
+                'OSM_PASSWORD': 'Compliant-pw1!', 'OSM_PROJECT': 'admin'}
+        base.update(overrides)
+        return base
+
+    def test_compliant_password_accepted(self):
+        with tempfile.TemporaryDirectory() as home:
+            cfg = load_config(ROOT, environ=self.credentials(), home=home, require=('osm',))
+            self.assertEqual(cfg['OSM_PASSWORD'], 'Compliant-pw1!')
+
+    def test_each_missing_character_class_rejected(self):
+        # One character class missing at a time, all else satisfied.
+        cases = {
+            'no uppercase': 'compliant-pw1!',
+            'no lowercase': 'COMPLIANT-PW1!',
+            'no digit': 'Compliant-pw!!',
+            'no symbol': 'Compliant1Apw',
+            'too short': 'Cpw1!',
+        }
+        for label, password in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as home:
+                with self.assertRaisesRegex(ConfigError, 'password policy'):
+                    load_config(ROOT, environ=self.credentials(OSM_PASSWORD=password), home=home, require=('osm',))
+
+    def test_default_blocklist_still_checked_first_without_leaking_attempt(self):
+        # A blocklisted default is rejected by the existing, pre-existing check
+        # before the new policy check is even reached; neither message echoes
+        # the attempted value.
+        with tempfile.TemporaryDirectory() as home:
+            with self.assertRaisesRegex(ConfigError, 'non-default credential') as caught:
+                load_config(ROOT, environ=self.credentials(OSM_PASSWORD='admin123'), home=home, require=('osm',))
+            self.assertNotIn('admin123', str(caught.exception))
+
+    def test_policy_only_enforced_when_osm_required(self):
+        # Unrelated require sets (e.g. just 'kubernetes') must not suddenly
+        # start requiring OSM_PASSWORD to be set or compliant.
+        with tempfile.TemporaryDirectory() as home:
+            cfg = load_config(ROOT, environ={}, home=home, require=())
+            self.assertEqual(cfg['OSM_PASSWORD'], '')

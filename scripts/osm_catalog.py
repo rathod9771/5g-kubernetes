@@ -1,5 +1,6 @@
 """Strict catalog identities and byte provenance. No requests occur at import."""
 import hashlib
+import re
 import uuid
 from urllib.parse import urlsplit
 import ssl
@@ -17,6 +18,12 @@ class OSMHTTPError(CatalogError):
     def __init__(self, status, operation, detail=''):
         self.status = status
         super().__init__('OSM ' + operation + ' failed: HTTP ' + str(status) + detail)
+
+_UUID = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+
+def sanitize_path(path):
+    """Replace UUID path segments with '<id>'; never includes query/body content."""
+    return '/'.join('<id>' if _UUID.match(segment) else segment for segment in path.split('/'))
 
 def parse_response(content):
     try:
@@ -47,7 +54,10 @@ class Catalog:
         self.ca_file = ca_file
 
     def request(self, method, path, data=None, content_type='application/yaml'):
-        operation = 'instantiate' if path.endswith('/instantiate') else 'HTTP request'
+        # 'instantiate' is kept as a fixed, backward-compatible label (callers
+        # match on it); every other path gets a sanitized method+endpoint label
+        # instead of a generic, undiagnosable "HTTP request".
+        operation = 'instantiate' if path.endswith('/instantiate') else method + ' ' + sanitize_path(path)
         headers = {'Content-Type': content_type, 'Accept': 'application/gzip' if path.endswith(('/package_content', '/nsd_content')) else 'application/yaml'}
         if self.token:
             headers['Authorization'] = 'Bearer ' + self.token
@@ -73,6 +83,15 @@ class Catalog:
                     if "'" + field + "' is a required property" in text:
                         detail = '; required field ' + field + ' missing'
                         break
+                else:
+                    # Classified from the request shape alone (method/path), never
+                    # from the server's response text or our own request body --
+                    # either could echo back the submitted password.
+                    if method in ('POST', 'PATCH') and re.fullmatch(r'/admin/v1/users(/[^/]+)?', path):
+                        detail = ('; the submitted password likely does not meet the OSM NBI '
+                                 'password policy (minimum 8 characters, with at least one uppercase '
+                                 'letter, one lowercase letter, one digit, and one symbol from '
+                                 '!@#$%^&*()-_=+{};:,<.>)')
             raise OSMHTTPError(error.code, operation, detail) from None
         except Exception:
             raise CatalogError('OSM ' + operation + ' transport request failed (private details suppressed)') from None

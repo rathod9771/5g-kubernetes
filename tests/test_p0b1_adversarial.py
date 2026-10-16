@@ -208,12 +208,12 @@ class AdversarialTests(unittest.TestCase):
 
     def test_explicit_endpoint_uses_one_load_without_local_network_discovery(self):
         import osm_client
-        with mock.patch.object(osm_client,'load_config',wraps=lambda **kw:self.cfg({'OSM_HOST':'https://osm.invalid','OSM_PROJECT':'project','OSM_USER':'user','OSM_PASSWORD':'synthetic'},query=lambda args: (_ for _ in ()).throw(AssertionError('unexpected discovery')),**kw)) as load:
+        with mock.patch.object(osm_client,'load_config',wraps=lambda **kw:self.cfg({'OSM_HOST':'https://osm.invalid','OSM_PROJECT':'project','OSM_USER':'user','OSM_PASSWORD':'Synthetic-pw1!'},query=lambda args: (_ for _ in ()).throw(AssertionError('unexpected discovery')),**kw)) as load:
             osm_client.runtime_config()
             self.assertEqual(load.call_count,1)
 
     def test_auto_endpoint_derivation_and_required_namespace(self):
-        cfg=self.cfg({'OSM_PROJECT':'project','OSM_USER':'user','OSM_PASSWORD':'synthetic'},network='auto',require=('osm',),query=network())
+        cfg=self.cfg({'OSM_PROJECT':'project','OSM_USER':'user','OSM_PASSWORD':'Synthetic-pw1!'},network='auto',require=('osm',),query=network())
         self.assertEqual(cfg['OSM_HOST'],'https://gui.192.0.2.10.nip.io:30843')
         with self.assertRaises(rc.ConfigError):self.cfg({'OSM_NAMESPACE':''})
 
@@ -292,7 +292,7 @@ class AdversarialTests(unittest.TestCase):
     def test_empty_state_init_derives_endpoint_once_and_binds_real_identities(self):
         import contextlib,io
         kube=self.home/'.kube/config';kube.parent.mkdir();kube.write_text('synthetic')
-        overrides={'OSM_PROJECT':'project','OSM_VIM_NAME':'vim','OSM_USER':'user','OSM_PASSWORD':'synthetic','OSM_PROJECT_NAMESPACE':'ran'}
+        overrides={'OSM_PROJECT':'project','OSM_VIM_NAME':'vim','OSM_USER':'user','OSM_PASSWORD':'Synthetic-pw1!','OSM_PROJECT_NAMESPACE':'ran'}
         def load(**kw):return self.cfg(overrides,query=network(),**kw)
         with mock.patch.object(rr,'load_config',side_effect=load) as loaded,mock.patch('osm_catalog.Catalog') as factory,mock.patch.object(rc,'kubernetes_json',return_value=namespaces()),mock.patch.object(sys,'argv',['runtime_render.py','init-state']),contextlib.redirect_stdout(io.StringIO()):
             factory.return_value.request.side_effect=[json.dumps([{'_id':PROJECT,'name':'project'}]).encode(),json.dumps([{'_id':VIM,'name':'vim'}]).encode(),b'[]']

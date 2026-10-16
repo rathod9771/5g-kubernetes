@@ -44,6 +44,12 @@ DEFAULTS = {
 }
 SECRETS = {'OSM_PASSWORD', 'GRAFANA_ADMIN_PASSWORD', 'RANCHER_BOOTSTRAP_PASSWORD', 'OSM_BOOTSTRAP_PASSWORD'}
 DNS = re.compile(r'[a-z0-9](?:[-a-z0-9]*[a-z0-9])?\Z')
+# Verified against the pinned OSM v19 NBI's own osm_nbi/validation.py user_passwd_schema:
+# the server rejects PATCH /admin/v1/users/<id> with HTTP 422 if the new password does
+# not match this exact pattern. Checking it here turns an opaque mid-install 422 into an
+# immediate, offline, actionable failure.
+OSM_PASSWORD_PATTERN = re.compile(
+    r'^.*(?=.{8,})((?=.*[!@#$%^&*()\-_=+{};:,<.>]){1})(?=.*\d)((?=.*[a-z]){1})((?=.*[A-Z]){1}).*$')
 
 def private_text(path, required=False, strict=False):
     """Read one descriptor; never follow a replaced final-component symlink."""
@@ -375,6 +381,12 @@ def load_config(root=ROOT, environ=None, home=None, network=False, require=(), q
                 raise ConfigError('Missing required ' + field)
             if field in SECRETS and cfg[field].lower() in ('admin','password','changeme','admin123'):
                 raise ConfigError('Set a private non-default credential for ' + field)
+        if not OSM_PASSWORD_PATTERN.match(cfg['OSM_PASSWORD']):
+            raise ConfigError('OSM_PASSWORD does not meet the pinned OSM v19 NBI password policy '
+                              '(minimum 8 characters, with at least one uppercase letter, one lowercase '
+                              'letter, one digit, and one symbol from !@#$%^&*()-_=+{};:,<.>); the NBI '
+                              'rejects a non-conforming password with HTTP 422 when rotating the admin '
+                              'account, after Kubernetes/OSM are already installed')
     if 'install' in require:
         if cfg['POD_CIDR'] != DEFAULTS['POD_CIDR']:
             raise ConfigError('The bundled Flannel installation supports only the canonical POD_CIDR; custom CNI rendering is deferred')
