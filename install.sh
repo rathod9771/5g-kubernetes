@@ -9,9 +9,17 @@ if [[ "${1:-}" == --platform-only-plan ]]; then
   # below, imports no images/subscribers and starts no service.
   exec env PYTHONPATH="$REPO_ROOT/scripts" python3 -m telecom.research_setup --mode research-only --reuse-existing --plan
 fi
-if [[ "$#" -gt 0 ]]; then
+platform_only=0
+if [[ "${1:-}" == --platform-only ]]; then
+  # Platform-only profile: install the shared orchestration infrastructure
+  # (Kubernetes/OSM/Rancher/monitoring/researcher dashboard) only. Never
+  # builds srsRAN, never requires a subscriber database input, never
+  # provisions or removes the reference RAN/Core workloads below.
+  [[ "$#" -eq 1 ]] || { echo 'Usage: ./install.sh --platform-only' >&2; exit 2; }
+  platform_only=1
+elif [[ "$#" -gt 0 ]]; then
   [[ "$#" -eq 2 && "$1" == --srsran-image-archive && -n "$2" ]] || {
-    echo 'Usage: ./install.sh [--srsran-image-archive /path/to/approved-export.tar] [--platform-only-plan]' >&2
+    echo 'Usage: ./install.sh [--srsran-image-archive /path/to/approved-export.tar] [--platform-only] [--platform-only-plan]' >&2
     exit 2
   }
 fi
@@ -29,6 +37,15 @@ fi
 
 source "$REPO_ROOT/scripts/common.sh"
 load_config --network --require install --require osm
+
+if [[ "$platform_only" == 1 ]]; then
+  python3 -B "$REPO_ROOT/scripts/installer/install.py" --platform-only --validate-inputs
+  bash "$REPO_ROOT/scripts/installer/host.sh"
+  python3 -B "$REPO_ROOT/scripts/installer/install.py" --platform-only --preflight
+  python3 -B "$REPO_ROOT/scripts/installer/install.py" --platform-only
+  exit 0
+fi
+
 # Authenticate private inputs and reject unsafe active services before host changes.
 python3 -B "$REPO_ROOT/scripts/installer/install.py" --validate-inputs
 

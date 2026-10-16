@@ -91,8 +91,9 @@ class Runner:
 
 
 class Installer:
-    def __init__(self, cfg, runner=None):
+    def __init__(self, cfg, runner=None, platform_only=False):
         self.cfg, self.runner = dict(cfg), runner or Runner()
+        self.platform_only = platform_only
         self.lock = versions()
         self.directory = Path(cfg['RUNTIME_DIR'])
         self.registry = load_registry()
@@ -761,7 +762,14 @@ class Installer:
             raise
         self.apply(document, context='monitoring PodMonitor apply ' + name, retry_network=True)
 
-    def monitoring(self):
+    def monitoring_platform(self):
+        """Platform-generic monitoring: kube-prometheus-stack + its NodePort only.
+
+        Reused as-is by the platform-only profile. The reference-specific
+        PodMonitors/exporters in monitoring() below require an already-running
+        Open5GS/RAN (AMF SBI Service, cran-srsran-cu pods) and must stay out
+        of this stage.
+        """
         values = yaml.safe_load((ROOT / 'monitoring/kube-prometheus-stack-values.yaml').read_text())
         values.setdefault('grafana', {}).update({'adminPassword': self.cfg['GRAFANA_ADMIN_PASSWORD'],
                                                 'service': {'type': 'NodePort', 'nodePort': int(self.cfg['GRAFANA_NODEPORT'])}})
@@ -769,6 +777,9 @@ class Installer:
                      values, 'https://prometheus-community.github.io/helm-charts')
         # release() already verifies every named workload; do not repeat the rollout.
         self.monitoring_nodeport()
+
+    def monitoring(self):
+        self.monitoring_platform()
         for relative in ['monitoring/open5gs-podmonitor.yaml', 'monitoring/ran-exporter/podmonitor.yaml',
                          'monitoring/latency-probe/podmonitor.yaml']:
             for document in yaml.safe_load_all(render_manifest(ROOT / relative, self.cfg)):
@@ -834,16 +845,54 @@ class Installer:
         else:
             raise ConfigError('Dashboard readiness timeout')
 
+    def research_dashboard(self):
+        """Loopback-only researcher dashboard (docs/telecom/p6/research_only.py).
+
+        Never touches ran-selector/backend.py or its systemd unit. Private
+        auth/runtime/policy fixtures are provisioned once and never silently
+        rewritten; see telecom.research_setup.ensure_sandbox.
+        """
+        from telecom.research_setup import ensure_sandbox, render_research_service
+        paths, created = ensure_sandbox(self.directory / 'telecom-research', ROOT)
+        for subject, token in created.items():
+            print('Researcher dashboard: new bearer token for ' + subject +
+                  ' (shown once; only its sha256 is retained): ' + token, flush=True)
+        unit = render_research_service(ROOT, paths)
+        path = Path('/etc/systemd/system/telecom-research.service')
+        active = self.runner.run(['systemctl', 'is-active', '--quiet', 'telecom-research'], check=False).returncode == 0
+        if active:
+            try:
+                installed = path.read_text()
+            except OSError:
+                raise ConfigError('Cannot verify running researcher dashboard configuration; explicit reconciliation required') from None
+            if installed != unit:
+                raise ConfigError('Running researcher dashboard configuration differs; explicit review required before reinstalling')
+            return
+        self.runner.run(['sudo', 'tee', str(path)], data=unit.encode())
+        self.runner.run(['sudo', 'systemctl', 'daemon-reload'])
+        self.runner.run(['sudo', 'systemctl', 'enable', '--now', 'telecom-research.service'])
+        self.runner.run(['systemctl', 'is-active', '--quiet', 'telecom-research.service'])
+
     def run(self):
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         with exclusive_lock(self.directory / '.installer.lock'):
             self.snapshot()
-            for label, action in [('Kubernetes', self.kubernetes), ('approved srsRAN image', self.ready_ran_image),
-                                  ('infrastructure', self.infrastructure),
-                                  ('OSM', self.osm), ('Open5GS', self.core),
-                                  ('private subscriber input', self.subscribers),
-                                  ('ready RAN packages and runtime state', self.baseline),
-                                  ('monitoring', self.monitoring), ('services', self.services)]:
+            if self.platform_only:
+                # No srsRAN image, no Open5GS Core, no private subscriber input,
+                # no reference catalog onboarding and no production dashboard:
+                # only the shared orchestration platform plus the isolated
+                # researcher-only dashboard.
+                stages = [('Kubernetes', self.kubernetes), ('infrastructure', self.infrastructure),
+                          ('OSM', self.osm), ('monitoring platform', self.monitoring_platform),
+                          ('researcher dashboard', self.research_dashboard)]
+            else:
+                stages = [('Kubernetes', self.kubernetes), ('approved srsRAN image', self.ready_ran_image),
+                          ('infrastructure', self.infrastructure),
+                          ('OSM', self.osm), ('Open5GS', self.core),
+                          ('private subscriber input', self.subscribers),
+                          ('ready RAN packages and runtime state', self.baseline),
+                          ('monitoring', self.monitoring), ('services', self.services)]
+            for label, action in stages:
                 self.stage(label, action)
 
 
@@ -860,12 +909,15 @@ def resume_config(cfg):
     return cfg
 
 
-def preflight(cfg):
+def preflight(cfg, platform_only=False):
     # Validate the owner-only input before host/bootstrap or any deployment.
     # Read it again at import time to reject later permission/format changes.
-    private_archive(cfg['SUBSCRIBER_DATABASE_INPUT'])
-    if cfg['DEPLOYMENT_PROFILE'] != 'rfsim':
-        raise ConfigError('Submission installer supports the existing rfsim baseline only')
+    # Platform-only never installs Open5GS/RAN, so it never requires (or reads)
+    # the private subscriber database input, and makes no rfsim claim.
+    if not platform_only:
+        private_archive(cfg['SUBSCRIBER_DATABASE_INPUT'])
+        if cfg['DEPLOYMENT_PROFILE'] != 'rfsim':
+            raise ConfigError('Submission installer supports the existing rfsim baseline only')
     if not 30000 <= int(cfg['OSM_HTTPS_PORT']) <= 32767:
         raise ConfigError('Submission ingress requires OSM_HTTPS_PORT in the NodePort range')
     if not cfg['OSM_CLUSTER_NAME']:
@@ -879,16 +931,30 @@ def preflight(cfg):
             check_installed_service(kind, cfg, Path('/etc/systemd/system/' + name + '.service'))
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preflight', action='store_true')
     parser.add_argument('--validate-inputs', action='store_true', help='Validate private inputs and safety before host/image preparation')
+    parser.add_argument('--platform-only', action='store_true',
+                        help='Install orchestration infrastructure only: Kubernetes/OSM/Rancher/monitoring/'
+                             'researcher dashboard. Excludes srsRAN/OAI RAN, Open5GS Core, IMS, subscriber '
+                             'input and reference catalog onboarding.')
     parser.add_argument('--srsran-image-archive', type=Path,
                         help='Approved Docker export; verified before bootstrap and imported into target containerd')
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
+    if args.platform_only and args.srsran_image_archive:
+        raise ConfigError('--platform-only does not build or import a srsRAN image')
     cfg = resume_config(load_config(network=True, require=('install', 'osm')))
-    preflight(cfg)
+    preflight(cfg, platform_only=args.platform_only)
     if args.validate_inputs:
+        return
+    if args.platform_only:
+        if not args.preflight:
+            Installer(cfg, platform_only=True).run()
         return
     image = image_policy()['components']['srsran']
     if args.srsran_image_archive:

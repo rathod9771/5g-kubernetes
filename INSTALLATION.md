@@ -341,6 +341,156 @@ Do not delete already-successful stages unless the installer explicitly instruct
 
 ---
 
+## 6b. Platform-only installation — orchestration infrastructure without reference RAN/Core
+
+Use this mode to stand up the shared orchestration platform (Kubernetes, OSM v19,
+Rancher, monitoring, and the isolated researcher dashboard) on a fresh Ubuntu 24.04
+machine, without the reference OAI/srsRAN RAN, Open5GS Core, IMS or any private
+subscriber input. A researcher can then onboard their **own** RAN/Core through the
+existing P1–P9 telecom CI/CD pipeline (see `docs/telecom/README.md`), entirely
+through the dashboard below — never by editing `ran-selector/backend.py`.
+
+### 1. Fresh Ubuntu prerequisites
+
+Same base OS requirement as the full installer: a fresh Ubuntu 24.04 LTS, amd64,
+single-node machine, with a non-root user that has `sudo`. No GPU, no pre-existing
+Kubernetes/Docker/OSM installation, no subscriber database file, and no srsRAN
+build toolchain are required for this mode.
+
+### 2. Platform-only installation command
+
+```bash
+cd ~/5g-kubernetes
+chmod +x install.sh
+./install.sh --platform-only
+```
+
+Non-mutating dry run first (recommended): `./install.sh --platform-only-plan` prints
+the research-only setup plan and exits; it never provisions, builds or removes
+anything.
+
+The installer performs:
+
+```text
+Preflight (no subscriber-input check, no rfsim check)
+  ↓
+Host preparation (containerd, Kubernetes, Helm)
+  ↓
+Kubernetes
+  ↓
+Flannel / Longhorn / cert-manager / ingress-nginx / Rancher / Istio
+  ↓
+OSM v19
+  ↓
+Prometheus / Grafana (platform release + NodePort only)
+  ↓
+Researcher dashboard (loopback-only)
+```
+
+### 3. Infrastructure installed
+
+- Kubernetes (single-node kubeadm cluster, Flannel CNI).
+- Longhorn storage, cert-manager, ingress-nginx, Rancher, Istio base/istiod.
+- OSM v19 (NBI/LCM/RO/catalog, Keystone-free dummy VIM, one Kubernetes cluster
+  registration) — the same real OSM NBI exercised in the P10/P11 research phases.
+- `kube-prometheus-stack` (Prometheus + Grafana) and its NodePort service.
+- The isolated, loopback-only researcher dashboard (`docs/telecom/p6/research_only.py`),
+  run as `telecom-research.service`, bound to `127.0.0.1` only.
+- Layer 3 correlation stays in its existing observe-only/read-only mode; nothing in
+  this mode enables remediation.
+
+### 4. Infrastructure deliberately excluded
+
+- OAI RAN, srsRAN RAN (no srsRAN image is built or imported).
+- Open5GS Core, IMS.
+- Any private subscriber database input (`SUBSCRIBER_DATABASE_INPUT` is not read).
+- Reference UE components.
+- Reference catalog onboarding (no KNF/NSD packages are published to OSM).
+- The production `ran-selector` dashboard/service (that stage is skipped entirely
+  in this mode; it depends on the reference Core/RAN being present).
+- The `ran-exporter`/`latency-probe` monitoring exporters and their PodMonitors
+  (they require an already-running AMF/RAN and are reference-specific).
+
+### 5. Researcher dashboard access
+
+The installer prints three one-time bearer tokens (`researcher`, `reviewer`,
+`operator`) the first time it provisions the sandbox — save them immediately;
+only their SHA-256 hash is retained afterward. The dashboard listens on
+`127.0.0.1:5099` only (not reachable remotely without your own SSH tunnel or
+port-forward, by design — this keeps onboarding of a researcher's own workload
+isolated from the production host-facing dashboard):
+
+```bash
+ssh -L 5099:127.0.0.1:5099 <operator>@<target-host>
+# then, on your own machine:
+curl -H "Authorization: Bearer <researcher-token>" http://127.0.0.1:5099/api/telecom/workloads
+```
+
+Open `http://127.0.0.1:5099/telecom` in a browser through the same tunnel for the
+dashboard UI. Follow `docs/telecom/README.md`'s API table to register a workload,
+queue/run a pipeline job, request catalog publication and route it through
+independent reviewer approval.
+
+### 6. Required configuration files
+
+All private to the installing user, generated once under
+`<RUNTIME_DIR>/telecom-research/` (never under version control):
+
+| File | Purpose |
+|---|---|
+| `identities.json` | `TELECOM_AUTH_FILE` — SHA-256-hashed bearer identities only; no plaintext tokens. |
+| `execution-policy.json` | `TELECOM_EXECUTION_POLICY` — starts **empty** (`{}`): no `catalog_targets`/`deployment_targets` are enabled, so real catalog publication and live OSM lifecycle operations (initial deployment, update, rollback) stay structurally denied until an operator deliberately edits this file. |
+| `runtime/` | `TELECOM_RUNTIME_DIR` — private sandbox journal/lock directory. |
+
+### 7. Installation verification commands
+
+```bash
+kubectl --kubeconfig ~/.kube/config get nodes
+kubectl --kubeconfig ~/.kube/config get pods -n osm
+systemctl is-active telecom-research.service
+curl -sk https://gui.<your-base-domain>:30843/osm/admin/v1/projects   # expect 401 without a token
+curl -s http://127.0.0.1:5099/api/telecom/workloads                   # expect 403 without a token
+```
+
+### 8. Troubleshooting
+
+- **`Running researcher dashboard configuration differs; explicit review required
+  before reinstalling`** — the installed `telecom-research.service` unit no longer
+  matches what this installer would generate (e.g. the repository moved, or the
+  unit was hand-edited). Inspect `/etc/systemd/system/telecom-research.service`
+  before rerunning; the installer never silently overwrites a running, drifted
+  service.
+- **Dashboard returns 403 for a token you believe is valid** — tokens are shown
+  only once at creation. If lost, do not delete `identities.json` to "fix" it (that
+  revokes every existing researcher's access); instead add a new entry following
+  the same `sha256` format, or get a fresh sandbox provisioned under a new
+  `RUNTIME_DIR`.
+- **OSM stage times out waiting on certificates/LCM** — rerun `./install.sh
+  --platform-only`; every stage is idempotent and safe to repeat.
+- **`--platform-only` rejects `--srsran-image-archive`** — the two are mutually
+  exclusive by design; platform-only never builds or imports a srsRAN image.
+
+### 9. Safe uninstall procedure
+
+There is no automatic uninstall script for this mode (none exists for the full
+installer either, by design — see the final handover checklist). To remove only
+what this mode installed, in order:
+
+```bash
+sudo systemctl disable --now telecom-research.service
+sudo rm /etc/systemd/system/telecom-research.service
+sudo systemctl daemon-reload
+rm -rf <RUNTIME_DIR>/telecom-research   # only after confirming no researcher still needs these credentials
+helm uninstall kube-prometheus-stack -n monitoring --kubeconfig ~/.kube/config
+# OSM/Rancher/Kubernetes removal follows the same manual, explicit procedure as
+# the full installer; there is no blanket cleanup script for either mode.
+```
+
+Never run a blanket `kubectl delete` across namespaces, and never delete
+`~/.kube/config` or `~/osm-kubeconfig.yaml` while any workload still depends on them.
+
+---
+
 ## 7. Verify Kubernetes
 
 ```bash

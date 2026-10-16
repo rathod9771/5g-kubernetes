@@ -995,3 +995,145 @@ class PodMonitorCompatibilityTests(unittest.TestCase):
                     i.monitoring_podmonitor(self.document())
             self.assertEqual(run.call_count,1);sleep.assert_not_called();i.apply.assert_not_called()
             self.assertNotIn('PRIVATE',str(error.exception))
+
+
+class PlatformOnlyInstallerTests(unittest.TestCase):
+    def test_argument_parsing_and_conflicting_archive_rejected(self):
+        from installer.install import build_parser
+        args = build_parser().parse_args(['--platform-only'])
+        self.assertTrue(args.platform_only)
+        self.assertIsNone(args.srsran_image_archive)
+        args = build_parser().parse_args([])
+        self.assertFalse(args.platform_only)
+        args = build_parser().parse_args(['--platform-only', '--srsran-image-archive', '/tmp/x'])
+        self.assertTrue(args.platform_only and args.srsran_image_archive)
+
+    def test_reference_workloads_excluded_from_stage_order(self):
+        with tempfile.TemporaryDirectory() as t:
+            installer = Installer({'RUNTIME_DIR': t}, platform_only=True)
+            names = ['kubernetes', 'infrastructure', 'osm', 'monitoring_platform', 'research_dashboard']
+            calls = []
+            installer.snapshot = lambda: None
+            for name in names:
+                setattr(installer, name, lambda name=name: calls.append(name))
+            with mock.patch('builtins.print'):
+                installer.run()
+            # Exactly these five stages ran, in this order: no srsRAN image, no
+            # Open5GS Core, no subscriber input, no reference catalog baseline,
+            # no production ran-selector dashboard.
+            self.assertEqual(calls, names)
+            for excluded in ('ready_ran_image', 'core', 'subscribers', 'baseline', 'services', 'monitoring'):
+                self.assertNotIn(excluded, calls)
+
+    def test_private_subscriber_input_not_required(self):
+        # No SUBSCRIBER_DATABASE_INPUT, no OSM_CLUSTER_NAME/OSM_VIM_NAME check tripped first.
+        cfg = {'SUBSCRIBER_DATABASE_INPUT': '', 'DEPLOYMENT_PROFILE': 'other', 'OSM_HTTPS_PORT': '30843',
+               'OSM_CLUSTER_NAME': 'c', 'OSM_VIM_NAME': 'v'}
+        with mock.patch('subprocess.run') as run:
+            run.return_value.returncode = 1
+            preflight(cfg, platform_only=True)
+        with mock.patch('subprocess.run') as run:
+            run.return_value.returncode = 1
+            with self.assertRaisesRegex(ConfigError, 'PRIVATE RUNTIME INPUT REQUIRED'):
+                preflight(cfg, platform_only=False)
+
+    def test_plan_only_mode_still_non_mutating(self):
+        result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--platform-only-plan'],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertFalse(plan['automatic_installation'])
+        self.assertFalse(plan['reference_workloads'])
+
+    @unittest.skipIf(os.geteuid() == 0, 'installer requires invoking user')
+    def test_platform_only_bootstrap_order_excludes_srsran_build(self):
+        with tempfile.TemporaryDirectory(prefix='platform-only path ') as t:
+            root = Path(t); (root / 'scripts/installer').mkdir(parents=True); (root / 'bin').mkdir()
+            (root / 'install.sh').write_bytes((ROOT / 'install.sh').read_bytes())
+            (root / 'scripts/common.sh').write_text('load_config() { echo config >> "$EVENT_LOG"; }\n')
+            (root / 'scripts/installer/host.sh').write_text('echo host >> "$EVENT_LOG"\n')
+            (root / 'scripts/build_srsran_from_source.sh').write_text('echo source-build >> "$EVENT_LOG"\n')
+            for name, body in {
+                'python3': 'if [ "$1" = -c ]; then exit 1; fi\nprintf "python:%s\\n" "$*" >> "$EVENT_LOG"\n',
+                'sudo': 'printf "sudo:%s\\n" "$*" >> "$EVENT_LOG"\n',
+                'ip': 'exit 0\n'}.items():
+                p = root / 'bin' / name; p.write_text('#!/bin/sh\n' + body); p.chmod(0o700)
+            log = root / 'events'
+            env = {**os.environ, 'PATH': str(root / 'bin') + ':' + os.environ['PATH'], 'EVENT_LOG': str(log)}
+            result = subprocess.run(['bash', str(root / 'install.sh'), '--platform-only'], env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            events = log.read_text().splitlines()
+            self.assertEqual(events[:3], ['sudo:apt-get update', 'sudo:apt-get install -y python3 python3-yaml iproute2', 'config'])
+            self.assertTrue(events[3].endswith('--platform-only --validate-inputs'))
+            self.assertEqual(events[4], 'host')
+            self.assertTrue(events[5].endswith('--platform-only --preflight'))
+            self.assertTrue(events[6].endswith('--platform-only'))
+            self.assertNotIn('source-build', events)
+
+    def test_platform_only_usage_error_on_extra_arguments(self):
+        result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--platform-only', 'extra'],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('Usage', result.stderr)
+
+    def test_sandbox_idempotent_no_token_regeneration(self):
+        from telecom.research_setup import ensure_sandbox
+        with tempfile.TemporaryDirectory() as t:
+            directory = Path(t) / 'telecom-research'
+            paths, created = ensure_sandbox(directory, ROOT)
+            self.assertEqual(set(created), {'researcher', 'reviewer', 'operator'})
+            first_auth = (directory / 'identities.json').read_text()
+            paths2, created2 = ensure_sandbox(directory, ROOT)
+            self.assertEqual(created2, {})
+            self.assertEqual((directory / 'identities.json').read_text(), first_auth)
+            self.assertEqual(paths, paths2)
+            self.assertEqual(json.loads((directory / 'execution-policy.json').read_text()), {})
+            import stat as stat_module
+            mode = stat_module.S_IMODE((directory / 'identities.json').stat().st_mode)
+            self.assertEqual(mode, 0o600)
+
+    def test_no_automatic_lifecycle_certification(self):
+        from telecom.research_setup import ensure_sandbox
+        from telecom.execution import Policy
+        with tempfile.TemporaryDirectory() as t:
+            paths, _ = ensure_sandbox(Path(t) / 'telecom-research', ROOT)
+            policy = Policy(json.loads(Path(paths['TELECOM_EXECUTION_POLICY']).read_text()))
+            self.assertEqual(policy.value.get('catalog_targets', {}), {})
+            self.assertEqual(policy.value.get('deployment_targets', {}), {})
+
+    def test_render_research_service_is_loopback_only_and_rejects_bad_user(self):
+        from telecom.research_setup import render_research_service, SANDBOX_PORT
+        paths = {'TELECOM_AUTH_FILE': '/private/identities.json', 'TELECOM_RUNTIME_DIR': '/private/runtime',
+                  'TELECOM_WORKSPACE': str(ROOT), 'TELECOM_EXECUTION_POLICY': '/private/policy.json', 'HELM_BIN': 'helm'}
+        unit = render_research_service(ROOT, paths, user='researcher-svc')
+        self.assertIn('--port ' + str(SANDBOX_PORT), unit)
+        self.assertIn('docs/telecom/p6/research_only.py', unit)
+        self.assertIn('User=researcher-svc', unit)
+        with self.assertRaises(ValueError):
+            render_research_service(ROOT, paths, user='bad; rm -rf /')
+
+    def test_existing_host_conflict_detection_on_drift(self):
+        with tempfile.TemporaryDirectory() as t:
+            installer = Installer({'RUNTIME_DIR': t}, platform_only=True)
+            installer.runner = mock.Mock()
+            installer.runner.run.return_value.returncode = 0
+            with tempfile.TemporaryDirectory() as unit_dir:
+                unit_path = Path(unit_dir) / 'telecom-research.service'
+                unit_path.write_text('drifted unit content')
+                with mock.patch('installer.install.Path', side_effect=lambda p: unit_path if str(p).endswith('telecom-research.service') else Path(p)), \
+                     mock.patch('builtins.print'):
+                    with self.assertRaisesRegex(ConfigError, 'differs; explicit review required'):
+                        installer.research_dashboard()
+
+    def test_safe_failure_and_recovery_sandbox_survives_partial_write(self):
+        from telecom.research_setup import ensure_sandbox
+        with tempfile.TemporaryDirectory() as t:
+            directory = Path(t) / 'telecom-research'
+            directory.mkdir(parents=True, mode=0o700)
+            (directory / 'runtime').mkdir(mode=0o700)
+            # Simulate an interrupted first attempt: policy file present, auth file missing.
+            (directory / 'execution-policy.json').write_text(json.dumps({}))
+            (directory / 'execution-policy.json').chmod(0o600)
+            paths, created = ensure_sandbox(directory, ROOT)
+            self.assertEqual(set(created), {'researcher', 'reviewer', 'operator'})
+            self.assertTrue((directory / 'identities.json').exists())
