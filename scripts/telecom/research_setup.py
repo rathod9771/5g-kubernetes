@@ -13,6 +13,10 @@ SANDBOX_ACTORS = {'researcher': ['researcher', 'builder', 'reader'],
                    'operator': ['operator', 'publisher', 'verifier', 'reader']}
 SANDBOX_TENANT = 'platform-research'
 SANDBOX_PORT = 5099
+# The single source of truth for the interpreter the systemd unit launches
+# with; the installer's pre-start dependency check imports this rather than
+# repeating the literal, so the two can never drift apart.
+RESEARCH_PYTHON = '/usr/bin/python3'
 
 
 def ensure_sandbox(directory, repo_root):
@@ -71,7 +75,7 @@ def render_research_service(repo_root, paths, user=None):
         return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
 
     launcher = Path(repo_root).resolve() / 'docs/telecom/p6/research_only.py'
-    command = ':/usr/bin/python3 ' + quote(str(launcher)) + ' --port ' + str(SANDBOX_PORT)
+    command = ':' + RESEARCH_PYTHON + ' ' + quote(str(launcher)) + ' --port ' + str(SANDBOX_PORT)
     lines = ['[Unit]', 'Description=5G telecom researcher dashboard (loopback-only, isolated sandbox)',
              'After=network-online.target', 'Wants=network-online.target', '',
              '[Service]', 'Type=simple', 'User=' + user,

@@ -38,7 +38,7 @@ NETWORK_ERRORS = ('connection reset by peer', 'connection refused', 'temporary f
 DETERMINISTIC_ERRORS = ('failed to parse', 'parse error', 'yaml parse', 'execution error',
                         'unknown flag', 'not found', 'unauthorized', 'forbidden', 'x509:',
                         'certificate verify failed', 'invalid value', 'strict decoding error',
-                        'unknown field')
+                        'unknown field', 'modulenotfounderror', 'importerror')
 
 
 def stderr_summary(stderr):
@@ -852,11 +852,20 @@ class Installer:
         auth/runtime/policy fixtures are provisioned once and never silently
         rewritten; see telecom.research_setup.ensure_sandbox.
         """
-        from telecom.research_setup import ensure_sandbox, render_research_service
+        from telecom.research_setup import ensure_sandbox, render_research_service, SANDBOX_PORT, RESEARCH_PYTHON
         paths, created = ensure_sandbox(self.directory / 'telecom-research', ROOT)
         for subject, token in created.items():
             print('Researcher dashboard: new bearer token for ' + subject +
                   ' (shown once; only its sha256 is retained): ' + token, flush=True)
+        # Fail fast and specifically on a missing runtime dependency (e.g. the
+        # 'ModuleNotFoundError: No module named flask' restart loop seen when
+        # host.sh's apt package list falls out of sync with what this service
+        # actually imports) instead of discovering it only via a later, vaguer
+        # HTTP readiness timeout. '-I' isolates this check from CWD/env
+        # sys.path pollution so it exercises exactly the stdlib/site-packages
+        # the configured interpreter would use.
+        self.runner.run([RESEARCH_PYTHON, '-I', '-c', 'import flask, yaml'],
+                        context='researcher dashboard runtime dependency check')
         unit = render_research_service(ROOT, paths)
         path = Path('/etc/systemd/system/telecom-research.service')
         active = self.runner.run(['systemctl', 'is-active', '--quiet', 'telecom-research'], check=False).returncode == 0
@@ -867,11 +876,27 @@ class Installer:
                 raise ConfigError('Cannot verify running researcher dashboard configuration; explicit reconciliation required') from None
             if installed != unit:
                 raise ConfigError('Running researcher dashboard configuration differs; explicit review required before reinstalling')
-            return
-        self.runner.run(['sudo', 'tee', str(path)], data=unit.encode())
-        self.runner.run(['sudo', 'systemctl', 'daemon-reload'])
-        self.runner.run(['sudo', 'systemctl', 'enable', '--now', 'telecom-research.service'])
-        self.runner.run(['systemctl', 'is-active', '--quiet', 'telecom-research.service'])
+        else:
+            self.runner.run(['sudo', 'tee', str(path)], data=unit.encode())
+            self.runner.run(['sudo', 'systemctl', 'daemon-reload'])
+            self.runner.run(['sudo', 'systemctl', 'enable', '--now', 'telecom-research.service'])
+        # systemd marks a Type=simple unit "active" the instant the process is
+        # forked, before it has even reached the import above -- a fast crash
+        # (exactly this bug) can race past a single is-active check. Only an
+        # actual loopback HTTP response proves the dashboard is really serving.
+        import urllib.request
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen('http://127.0.0.1:' + str(SANDBOX_PORT) + '/', timeout=5) as response:
+                    if response.status == 200:
+                        break
+            except OSError:
+                pass
+            time.sleep(2)
+        else:
+            raise ConfigError('Researcher dashboard readiness timeout; inspect `systemctl status telecom-research` '
+                              'and `journalctl -u telecom-research`')
 
     def run(self):
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)

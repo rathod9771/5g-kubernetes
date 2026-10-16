@@ -1166,6 +1166,76 @@ class PlatformOnlyInstallerTests(unittest.TestCase):
                     with self.assertRaisesRegex(ConfigError, 'differs; explicit review required'):
                         installer.research_dashboard()
 
+    def test_research_dashboard_fails_fast_on_missing_dependency_before_touching_systemd(self):
+        # The Dell restart loop (ModuleNotFoundError: No module named 'flask')
+        # must now be caught immediately, using a real subprocess + the real
+        # Runner, before any systemd unit is written or started.
+        from installer.install import Runner
+        with tempfile.TemporaryDirectory() as t:
+            fake_python = Path(t) / 'fake-python3'
+            fake_python.write_text('#!/bin/sh\n'
+                                   'echo "Traceback (most recent call last):" >&2\n'
+                                   '''echo "ModuleNotFoundError: No module named 'flask'" >&2\n'''
+                                   'exit 1\n')
+            fake_python.chmod(0o700)
+            installer = Installer({'RUNTIME_DIR': t}, platform_only=True)
+            installer.runner = Runner()
+            with mock.patch('telecom.research_setup.RESEARCH_PYTHON', str(fake_python)), \
+                 mock.patch('builtins.print'):
+                with self.assertRaisesRegex(ConfigError, 'dependency check') as caught:
+                    installer.research_dashboard()
+            # The classifier deliberately never echoes raw subprocess stderr
+            # (consistent with every other Runner.run() caller); it surfaces
+            # only the matched, non-sensitive keyword.
+            self.assertIn('modulenotfounderror', str(caught.exception))
+
+    def test_research_dashboard_requires_real_http_response_not_just_systemd_active(self):
+        # systemd marks Type=simple "active" the instant the process forks --
+        # a near-instant crash can race past that single check. A service
+        # that is "active" but never actually answers HTTP must still fail.
+        with tempfile.TemporaryDirectory() as t:
+            installer = Installer({'RUNTIME_DIR': t}, platform_only=True)
+            installer.runner = mock.Mock()
+            installer.runner.run.return_value.returncode = 1  # not already active -> fresh-start path
+            with mock.patch('builtins.print'), \
+                 mock.patch('urllib.request.urlopen', side_effect=OSError('connection refused')), \
+                 mock.patch('installer.install.time.sleep'), \
+                 mock.patch('installer.install.time.monotonic', side_effect=[0, 100]):
+                with self.assertRaisesRegex(ConfigError, 'readiness timeout'):
+                    installer.research_dashboard()
+
+    def test_research_dashboard_ready_only_after_real_http_200(self):
+        from telecom.research_setup import SANDBOX_PORT
+        with tempfile.TemporaryDirectory() as t:
+            installer = Installer({'RUNTIME_DIR': t}, platform_only=True)
+            installer.runner = mock.Mock()
+            installer.runner.run.return_value.returncode = 1  # not already active -> fresh-start path
+            response = mock.MagicMock(); response.__enter__.return_value.status = 200
+            with mock.patch('builtins.print'), \
+                 mock.patch('urllib.request.urlopen', return_value=response) as urlopen, \
+                 mock.patch('installer.install.time.monotonic', return_value=0):
+                installer.research_dashboard()  # must not raise
+            url = urlopen.call_args.args[0]
+            self.assertEqual(url, 'http://127.0.0.1:' + str(SANDBOX_PORT) + '/')
+
+    def test_research_dashboard_and_unit_share_one_interpreter_constant(self):
+        # Point 2: the pre-start dependency check and the systemd ExecStart
+        # line must be provably the same interpreter, not two literals that
+        # could silently drift apart.
+        source = (ROOT / 'scripts/installer/install.py').read_text()
+        self.assertIn('RESEARCH_PYTHON', source)
+        self.assertNotIn("'/usr/bin/python3'", source)
+        from telecom.research_setup import render_research_service, RESEARCH_PYTHON
+        paths = {'TELECOM_AUTH_FILE': '/private/identities.json', 'TELECOM_RUNTIME_DIR': '/private/runtime',
+                  'TELECOM_WORKSPACE': str(ROOT), 'TELECOM_EXECUTION_POLICY': '/private/policy.json', 'HELM_BIN': 'helm'}
+        unit = render_research_service(ROOT, paths, user='researcher-svc')
+        self.assertIn(':' + RESEARCH_PYTHON + ' ', unit)
+
+    def test_host_sh_installs_flask_for_the_researcher_dashboard(self):
+        source = (ROOT / 'scripts/installer/host.sh').read_text()
+        self.assertIn('python3-flask', source)
+        self.assertIn('python3-yaml', source)
+
     def test_safe_failure_and_recovery_sandbox_survives_partial_write(self):
         from telecom.research_setup import ensure_sandbox
         with tempfile.TemporaryDirectory() as t:

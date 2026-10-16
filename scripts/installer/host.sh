@@ -13,7 +13,7 @@ fi
 [[ "$(uname -m)" == x86_64 ]] || { echo 'ERROR: submission bootstrap requires amd64.' >&2; exit 1; }
 sudo -v
 sudo apt-get update
-sudo apt-get install -y --no-upgrade ca-certificates curl gnupg git python3 python3-yaml python3-venv \
+sudo apt-get install -y --no-upgrade ca-certificates curl gnupg git python3 python3-yaml python3-flask python3-venv \
   python3-pip open-iscsi nfs-common conntrack socat iptables iproute2 containerd
 K8S_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kubernetes"])' "$REPO_ROOT/config/reference-versions.json")"
 HELM_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["helm"])' "$REPO_ROOT/config/reference-versions.json")"
