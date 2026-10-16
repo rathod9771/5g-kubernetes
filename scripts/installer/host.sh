@@ -44,13 +44,17 @@ if [[ "$current" != "v${HELM_VERSION}"* ]]; then
   tar -xzf "$archive/helm.tar.gz" -C "$archive" linux-amd64/helm
   sudo install -m 0755 "$archive/linux-amd64/helm" /usr/local/bin/helm
 fi
-# Preserve an existing runtime configuration. A new host receives systemd cgroups.
-if [[ ! -e /etc/kubernetes/admin.conf ]]; then
-  containerd config default | sed 's/SystemdCgroup = false/SystemdCgroup = true/' \
-    | sudo tee /etc/containerd/config.toml >/dev/null
-fi
+# Reconcile containerd's own configuration, independent of whether a
+# Kubernetes cluster has been bootstrapped yet (admin.conf is not a reliable
+# proxy for "fresh containerd install" on a host that already runs Docker/
+# other containerd-managed workloads). Never silently replace an existing,
+# possibly hand-customized /etc/containerd/config.toml.
+reconcile_result="$(bash "$REPO_ROOT/scripts/installer/containerd_config.sh")"
 sudo systemctl enable --now containerd iscsid kubelet
-if [[ ! -e /etc/kubernetes/admin.conf ]]; then
+if [[ "$reconcile_result" == changed ]]; then
+  if sudo ctr --namespace k8s.io containers list -q 2>/dev/null | grep -q .; then
+    echo 'WARNING: restarting containerd to apply the newly generated configuration; existing containerd-managed containers may be briefly interrupted.' >&2
+  fi
   sudo systemctl restart containerd
 fi
 # Match existing single-node kubeadm prerequisites without globally disabling IPv6.

@@ -379,7 +379,17 @@ def load_config(root=ROOT, environ=None, home=None, network=False, require=(), q
         if cfg['POD_CIDR'] != DEFAULTS['POD_CIDR']:
             raise ConfigError('The bundled Flannel installation supports only the canonical POD_CIDR; custom CNI rendering is deferred')
         if cfg['OSM_KUBECONFIG_PATH'] != cfg['KUBECONFIG_PATH'] and not Path(cfg['OSM_KUBECONFIG_PATH']).is_file():
-            raise ConfigError('A separate OSM_KUBECONFIG_PATH must already exist')
+            # A fresh single-node install never has a pre-existing separate workload
+            # kubeconfig -- Kubernetes itself does not exist yet, so nothing can have
+            # created it. Leaving OSM_KUBECONFIG_PATH blank in global.env (the
+            # documented default) makes it equal KUBECONFIG_PATH and skips this
+            # check entirely; that is the correct setting unless you are
+            # deliberately registering an already-reachable, separate workload
+            # cluster distinct from the one this installer bootstraps.
+            raise ConfigError('OSM_KUBECONFIG_PATH is set to a path that does not exist and differs from '
+                              'KUBECONFIG_PATH. For a single-node install, leave OSM_KUBECONFIG_PATH blank in '
+                              'global.env so it reuses KUBECONFIG_PATH. Only set it explicitly when pointing at '
+                              'an already-reachable, separate workload cluster kubeconfig that already exists.')
         for field in ['GRAFANA_ADMIN_PASSWORD', 'RANCHER_BOOTSTRAP_PASSWORD']:
             if not cfg[field]:
                 raise ConfigError('Missing required ' + field)

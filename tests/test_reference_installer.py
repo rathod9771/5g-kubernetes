@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from installer.reference import versions, osm_values, api_ingress, adapt_osm_chart
 from installer.private_input import private_archive, import_decision, restore_command
 from installer.install import Runner, Installer, resume_config, preflight
-from runtime_config import ConfigError
+from runtime_config import ConfigError, load_config
 from osm_packages import safe_chart_inputs, sha256, PackageError
 from scenario_registry import load_registry, select_scenarios, dashboard_scenarios
 
@@ -1137,3 +1137,265 @@ class PlatformOnlyInstallerTests(unittest.TestCase):
             paths, created = ensure_sandbox(directory, ROOT)
             self.assertEqual(set(created), {'researcher', 'reviewer', 'operator'})
             self.assertTrue((directory / 'identities.json').exists())
+
+
+class KubeconfigPrerequisiteTests(unittest.TestCase):
+    """install.py's main() always calls load_config(require=('install','osm')).
+
+    The 'kubernetes' require set (KUBECONFIG_PATH and OSM_KUBECONFIG_PATH must
+    both already be regular files) is a *different* consumer (runtime_render.py
+    --check-installed / init-state) and is never exercised by the installer
+    itself -- confirmed by reading install.py's one load_config() call site.
+    """
+
+    def credentials(self, **overrides):
+        base = {'OSM_HOST': 'https://gui.example.invalid:30843', 'OSM_USER': 'admin',
+                'OSM_PASSWORD': 'offline-test-only-not-a-real-secret',
+                'OSM_PROJECT': 'admin', 'GRAFANA_ADMIN_PASSWORD': 'offline-test-only-grafana',
+                'RANCHER_BOOTSTRAP_PASSWORD': 'offline-test-only-rancher'}
+        base.update(overrides)
+        return base
+
+    def test_fresh_host_no_kubeconfig_blank_osm_kubeconfig_path_succeeds(self):
+        # Point 1: a genuinely fresh host has neither file; OSM_KUBECONFIG_PATH
+        # left blank (the documented default) must not require either to exist.
+        with tempfile.TemporaryDirectory() as home:
+            cfg = load_config(ROOT, environ=self.credentials(), home=home, require=('install', 'osm'))
+            self.assertEqual(cfg['OSM_KUBECONFIG_PATH'], cfg['KUBECONFIG_PATH'])
+            self.assertFalse(Path(cfg['KUBECONFIG_PATH']).exists())
+
+    def test_existing_valid_cluster_kubeconfig_reused(self):
+        # Point 2: an existing, already-created KUBECONFIG_PATH file, with
+        # OSM_KUBECONFIG_PATH left blank, is reused without any extra requirement.
+        with tempfile.TemporaryDirectory() as home:
+            kube = Path(home) / '.kube'; kube.mkdir(parents=True)
+            (kube / 'config').write_text('apiVersion: v1\nkind: Config\n')
+            cfg = load_config(ROOT, environ=self.credentials(), home=home, require=('install', 'osm'))
+            self.assertEqual(cfg['OSM_KUBECONFIG_PATH'], cfg['KUBECONFIG_PATH'])
+            self.assertTrue(Path(cfg['KUBECONFIG_PATH']).is_file())
+
+    def test_existing_invalid_kubeconfig_path_is_a_directory(self):
+        # Point 3: a KUBECONFIG_PATH that exists but is not a regular file must
+        # not be silently accepted downstream (install.py's own kubernetes()
+        # stage, unchanged by this fix, still requires a real reachable file).
+        with tempfile.TemporaryDirectory() as home:
+            kube = Path(home) / '.kube'; kube.mkdir(parents=True)
+            (kube / 'config').mkdir()  # a directory, not a kubeconfig file
+            cfg = load_config(ROOT, environ=self.credentials(), home=home, require=('install', 'osm'))
+            # load_config() itself only gates file existence under 'install' when
+            # OSM_KUBECONFIG_PATH diverges; a directory masquerading as
+            # KUBECONFIG_PATH is caught later, by Installer.kubernetes()'s own
+            # reachability check -- confirmed unchanged below.
+            installer = Installer({'RUNTIME_DIR': tempfile.mkdtemp(), 'KUBECONFIG_PATH': cfg['KUBECONFIG_PATH']})
+            installer.kubectl = mock.Mock(return_value=mock.Mock(returncode=1))
+            installer.runner = mock.Mock()
+            with self.assertRaisesRegex(ConfigError, 'do not overwrite'):
+                installer.kubernetes()
+            installer.runner.run.assert_not_called()
+
+    def test_separate_osm_kubeconfig_requirement_fresh_host_rejected_with_actionable_message(self):
+        # Point 4: deliberately diverging OSM_KUBECONFIG_PATH from
+        # KUBECONFIG_PATH, pointing at a file that does not exist, must still be
+        # rejected -- this is the exact Dell failure, and the fix must not make
+        # it silently pass. Only the message changed to be actionable.
+        with tempfile.TemporaryDirectory() as home:
+            osm_kubeconfig = str(Path(home) / 'osm-kubeconfig.yaml')
+            with self.assertRaisesRegex(ConfigError, 'leave OSM_KUBECONFIG_PATH blank') as caught:
+                load_config(ROOT, environ=self.credentials(OSM_KUBECONFIG_PATH=osm_kubeconfig),
+                           home=home, require=('install', 'osm'))
+            self.assertNotIn('offline-test-only', str(caught.exception))
+
+    def test_separate_osm_kubeconfig_requirement_existing_cluster_reuse_succeeds(self):
+        # Point 4 (continued) / point 2: an operator deliberately registering an
+        # already-reachable, separate workload cluster must still succeed once
+        # that kubeconfig genuinely exists -- existing-cluster reuse (B) keeps
+        # working exactly as before.
+        with tempfile.TemporaryDirectory() as home:
+            kube = Path(home) / '.kube'; kube.mkdir(parents=True)
+            (kube / 'config').write_text('apiVersion: v1\nkind: Config\n')
+            osm_kubeconfig = Path(home) / 'osm-kubeconfig.yaml'
+            osm_kubeconfig.write_text('apiVersion: v1\nkind: Config\n')
+            cfg = load_config(ROOT, environ=self.credentials(OSM_KUBECONFIG_PATH=str(osm_kubeconfig)),
+                             home=home, require=('install', 'osm'))
+            self.assertNotEqual(cfg['OSM_KUBECONFIG_PATH'], cfg['KUBECONFIG_PATH'])
+            self.assertTrue(Path(cfg['OSM_KUBECONFIG_PATH']).is_file())
+
+    def test_post_bootstrap_registration_uses_workload_kubeconfig_key(self):
+        # Point 5: once Kubernetes exists, registration()/osm() address the
+        # workload cluster through OSM_KUBECONFIG_PATH (unchanged plumbing).
+        with tempfile.TemporaryDirectory() as t:
+            installer = Installer({'RUNTIME_DIR': t, 'KUBECONFIG_PATH': '/a', 'OSM_KUBECONFIG_PATH': '/b'})
+            installer.runner = mock.Mock()
+            installer.kubectl('config', 'view', workload=True)
+            args = installer.runner.run.call_args.args[0]
+            self.assertEqual(args[:3], ['kubectl', '--kubeconfig', '/b'])
+            installer.kubectl('get', 'nodes')
+            args = installer.runner.run.call_args.args[0]
+            self.assertEqual(args[:3], ['kubectl', '--kubeconfig', '/a'])
+
+    def test_no_credential_validation_bypass_default_osm_password_still_rejected(self):
+        # Point 6: this fix only changed a diagnostic message; it must not
+        # weaken any credential check. Default/placeholder secrets are still
+        # rejected exactly as before.
+        with tempfile.TemporaryDirectory() as home:
+            with self.assertRaisesRegex(ConfigError, 'non-default credential'):
+                load_config(ROOT, environ=self.credentials(OSM_PASSWORD='admin123'),
+                           home=home, require=('install', 'osm'))
+            with self.assertRaisesRegex(ConfigError, 'non-default credential'):
+                load_config(ROOT, environ=self.credentials(GRAFANA_ADMIN_PASSWORD='changeme'),
+                           home=home, require=('install', 'osm'))
+
+    def test_existing_full_installer_behavior_unchanged(self):
+        # Point 7: the real-world full-installer bootstrap order test and the
+        # dependency-order test (both pre-existing, unmodified) still pass;
+        # exercised by running this module's own test suite (see report).
+        # Here: re-confirm main()'s require tuple is unchanged.
+        source = (ROOT / 'scripts/installer/install.py').read_text()
+        self.assertIn("require=('install', 'osm')", source)
+
+    def test_platform_only_installation_behavior_same_kubeconfig_rule(self):
+        # Point 8: platform-only uses the identical load_config()/preflight()
+        # call sequence (require=('install','osm') regardless of --platform-only),
+        # so this fix applies identically to both installation modes.
+        with tempfile.TemporaryDirectory() as home:
+            cfg = load_config(ROOT, environ=self.credentials(), home=home, require=('install', 'osm'))
+            self.assertEqual(cfg['OSM_KUBECONFIG_PATH'], cfg['KUBECONFIG_PATH'])
+            # No real systemctl/host state: isolate from whatever happens to be
+            # active on the machine actually running this test.
+            with mock.patch('subprocess.run') as run:
+                run.return_value.returncode = 1
+                preflight(cfg, platform_only=True)  # must not raise
+
+
+class ContainerdReconciliationTests(unittest.TestCase):
+    """scripts/installer/containerd_config.sh (invoked by host.sh).
+
+    host.sh itself is "executed only by install.sh on the target Ubuntu host,
+    never by static tests" (its own header comment) because it apt-installs
+    real packages and manages real systemd units. containerd_config.sh is a
+    separate, path-parameterized script carved out specifically so the
+    config-reconciliation *logic* can be exercised here with stub `containerd`/
+    `sudo` binaries and a throwaway config path, with zero real host effects.
+    """
+
+    SCRIPT = ROOT / 'scripts/installer/containerd_config.sh'
+
+    def _stub_bin(self, root, version='2.2.1', default_cfg=None):
+        default_cfg = default_cfg or (
+            "version = 3\n"
+            "[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]\n"
+            "  SystemdCgroup = false\n"
+        )
+        bindir = root / 'bin'; bindir.mkdir()
+        (bindir / 'sudo').write_text('#!/bin/sh\nexec "$@"\n')
+        containerd_script = (
+            '#!/bin/sh\n'
+            'if [ "$1" = "--version" ]; then\n'
+            f'  echo "containerd github.com/containerd/containerd/v2 v{version} abc123"\n'
+            '  exit 0\n'
+            'fi\n'
+            'if [ "$1" = config ] && [ "$2" = default ]; then\n'
+            f'  cat <<\'CFG\'\n{default_cfg}CFG\n'
+            '  exit 0\n'
+            'fi\n'
+            'exit 1\n'
+        )
+        (bindir / 'containerd').write_text(containerd_script)
+        for name in ('sudo', 'containerd'):
+            (bindir / name).chmod(0o700)
+        return {**os.environ, 'PATH': str(bindir) + ':' + os.environ['PATH']}
+
+    def _run(self, config_path, env):
+        env = {**env, 'CONTAINERD_CONFIG_PATH': str(config_path)}
+        return subprocess.run(['bash', str(self.SCRIPT)], env=env, capture_output=True, text=True, timeout=10)
+
+    def test_fresh_host_writes_compatible_default(self):
+        # No prior config: behavior is unchanged from before this fix -- a
+        # CRI-compatible default (SystemdCgroup=true) is generated.
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t); env = self._stub_bin(root)
+            config_path = root / 'config.toml'
+            result = self._run(config_path, env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), 'changed')
+            self.assertIn('SystemdCgroup = true', config_path.read_text())
+
+    def test_existing_compatible_config_is_preserved_untouched(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t); env = self._stub_bin(root)
+            config_path = root / 'config.toml'
+            original = ("version = 3\ndisabled_plugins = []\n"
+                        "[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]\n"
+                        "  SystemdCgroup = true\n  CustomOperatorSetting = \"keep-me\"\n")
+            config_path.write_text(original)
+            result = self._run(config_path, env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), 'preserved')
+            self.assertEqual(config_path.read_text(), original)
+
+    def test_existing_config_with_cri_disabled_fails_without_overwriting(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t); env = self._stub_bin(root)
+            config_path = root / 'config.toml'
+            original = 'version = 3\ndisabled_plugins = ["io.containerd.cri.v1.runtime"]\n'
+            config_path.write_text(original)
+            result = self._run(config_path, env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('disabled_plugins', result.stderr)
+            self.assertIn('will not re-enable it automatically', result.stderr)
+            self.assertEqual(config_path.read_text(), original)
+
+    def test_existing_config_without_systemd_cgroup_fails_without_overwriting(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t); env = self._stub_bin(root)
+            config_path = root / 'config.toml'
+            original = ("version = 3\ndisabled_plugins = []\n"
+                        "[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]\n"
+                        "  SystemdCgroup = false\n  CustomOperatorSetting = \"keep-me\"\n")
+            config_path.write_text(original)
+            result = self._run(config_path, env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('SystemdCgroup', result.stderr)
+            self.assertIn('will not silently overwrite', result.stderr)
+            self.assertEqual(config_path.read_text(), original)
+
+    def test_containerd_2x_is_supported(self):
+        # Confirms the Dell's containerd 2.2.1 clears the CRI v1 minimum
+        # version floor and is handled identically to the 1.x branch.
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t); env = self._stub_bin(root, version='2.2.1')
+            result = self._run(root / 'config.toml', env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), 'changed')
+
+    def test_containerd_older_than_minimum_fails_with_actionable_message(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t); env = self._stub_bin(root, version='1.5.9')
+            result = self._run(root / 'config.toml', env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('1.5.9', result.stderr)
+            self.assertIn('minimum', result.stderr)
+            self.assertFalse((root / 'config.toml').exists())
+
+    def test_unparsable_containerd_version_fails_with_actionable_message(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t); bindir = root / 'bin'; bindir.mkdir()
+            (bindir / 'sudo').write_text('#!/bin/sh\nexec "$@"\n'); (bindir / 'sudo').chmod(0o700)
+            (bindir / 'containerd').write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then echo "garbage"; exit 0; fi\nexit 1\n')
+            (bindir / 'containerd').chmod(0o700)
+            env = {**os.environ, 'PATH': str(bindir) + ':' + os.environ['PATH']}
+            result = self._run(root / 'config.toml', env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('could not determine the containerd version', result.stderr)
+            self.assertFalse((root / 'config.toml').exists())
+
+    def test_host_sh_invokes_the_reconciliation_script_and_skips_needless_restart(self):
+        # Static check (no execution): host.sh must delegate to
+        # containerd_config.sh and must only restart containerd when that
+        # script reports a change, never unconditionally (point 11 -- avoid
+        # interrupting already-running containerd-managed workloads).
+        source = (ROOT / 'scripts/installer/host.sh').read_text()
+        self.assertIn('containerd_config.sh', source)
+        self.assertIn('reconcile_result', source)
+        self.assertIn('== changed', source)
+        self.assertNotIn('containerd config default | sed', source)

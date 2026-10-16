@@ -469,6 +469,31 @@ curl -s http://127.0.0.1:5099/api/telecom/workloads                   # expect 4
   --platform-only`; every stage is idempotent and safe to repeat.
 - **`--platform-only` rejects `--srsran-image-archive`** — the two are mutually
   exclusive by design; platform-only never builds or imports a srsRAN image.
+- **`OSM_KUBECONFIG_PATH is set to a path that does not exist and differs from
+  KUBECONFIG_PATH`** — on a fresh host, neither file exists yet. Leave
+  `OSM_KUBECONFIG_PATH` blank in `global.env` (the documented default); it then
+  reuses `KUBECONFIG_PATH` once the `Kubernetes` stage creates it. This commonly
+  happens when `global.env` was copied from another machine that had already
+  manually provisioned a separate workload kubeconfig. Only set it explicitly
+  when you are deliberately pointing at an already-reachable, separate
+  workload cluster.
+- **OSM `osm()` stage fails authenticating with `OSM_PASSWORD` on a brand-new
+  install** — on first boot the OSM admin account still has its upstream
+  initial password, not yet rotated to your `OSM_PASSWORD`. Set
+  `OSM_BOOTSTRAP_PASSWORD` (see `config/global.env.example`) to that genuine
+  upstream initial credential, sourced from ETSI OSM's own official Release
+  NINETEEN documentation — never guessed or invented. The installer then
+  rotates it to `OSM_PASSWORD` automatically and will not retry with a wrong
+  bootstrap password.
+- **Host preparation fails with `ERROR: ... already exists and explicitly
+  disables the Kubernetes CRI plugin`, `... does not set SystemdCgroup = true`,
+  or an unsupported/undetectable containerd version** — the host already has
+  a `/etc/containerd/config.toml` from before this installer ran (e.g. from a
+  prior Docker/containerd setup), and it is not safe to overwrite
+  automatically. The installer never replaces an existing containerd
+  configuration silently. Either edit that file to satisfy the stated
+  requirement, or remove it to let the installer generate a compatible
+  default; containerd 1.6+ (including 2.x) is supported.
 
 ### 9. Safe uninstall procedure
 
