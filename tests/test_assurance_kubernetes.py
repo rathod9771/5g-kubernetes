@@ -75,7 +75,21 @@ class KubernetesRunnerTests(unittest.TestCase):
         r=self.reader(code,timeout=.25)
         with self.assertRaises(KubernetesReadError):self.call(r)
         child=Path('/proc/'+marker.read_text()+'/stat')
-        self.assertTrue(not child.exists() or child.read_text().split()[2]=='Z')
+        # Cleanup already sent SIGKILL to this orphaned, re-sessioned descendant
+        # (see kubernetes.py's tracked-descendant loop), but signal delivery and
+        # the kernel's zombie/reap transition are asynchronous: a transient
+        # runnable/sleeping state, or the /proc entry disappearing entirely
+        # between reads (ENOENT or, during teardown, ESRCH), are both expected
+        # scheduling artifacts, not evidence of a leaked process. Poll with a
+        # short bound instead of one snapshot; still-alive after the bound is
+        # the only outcome that indicates a real cleanup failure.
+        deadline=time.monotonic()+2;state='unknown'
+        while time.monotonic()<deadline:
+            try:state=child.read_text().split()[2]
+            except (FileNotFoundError,ProcessLookupError):state=None
+            if state in (None,'Z'):break
+            time.sleep(.01)
+        self.assertIn(state,(None,'Z'))
 
 class KubernetesEvidenceTests(unittest.TestCase):
     def test_roles_restarts_and_labels(self):

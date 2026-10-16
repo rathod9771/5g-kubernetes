@@ -37,14 +37,24 @@ class ContractTests(unittest.TestCase):
         m=manifest();m['roles']=['x-experiment'];validate(m)
 
     def test_all_source_types(self):
-        sources=[{'kind':'github','url':'https://github.com/example/nf','commit':'a'*40},
-                 {'kind':'local-git','path':str(ROOT),'commit':'c63aa1c002e0ca0bb1b4100ba3b0457e531a734c'},
-                 {'kind':'helm','url':'https://charts.example.org/nf.tgz','digest':'sha256:'+'a'*64}]
-        for source in sources:
-            m=manifest();m['source']=source;validate(m)
-        evidence=source_evidence(sources[1],ROOT)
-        self.assertEqual(evidence['commit'],sources[1]['commit']);self.assertFalse(evidence['working_tree_included'])
-        self.assertEqual(source_evidence(sources[0],ROOT)['fetch'],'NOT_RUN')
+        # A disposable local repo, not the project's own history: this must pass
+        # identically under a shallow CI checkout, which has no ancestor objects.
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace=Path(tmp);repo=workspace/'repo';repo.mkdir()
+            subprocess.run(['git','init','--template=',str(repo)],check=True,capture_output=True)
+            (repo/'file.txt').write_text('fixture')
+            subprocess.run(['git','-C',str(repo),'add','.'],check=True,capture_output=True)
+            subprocess.run(['git','-C',str(repo),'-c','user.name=Offline','-c','user.email=offline@example.invalid',
+                             'commit','-m','fixture'],check=True,capture_output=True)
+            sha=subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD']).decode().strip()
+            sources=[{'kind':'github','url':'https://github.com/example/nf','commit':'a'*40},
+                     {'kind':'local-git','path':'repo','commit':sha},
+                     {'kind':'helm','url':'https://charts.example.org/nf.tgz','digest':'sha256:'+'a'*64}]
+            for source in sources:
+                m=manifest();m['source']=source;validate(m)
+            evidence=source_evidence(sources[1],workspace)
+            self.assertEqual(evidence['commit'],sources[1]['commit']);self.assertFalse(evidence['working_tree_included'])
+            self.assertEqual(source_evidence(sources[0],workspace)['fetch'],'NOT_RUN')
 
     def test_invalid_capabilities(self):
         changes=[('schema_version',2),('roles',['unknown']),('plmn','001'),('tac',True),
