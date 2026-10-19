@@ -1900,6 +1900,117 @@ class SubchartScopedAdaptationTests(unittest.TestCase):
                         vendored_dependencies=vendored)
 
 
+class RealFree5gcMongoDBRegistryTests(unittest.TestCase):
+    """Registry-metadata regression guard for the first real, source-bound
+    free5GC entries (github.com/free5gc/free5gc-helm, commit
+    d22485f5a95fd6bb97ec1252f0933ef5da17f96d, chart charts/free5gc v1.1.7).
+    Never embeds real upstream file bytes -- the actual chart was fetched
+    directly from the public upstream repository and independently
+    verified byte-for-byte against the supplied hash inventory during
+    review, but nothing from it is vendored into this repo. This class
+    only guards the REVIEWED REGISTRY's own structure, hashes and commit
+    binding, plus (via synthetic, non-upstream fixtures) that
+    `version: None` matches ONLY a dependency declaration that truly
+    omits the version field, never a wildcard."""
+
+    KEY = ('free5gc', '1.1.7', 'd22485f5a95fd6bb97ec1252f0933ef5da17f96d')
+    ARCHIVE_SHA = 'd71d7c67505a6f8fcfe4808e89966a5b99f649f0b11318653e993beacdaa6998'
+    NRF_CHART_SHA = '4f6cb9e59632688957e9aca5c878a5dba1afa80d729dd0064086bbfd7c555983'
+    UDR_CHART_SHA = 'dc93bd47fa07d8a4a816d3aa2e543e2ffeaf894c41e7a249ff7e079fe98e3727'
+    WEBUI_CHART_SHA = 'a7c56c5b0816d411db832a63bd03e2023d86ee4570948e00be7fd8600c1fb590'
+
+    def test_removals_entries_exact_paths_and_hashes(self):
+        entry = chart_adapters.REMOVALS[self.KEY]
+        self.assertEqual(set(entry.keys()), {
+            'charts/free5gc-nrf/charts/mongodb-15.6.0.tgz',
+            'charts/free5gc-udr/charts/mongodb-15.6.0.tgz',
+            'charts/free5gc-webui/charts/mongodb-15.6.0.tgz',
+        })
+        for path, e in entry.items():
+            self.assertEqual(e['original_sha256'], self.ARCHIVE_SHA)
+            self.assertTrue(e['reason'])
+
+    def test_dependency_removals_entries_exact_targets_hashes_and_version_none(self):
+        entries = chart_adapters.DEPENDENCY_REMOVALS[self.KEY]
+        by_target = {e['target_path']: e for e in entries}
+        self.assertEqual(set(by_target), {
+            'charts/free5gc-nrf/Chart.yaml',
+            'charts/free5gc-udr/Chart.yaml',
+            'charts/free5gc-webui/Chart.yaml',
+        })
+        expected_sha = {
+            'charts/free5gc-nrf/Chart.yaml': self.NRF_CHART_SHA,
+            'charts/free5gc-udr/Chart.yaml': self.UDR_CHART_SHA,
+            'charts/free5gc-webui/Chart.yaml': self.WEBUI_CHART_SHA,
+        }
+        for target_path, e in by_target.items():
+            self.assertEqual(e['original_sha256'], expected_sha[target_path])
+            self.assertEqual(len(e['removals']), 1)
+            self.assertEqual(e['removals'][0]['name'], 'mongodb')
+            self.assertIsNone(e['removals'][0]['version'])
+            self.assertTrue(e['removals'][0]['reason'])
+
+    def test_real_target_paths_pass_bounded_validation(self):
+        for target_path in ('charts/free5gc-nrf/Chart.yaml', 'charts/free5gc-udr/Chart.yaml',
+                             'charts/free5gc-webui/Chart.yaml'):
+            self.assertEqual(chart_adapters._validate_target_path(target_path), target_path)
+
+    def test_parent_mongodb_dependency_untouched(self):
+        """The PARENT chart's own top-level mongodb dependency
+        (condition: deployMongoDb) is a separate, already-provisioned
+        shared instance -- never targeted by either registry for this
+        chart identity."""
+        self.assertNotIn('Chart.yaml', chart_adapters.REMOVALS.get(self.KEY, {}))
+        dep_targets = {e['target_path'] for e in chart_adapters.DEPENDENCY_REMOVALS.get(self.KEY, [])}
+        self.assertNotIn('Chart.yaml', dep_targets)
+        self.assertNotIn('values.yaml', dep_targets)
+
+    def test_no_image_template_or_values_adaptation_registered(self):
+        """TLS, NF images, UPF and Helm hooks are unchanged this
+        milestone: no ADAPTERS (whole-file template substitution) and no
+        VALUES_OVERRIDES entry exists for this chart identity."""
+        self.assertNotIn(self.KEY, chart_adapters.ADAPTERS)
+        self.assertNotIn(self.KEY, chart_adapters.VALUES_OVERRIDES)
+
+    def test_version_none_matches_only_a_dependency_missing_the_version_field(self):
+        """Synthetic, non-upstream fixture: 'version': None is an exact
+        match for a dependency declaration that truly omits `version:`,
+        reproducing the real free5GC NF Chart.yaml shape structurally
+        without embedding any real upstream bytes."""
+        no_version = (b'apiVersion: v2\nname: synthetic-version-check\nversion: 0.0.1\n'
+                      b'dependencies:\n  - name: mongodb\n    condition: db.enabled\n')
+        key = ('synthetic-version-check', '0.0.1', 'c' * 40)
+        entry = {key: [{'target_path': 'Chart.yaml',
+                         'original_sha256': hashlib.sha256(no_version).hexdigest(),
+                         'removals': [{'name': 'mongodb', 'version': None, 'reason': 'x'}]}]}
+        manifest = {'schema_version': 2, 'source': {'kind': 'local-git', 'path': 'chart', 'commit': 'c' * 40}}
+        evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': 'c' * 40}
+        files = {'Chart.yaml': no_version}
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, entry, clear=True):
+            updated, provenance = chart_adapters.apply_dependency_removals(files, manifest, evidence)
+        self.assertEqual(yaml.safe_load(updated['Chart.yaml'])['dependencies'], [])
+        self.assertEqual(provenance, [{'target_path': 'Chart.yaml', 'name': 'mongodb', 'version': None,
+                                        'reason': 'x'}])
+
+    def test_version_none_does_not_match_a_dependency_that_declares_a_real_version(self):
+        """'version': None must never act as a wildcard: a dependency
+        entry that DOES declare an explicit version is not matched, and
+        the stale-registry-entry guard fires instead of silently
+        removing the wrong thing."""
+        with_version = (b'apiVersion: v2\nname: synthetic-version-check\nversion: 0.0.1\n'
+                        b'dependencies:\n  - name: mongodb\n    version: 15.6.0\n    condition: db.enabled\n')
+        key = ('synthetic-version-check', '0.0.1', 'c' * 40)
+        entry = {key: [{'target_path': 'Chart.yaml',
+                         'original_sha256': hashlib.sha256(with_version).hexdigest(),
+                         'removals': [{'name': 'mongodb', 'version': None, 'reason': 'x'}]}]}
+        manifest = {'schema_version': 2, 'source': {'kind': 'local-git', 'path': 'chart', 'commit': 'c' * 40}}
+        evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': 'c' * 40}
+        files = {'Chart.yaml': with_version}
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Dependency removal target not found'):
+                chart_adapters.apply_dependency_removals(files, manifest, evidence)
+
+
 class UnifiedAdaptationProvenanceTests(unittest.TestCase):
     """PHASE 3: package.prepare()'s unified adaptation_provenance record.
     Reuses the hook-adapter identity ('multi-nf', '0.1.0', '0'*40) from

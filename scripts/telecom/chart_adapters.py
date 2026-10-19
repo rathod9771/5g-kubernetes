@@ -178,6 +178,78 @@ REMOVALS = {
                       'dependencies") -- superseded by an independently provisioned instance.',
         },
     },
+    # REAL free5GC entry. Source: github.com/free5gc/free5gc-helm, commit
+    # d22485f5a95fd6bb97ec1252f0933ef5da17f96d, chart charts/free5gc v1.1.7
+    # (chart-relative paths below, i.e. relative to that chart's own root).
+    # Independently re-fetched directly from the public upstream repository
+    # at this exact pinned commit (same method as execution.acquire()'s
+    # github path: shallow fetch of the exact commit, rev-parse verified)
+    # and every byte-content SHA-256 below was independently recomputed and
+    # matches the supplied hash inventory exactly -- not taken on faith.
+    #
+    # KNOWN ACQUISITION BLOCKER (not fixed in this milestone -- execution.py
+    # is intentionally not touched here): execution.acquire()'s github path
+    # runs `git ls-tree -r <sha>` over the ENTIRE repository and rejects the
+    # whole acquisition with SUBMODULE_NOT_SUPPORTED if ANY submodule is
+    # present anywhere in the tree. This exact commit has one, at
+    # charts/free-ran-ue, entirely unrelated to charts/free5gc. So although
+    # the hashes below were independently verified (via a direct git fetch,
+    # not through acquire()), the production pipeline cannot currently
+    # acquire this commit end-to-end until that repo-wide check is scoped
+    # to the chart path being onboarded -- a separate, future change.
+    #
+    # All three NF subcharts vendor an IDENTICAL, byte-for-byte copy of the
+    # Bitnami mongodb-15.6.0 chart, packaged (.tgz), one level inside their
+    # own charts/ directory -- never inspected by this pipeline (Option B)
+    # and, per the confirmed Chart.yaml findings below, never actually
+    # instantiated under this chart's own default configuration: the
+    # parent chart (charts/free5gc/Chart.yaml) already provisions a SINGLE
+    # shared MongoDB instance of its own (condition: deployMongoDb, default
+    # true) that every NF's templates connect to via the common
+    # {{ $.Values.mongodb.service.name }}:{{ $.Values.mongodb.service.port }}
+    # URL -- confirmed directly in nrf-configmap.yaml/nrf-deployment.yaml,
+    # udr-configmap.yaml/udr-deployment.yaml and
+    # webui-configmap.yaml/webui-deployment.yaml. UDR and WebUI's own
+    # values.yaml already default db.enabled to false; the parent's own
+    # values.yaml additionally overrides free5gc-nrf.db.enabled to false
+    # (comment: "Disable the deployment of mongodb as an NRF subchart").
+    # So under this chart's documented default values, none of these three
+    # packaged archives are ever deployed -- removing them changes no
+    # runtime behavior, only unused vendored bytes.
+    ('free5gc', '1.1.7', 'd22485f5a95fd6bb97ec1252f0933ef5da17f96d'): {
+        'charts/free5gc-nrf/charts/mongodb-15.6.0.tgz': {
+            'original_sha256': 'd71d7c67505a6f8fcfe4808e89966a5b99f649f0b11318653e993beacdaa6998',
+            'reason': 'Redundant packaged MongoDB (Bitnami mongodb-15.6.0) dependency archive '
+                      'vendored inside the NRF subchart. The parent free5gc chart already '
+                      'provisions a single shared MongoDB instance (condition: deployMongoDb, '
+                      'default true) that nrf-configmap.yaml/nrf-deployment.yaml already connect '
+                      'to via the common mongodb.service.name/port values, and the parent '
+                      'values.yaml already overrides free5gc-nrf.db.enabled to false by default '
+                      '-- this archive is never instantiated under the chart\'s own default '
+                      'configuration.',
+        },
+        'charts/free5gc-udr/charts/mongodb-15.6.0.tgz': {
+            'original_sha256': 'd71d7c67505a6f8fcfe4808e89966a5b99f649f0b11318653e993beacdaa6998',
+            'reason': 'Redundant packaged MongoDB (Bitnami mongodb-15.6.0) dependency archive '
+                      'vendored inside the UDR subchart. The parent free5gc chart already '
+                      'provisions a single shared MongoDB instance (condition: deployMongoDb, '
+                      'default true) that udr-configmap.yaml/udr-deployment.yaml already connect '
+                      'to via the common mongodb.service.name/port values, and the UDR '
+                      'subchart\'s own values.yaml already defaults db.enabled to false -- this '
+                      'archive is never instantiated under the chart\'s own default configuration.',
+        },
+        'charts/free5gc-webui/charts/mongodb-15.6.0.tgz': {
+            'original_sha256': 'd71d7c67505a6f8fcfe4808e89966a5b99f649f0b11318653e993beacdaa6998',
+            'reason': 'Redundant packaged MongoDB (Bitnami mongodb-15.6.0) dependency archive '
+                      'vendored inside the WebUI subchart. The parent free5gc chart already '
+                      'provisions a single shared MongoDB instance (condition: deployMongoDb, '
+                      'default true) that webui-configmap.yaml/webui-deployment.yaml already '
+                      'connect to via the common mongodb.service.name/port values, and the '
+                      'WebUI subchart\'s own values.yaml already defaults db.enabled to false -- '
+                      'this archive is never instantiated under the chart\'s own default '
+                      'configuration.',
+        },
+    },
 }
 
 # Paths a removal may never target, regardless of registry content -- a
@@ -286,6 +358,53 @@ DEPENDENCY_REMOVALS = {
                            'dependency archive (see pipeline design report, "MongoDB '
                            'dependencies") -- superseded by an independently provisioned '
                            'instance; its vendored copy is removed by the paired REMOVALS entry.'},
+            ],
+        },
+    ],
+    # REAL free5GC entry, paired with the matching REMOVALS entry above --
+    # see that entry's comment for the full source/verification context
+    # (github.com/free5gc/free5gc-helm, commit
+    # d22485f5a95fd6bb97ec1252f0933ef5da17f96d, chart charts/free5gc v1.1.7).
+    # Each upstream NF Chart.yaml declares its mongodb dependency WITHOUT a
+    # `version:` key at all (confirmed directly against the fetched bytes,
+    # not assumed) -- 'version': None is therefore the exact, correct match
+    # for this dependency's real (name, version) identity, not a stand-in
+    # or placeholder. Removing it leaves each of these three Chart.yaml
+    # files with an empty `dependencies:` list, which is why this is safe
+    # with subcharts.py's own strict dependency-entry validation (that
+    # validation only inspects entries that are still present).
+    ('free5gc', '1.1.7', 'd22485f5a95fd6bb97ec1252f0933ef5da17f96d'): [
+        {
+            'target_path': 'charts/free5gc-nrf/Chart.yaml',
+            'original_sha256': '4f6cb9e59632688957e9aca5c878a5dba1afa80d729dd0064086bbfd7c555983',
+            'removals': [
+                {'name': 'mongodb', 'version': None,
+                 'reason': 'Redundant packaged MongoDB dependency declaration; see the paired '
+                           'REMOVALS entry for the full verified source/behavior rationale '
+                           '(parent-provisioned shared MongoDB, upstream default db.enabled=false '
+                           'for this NF).'},
+            ],
+        },
+        {
+            'target_path': 'charts/free5gc-udr/Chart.yaml',
+            'original_sha256': 'dc93bd47fa07d8a4a816d3aa2e543e2ffeaf894c41e7a249ff7e079fe98e3727',
+            'removals': [
+                {'name': 'mongodb', 'version': None,
+                 'reason': 'Redundant packaged MongoDB dependency declaration; see the paired '
+                           'REMOVALS entry for the full verified source/behavior rationale '
+                           '(parent-provisioned shared MongoDB, upstream default db.enabled=false '
+                           'for this NF).'},
+            ],
+        },
+        {
+            'target_path': 'charts/free5gc-webui/Chart.yaml',
+            'original_sha256': 'a7c56c5b0816d411db832a63bd03e2023d86ee4570948e00be7fd8600c1fb590',
+            'removals': [
+                {'name': 'mongodb', 'version': None,
+                 'reason': 'Redundant packaged MongoDB dependency declaration; see the paired '
+                           'REMOVALS entry for the full verified source/behavior rationale '
+                           '(parent-provisioned shared MongoDB, upstream default db.enabled=false '
+                           'for this NF).'},
             ],
         },
     ],
