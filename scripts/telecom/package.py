@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 import yaml
 from osm_packages import safe_chart_inputs, descriptors, validate_references, archive_bytes, json_bytes
-from . import chart_adapters
+from . import chart_adapters, subcharts
 from .contract import confined, digest, identity
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,12 +41,14 @@ def source_evidence(source, workspace):
 
 
 def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None, reviewed_inputs=None,
-            source_evidence=None):
+            source_evidence=None, vendored_dependencies=None):
     chart = confined(workspace, chart_path)
     if not chart.is_dir():
         raise ValueError('Local chart directory required for offline packaging')
     if reviewed_inputs is not None and manifest.get('schema_version') != 2:
         raise ValueError('Reviewed vendored chart inventory is only accepted for multi-image manifests')
+    if vendored_dependencies is not None and manifest.get('schema_version') != 2:
+        raise ValueError('Reviewed vendored dependency inventory is only accepted for multi-image manifests')
     files = {}; total = 0; entries = 0
     def capture(fd, prefix='', depth=0):
         nonlocal total, entries
@@ -80,7 +82,30 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
     # file set still passes through the exact same, unweakened checks below
     # as any organically authored template.
     files, adapted_files = chart_adapters.adapt(files, manifest, source_evidence)
-    safe_chart_inputs(files, reviewed=reviewed_inputs)
+    # Vendored Helm subchart entries (charts/<name>/...) are validated
+    # separately (exact per-file digest pin + dependency-relationship
+    # checks + the identical structural/content policy a top-level template
+    # already gets -- see subcharts.py), ONLY for schema_version=2, and only
+    # THEN excluded from the safe_chart_inputs() call below: that shared,
+    # non-telecom-specific function's path allowlist has no concept of
+    # charts/ and must stay exactly as strict as it is today for every
+    # other caller -- a v1 chart's charts/ entries (if any) are NEVER
+    # exempted and still hit safe_chart_inputs()'s existing rejection,
+    # exactly as before this feature existed.
+    if manifest.get('schema_version') == 2:
+        # subcharts.validate() always runs here (not only when charts/
+        # entries are already present): a Chart.yaml that DECLARES a
+        # dependency with nothing vendored for it at all must still be
+        # caught, not silently treated as having nothing to check.
+        try:
+            parent_meta = yaml.safe_load(files.get('Chart.yaml', b''))
+        except Exception:
+            parent_meta = None
+        subcharts.validate(files, parent_meta if isinstance(parent_meta, dict) else {}, vendored_dependencies)
+        files_for_safe_chart_inputs = {n: v for n, v in files.items() if not n.startswith('charts/')}
+    else:
+        files_for_safe_chart_inputs = files
+    safe_chart_inputs(files_for_safe_chart_inputs, reviewed=reviewed_inputs)
     for p in ('Chart.yaml', 'values.yaml'):
         if p not in files:
             raise ValueError('Chart metadata/values required')

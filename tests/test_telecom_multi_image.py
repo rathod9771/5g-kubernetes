@@ -14,6 +14,7 @@ none of its images are declared or pinned to a digest -- so the real chart,
 unmodified, is correctly rejected by this verification engine.
 """
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -27,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 from telecom.contract import validate
-from telecom import chart_adapters, multi_image
+from telecom import chart_adapters, multi_image, subcharts
 from telecom.package import prepare
 
 MANIFEST = json.loads((ROOT / 'examples/telecom/multi-nf.json').read_text())
@@ -799,20 +800,20 @@ class ChartAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             prepare(self.workspace, 'chart', manifest, helm='helm', source_evidence=self.evidence)
 
-    def test_vendored_subchart_directory_rejected_today(self):
-        """Documents CURRENT behavior, not new support: a `charts/` vendored
-        subchart tree (how free5GC-style charts bundle dependencies) is
-        rejected outright by safe_chart_inputs()'s path allowlist today --
-        see the REPORT's 'free5GC-specific limitations' for why full
-        dependency-chart traversal is explicitly out of scope here. The hook
-        is adapted successfully first (valid evidence), isolating this as
-        the one and only remaining failure."""
+    def test_vendored_subchart_without_reviewed_inventory_rejected(self):
+        """A `charts/` vendored subchart tree is now a supported shape (see
+        subcharts.py and VendoredSubchartTests below) -- but only with an
+        explicit, exact, reviewed per-file digest inventory. Without one,
+        it is still rejected, just via subcharts.validate()'s own gate
+        rather than safe_chart_inputs()'s path allowlist. The hook is
+        adapted successfully first (valid evidence), isolating this as the
+        one and only remaining failure."""
         self.write_hook(HOOK_ORIGINAL)
         sub = self.workspace / 'chart/charts/mongodb/templates'
         sub.mkdir(parents=True)
         (self.workspace / 'chart/charts/mongodb/Chart.yaml').write_text(
             'apiVersion: v2\nname: mongodb\nversion: 1.0.0\n')
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, 'explicit reviewed inventory'):
             prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
 
     def test_embedded_private_key_in_template_rejected(self):
@@ -876,6 +877,273 @@ class ChartAdapterTests(unittest.TestCase):
         adapted, provenance = chart_adapters.adapt(files, manifest, self.evidence)
         self.assertEqual(adapted, files)
         self.assertEqual(provenance, [])
+
+
+SUBCHART_META = b'apiVersion: v2\nname: redis-cache\nversion: 1.0.0\n'
+SUBCHART_DEPLOYMENT = (
+    b'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: {{ .Release.Name }}-redis-cache\n'
+    b'spec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app: redis-cache\n'
+    b'  template:\n    metadata:\n      labels:\n        app: redis-cache\n'
+    b'    spec:\n      automountServiceAccountToken: false\n      containers:\n'
+    b'        - name: redis-cache\n          image: example.invalid/research/redis-cache:v1.0.0\n'
+    b'          securityContext:\n            runAsNonRoot: true\n            allowPrivilegeEscalation: false\n'
+    b'            capabilities:\n              drop: ["ALL"]\n'
+    b'          resources:\n            limits:\n              cpu: 50m\n              memory: 64Mi\n'
+)
+PARENT_CHART_WITH_DEPENDENCY = (
+    b'apiVersion: v2\nname: multi-nf\n'
+    b'description: Synthetic multi-NF fixture chart for schema_version=2 verification tests\n'
+    b'version: 0.1.0\nappVersion: "1.0"\ndependencies:\n  - name: redis-cache\n    version: 1.0.0\n'
+)
+PARENT_CHART_NO_DEPENDENCY = (
+    b'apiVersion: v2\nname: multi-nf\n'
+    b'description: Synthetic multi-NF fixture chart for schema_version=2 verification tests\n'
+    b'version: 0.1.0\nappVersion: "1.0"\n'
+)
+REDIS_IMAGE_ENTRY = {
+    'identity': 'redis-cache', 'kind': 'supporting-container', 'role': None, 'purpose': 'database',
+    'repository': 'example.invalid/research/redis-cache', 'tag_pin': 'v1.0.0',
+    'digest': 'sha256:' + 'c' * 64, 'platform': 'linux/amd64',
+}
+
+
+class VendoredSubchartTests(unittest.TestCase):
+    """Synthetic vendored Helm dependency (charts/<name>/...) tests, modeled
+    on how a real free5GC-style chart bundles subcharts under charts/ --
+    never touching, fetching, or asserting anything about the real upstream
+    chart, which exists only on the Dell and was not accessed from here."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name)
+        shutil.copytree(CHART, self.workspace / 'chart')
+        (self.workspace / 'chart/Chart.yaml').write_bytes(PARENT_CHART_WITH_DEPENDENCY)
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': 'f' * 40}
+        manifest['images'] = manifest['images'] + [REDIS_IMAGE_ENTRY]
+        self.manifest = validate(manifest)
+
+    def write_subchart(self, root='chart/charts/redis-cache', meta=SUBCHART_META, deployment=SUBCHART_DEPLOYMENT):
+        sub = self.workspace / root
+        (sub / 'templates').mkdir(parents=True)
+        (sub / 'Chart.yaml').write_bytes(meta)
+        (sub / 'templates/deployment.yaml').write_bytes(deployment)
+
+    def digests(self, extra=()):
+        base = {'charts/redis-cache/Chart.yaml': hashlib.sha256(SUBCHART_META).hexdigest(),
+                'charts/redis-cache/templates/deployment.yaml': hashlib.sha256(SUBCHART_DEPLOYMENT).hexdigest()}
+        base.update(extra)
+        return base
+
+    def test_vendored_subchart_with_exact_reviewed_inventory_accepted(self):
+        self.write_subchart()
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=self.digests())
+        self.assertIn('redis-cache', result['image_discovery'])
+        self.assertTrue(all(o['hook'] is False for o in result['image_discovery']['redis-cache']['occurrences']))
+
+    def test_vendored_subchart_undeclared_dependency_rejected(self):
+        """Vendored on disk, but the parent Chart.yaml never declares it."""
+        self.write_subchart()
+        (self.workspace / 'chart/Chart.yaml').write_bytes(PARENT_CHART_NO_DEPENDENCY)
+        with self.assertRaisesRegex(ValueError, 'not declared as a dependency'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=self.digests())
+
+    def test_declared_dependency_not_vendored_at_all_rejected(self):
+        """Parent declares redis-cache, but charts/ has nothing at all."""
+        with self.assertRaisesRegex(ValueError, 'is not vendored locally'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies={})
+
+    def test_missing_reviewed_inventory_rejected(self):
+        self.write_subchart()
+        with self.assertRaisesRegex(ValueError, 'explicit reviewed inventory'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm')
+
+    def test_unreviewed_dependency_content_change_rejected(self):
+        self.write_subchart()
+        drifted = self.digests()
+        (self.workspace / 'chart/charts/redis-cache/templates/deployment.yaml').write_bytes(
+            SUBCHART_DEPLOYMENT.replace(b'v1.0.0', b'v9.9.9'))
+        with self.assertRaisesRegex(ValueError, 'Unreviewed vendored dependency content change'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=drifted)
+
+    def test_extra_undeclared_vendored_file_rejected(self):
+        """A file present on disk but absent from the reviewed inventory --
+        the inventory must match the chart exactly, not just be a subset."""
+        self.write_subchart()
+        (self.workspace / 'chart/charts/redis-cache/templates/extra.yaml').write_text(
+            'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: extra\n')
+        with self.assertRaisesRegex(ValueError, 'does not match the chart exactly'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=self.digests())
+
+    def test_subchart_directory_name_disagrees_with_chart_yaml_rejected(self):
+        self.write_subchart(root='chart/charts/not-redis-cache')
+        digests = {'charts/not-redis-cache/Chart.yaml': hashlib.sha256(SUBCHART_META).hexdigest(),
+                   'charts/not-redis-cache/templates/deployment.yaml': hashlib.sha256(SUBCHART_DEPLOYMENT).hexdigest()}
+        with self.assertRaisesRegex(ValueError, 'directory name disagrees'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+    def test_malformed_subchart_chart_yaml_rejected(self):
+        bad_meta = b'apiVersion: v2\n'  # no name/version
+        self.write_subchart(meta=bad_meta)
+        digests = {'charts/redis-cache/Chart.yaml': hashlib.sha256(bad_meta).hexdigest(),
+                   'charts/redis-cache/templates/deployment.yaml': hashlib.sha256(SUBCHART_DEPLOYMENT).hexdigest()}
+        with self.assertRaisesRegex(ValueError, 'Invalid vendored subchart metadata'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+    def test_embedded_private_key_in_vendored_subchart_rejected(self):
+        self.write_subchart()
+        keyed = b'# -----BEGIN RSA PRIVATE KEY-----\n# fake\n# -----END RSA PRIVATE KEY-----\n'
+        (self.workspace / 'chart/charts/redis-cache/templates/keyed.yaml').write_bytes(keyed)
+        digests = self.digests({'charts/redis-cache/templates/keyed.yaml': hashlib.sha256(keyed).hexdigest()})
+        with self.assertRaisesRegex(ValueError, 'Private key material'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+    def test_unapproved_file_type_in_vendored_subchart_rejected(self):
+        self.write_subchart()
+        script = b'#!/bin/sh\necho hi\n'
+        (self.workspace / 'chart/charts/redis-cache/templates/setup.sh').write_bytes(script)
+        digests = self.digests({'charts/redis-cache/templates/setup.sh': hashlib.sha256(script).hexdigest()})
+        with self.assertRaisesRegex(ValueError, 'Unexpected vendored dependency input'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+    def test_inline_credential_in_vendored_values_rejected(self):
+        self.write_subchart()
+        values = b'password: hardcoded-secret\n'
+        (self.workspace / 'chart/charts/redis-cache/values.yaml').write_bytes(values)
+        digests = self.digests({'charts/redis-cache/values.yaml': hashlib.sha256(values).hexdigest()})
+        with self.assertRaises(ValueError):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+    def test_nested_template_image_still_requires_manifest_declaration(self):
+        """Proves nested (vendored subchart) templates get the SAME
+        image-declaration check as top-level ones: redis-cache is vendored
+        and declared as a dependency, but deliberately NOT added to
+        manifest['images'] -- multi_image.verify() still catches it."""
+        self.write_subchart()
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': 'f' * 40}
+        # REDIS_IMAGE_ENTRY deliberately omitted.
+        manifest = validate(manifest)
+        with self.assertRaisesRegex(ValueError, 'Undeclared or mismatched rendered image'):
+            prepare(self.workspace, 'chart', manifest, helm='helm', vendored_dependencies=self.digests())
+
+    def test_nested_template_unsafe_pod_security_still_rejected(self):
+        """Proves nested templates get the SAME pod-security bar as
+        top-level ones: this subchart's Deployment omits
+        automountServiceAccountToken entirely."""
+        unsafe_deployment = SUBCHART_DEPLOYMENT.replace(b'      automountServiceAccountToken: false\n', b'')
+        self.write_subchart(deployment=unsafe_deployment)
+        digests = {'charts/redis-cache/Chart.yaml': hashlib.sha256(SUBCHART_META).hexdigest(),
+                   'charts/redis-cache/templates/deployment.yaml': hashlib.sha256(unsafe_deployment).hexdigest()}
+        with self.assertRaisesRegex(ValueError, 'service account token'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+    def test_nested_helm_hook_with_undeclared_image_rejected(self):
+        """Proves a Helm hook template vendored inside a subchart gets the
+        SAME hook scrutiny as a top-level one -- never silently skipped."""
+        hook = (b'apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Release.Name }}-redis-check\n'
+                b'  annotations:\n    helm.sh/hook: test\nspec:\n  automountServiceAccountToken: false\n'
+                b'  containers:\n    - name: check\n      image: busybox\n')
+        self.write_subchart()
+        (self.workspace / 'chart/charts/redis-cache/templates/hook.yaml').write_bytes(hook)
+        digests = self.digests({'charts/redis-cache/templates/hook.yaml': hashlib.sha256(hook).hexdigest()})
+        with self.assertRaisesRegex(ValueError, 'Undeclared or mismatched rendered image'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+    def test_nested_undeclared_init_container_rejected(self):
+        """Proves an init container inside a vendored subchart template gets
+        the SAME image-declaration check as a top-level init container --
+        not just regular containers."""
+        deployment_with_init = SUBCHART_DEPLOYMENT.replace(
+            b'      containers:\n',
+            b'      initContainers:\n'
+            b'        - name: wait-for-db\n          image: attacker.invalid/payload:v1\n'
+            b'          securityContext:\n            runAsNonRoot: true\n'
+            b'            allowPrivilegeEscalation: false\n            capabilities:\n              drop: ["ALL"]\n'
+            b'          resources:\n            limits:\n              cpu: 50m\n              memory: 32Mi\n'
+            b'      containers:\n',
+        )
+        self.write_subchart(deployment=deployment_with_init)
+        digests = {'charts/redis-cache/Chart.yaml': hashlib.sha256(SUBCHART_META).hexdigest(),
+                   'charts/redis-cache/templates/deployment.yaml': hashlib.sha256(deployment_with_init).hexdigest()}
+        with self.assertRaisesRegex(ValueError, 'Undeclared or mismatched rendered image'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+    def test_nested_forbidden_kind_rejected(self):
+        """Proves a forbidden resource kind (e.g. a Secret) rendered from a
+        vendored subchart template is rejected exactly like one rendered
+        from a top-level template -- the forbidden-kind check in
+        multi_image.verify() has no separate, weaker path for subcharts."""
+        # Named deliberately NOT to start with "secret" -- that filename
+        # heuristic (shared with safe_chart_inputs(), see
+        # _relative_sensitive_or_unapproved) would reject it one check
+        # earlier, before ever reaching the KIND-based check this test
+        # means to isolate.
+        extra = (b'apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ .Release.Name }}-redis-extra\n'
+                 b'type: Opaque\ndata:\n  x: eA==\n')
+        self.write_subchart()
+        (self.workspace / 'chart/charts/redis-cache/templates/extra-resource.yaml').write_bytes(extra)
+        digests = self.digests({'charts/redis-cache/templates/extra-resource.yaml': hashlib.sha256(extra).hexdigest()})
+        with self.assertRaisesRegex(ValueError, 'Forbidden rendered resource kind'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+    def test_nesting_depth_exceeds_supported_bound_rejected(self):
+        """charts/<a>/charts/<b>/charts/<c>/ -- three levels deep -- exceeds
+        MAX_SUBCHART_DEPTH and is rejected outright, not silently traversed."""
+        inner_meta = b'apiVersion: v2\nname: inner\nversion: 1.0.0\n'
+        files = {
+            'Chart.yaml': PARENT_CHART_WITH_DEPENDENCY,
+            'charts/redis-cache/Chart.yaml': (
+                b'apiVersion: v2\nname: redis-cache\nversion: 1.0.0\n'
+                b'dependencies:\n  - name: middle\n    version: 1.0.0\n'),
+            'charts/redis-cache/charts/middle/Chart.yaml': (
+                b'apiVersion: v2\nname: middle\nversion: 1.0.0\n'
+                b'dependencies:\n  - name: inner\n    version: 1.0.0\n'),
+            'charts/redis-cache/charts/middle/charts/inner/Chart.yaml': inner_meta,
+        }
+        parent_meta = {'name': 'multi-nf', 'version': '0.1.0',
+                        'dependencies': [{'name': 'redis-cache', 'version': '1.0.0'}]}
+        reviewed = {n: hashlib.sha256(v).hexdigest() for n, v in files.items() if n != 'Chart.yaml'}
+        with self.assertRaisesRegex(ValueError, 'exceeds the supported depth'):
+            subcharts.validate(files, parent_meta, reviewed)
+
+    def test_two_level_nesting_within_bound_accepted_by_validator(self):
+        """charts/<a>/charts/<b>/ -- exactly MAX_SUBCHART_DEPTH -- is
+        accepted by the validator itself (a direct unit test, since
+        constructing a real two-level-nested Helm chart that `helm
+        lint --strict` also accepts is beyond what this synthetic fixture
+        needs to prove: the dependency-relationship/digest-pin logic is the
+        part specific to this change, and it is exercised end-to-end at
+        depth 1 by every other test in this class)."""
+        files = {
+            'Chart.yaml': PARENT_CHART_WITH_DEPENDENCY,
+            'charts/redis-cache/Chart.yaml': (
+                b'apiVersion: v2\nname: redis-cache\nversion: 1.0.0\n'
+                b'dependencies:\n  - name: exporter\n    version: 2.0.0\n'),
+            'charts/redis-cache/templates/deployment.yaml': SUBCHART_DEPLOYMENT,
+            'charts/redis-cache/charts/exporter/Chart.yaml': b'apiVersion: v2\nname: exporter\nversion: 2.0.0\n',
+            'charts/redis-cache/charts/exporter/templates/deployment.yaml': b'kind: ConfigMap\n',
+        }
+        parent_meta = {'name': 'multi-nf', 'version': '0.1.0',
+                        'dependencies': [{'name': 'redis-cache', 'version': '1.0.0'}]}
+        reviewed = {n: hashlib.sha256(v).hexdigest() for n, v in files.items() if n != 'Chart.yaml'}
+        subcharts.validate(files, parent_meta, reviewed)  # must not raise
+
+    def test_v1_chart_with_vendored_subchart_directory_still_rejected(self):
+        """Regression guard: vendored dependency support is schema_version=2
+        ONLY. A v1 chart with charts/ content must still be rejected by
+        safe_chart_inputs()'s existing path allowlist, exactly as before
+        this feature existed -- never silently exempted."""
+        v1 = validate(json.loads((ROOT / 'examples/telecom/ran.json').read_text()))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        workspace = Path(tmp.name)
+        shutil.copytree(ROOT / 'examples/telecom/ran-chart', workspace / 'chart')
+        (workspace / 'chart/charts/sub').mkdir(parents=True)
+        (workspace / 'chart/charts/sub/Chart.yaml').write_text('apiVersion: v2\nname: sub\nversion: 1.0.0\n')
+        with self.assertRaises(ValueError):
+            prepare(workspace, 'chart', v1, helm='helm')
 
 
 if __name__ == '__main__':
