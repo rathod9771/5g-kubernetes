@@ -16,16 +16,32 @@ Three mechanisms, all sharing the same fail-closed discipline:
      `charts/*`, e.g. a redundant packaged dependency archive; never
      `Chart.yaml`/`values.yaml`/`values.schema.json`). Registries: ADAPTERS
      (substitute), REMOVALS (remove).
-  2. `apply_values_overrides()` -- a NARROW values.yaml contract: flips a
-     FIXED SET of already-existing, enumerated key paths to fixed, reviewed
-     scalar values. Never introduces a new key, never accepts a
-     dict/list value, never rewrites the file freely. Registry:
-     VALUES_OVERRIDES.
-  3. `apply_dependency_removals()` -- a NARROW Chart.yaml contract: drops
-     ONE OR MORE named (name, version) entries from `dependencies:`,
-     leaving every other field and every other dependency byte-for-byte
-     represented (modulo YAML re-serialization). Registry:
-     DEPENDENCY_REMOVALS.
+  2. `apply_values_overrides()` -- a NARROW values.yaml (or a vendored
+     subchart's own values.yaml) contract: flips a FIXED SET of
+     already-existing, enumerated key paths to fixed, reviewed scalar
+     values. Never introduces a new key, never accepts a dict/list value,
+     never rewrites the file freely. Registry: VALUES_OVERRIDES.
+  3. `apply_dependency_removals()` -- a NARROW Chart.yaml (or a vendored
+     subchart's own Chart.yaml) contract: drops ONE OR MORE named
+     (name, version) entries from `dependencies:`, leaving every other
+     field and every other dependency byte-for-byte represented (modulo
+     YAML re-serialization). Registry: DEPENDENCY_REMOVALS.
+
+Mechanisms 2 and 3 each target an explicit, reviewed `target_path` per
+registry entry -- the top-level `values.yaml`/`Chart.yaml` (the only shape
+supported before this), or a bounded, vendored subchart's own
+`charts/<name>/values.yaml`/`charts/<name>/Chart.yaml` (up to
+_MAX_TARGET_DEPTH levels of nesting, matching subcharts.MAX_SUBCHART_DEPTH).
+This exists because a real chart (e.g. free5GC) can declare a dependency
+-- like a packaged MongoDB subchart -- inside a VENDORED SUBCHART's own
+Chart.yaml, not the top-level one; removing only the vendored archive
+without also reaching that subchart's own dependency declaration would
+leave subcharts.validate()'s bidirectional check correctly rejecting the
+package ("declared dependency is not vendored locally"). `target_path` is
+validated against a strict allowlist (see `_validate_target_path`) --
+never an absolute path, `../` traversal, or any filename other than
+`values.yaml`/`Chart.yaml` at an allowed depth -- and is itself a
+registry-authored field, never caller-supplied.
 
 Mechanisms 2 and 3 parse and ACT on YAML structure (1 does not -- it never
 inspects content, only digests). Plain `yaml.safe_load()` silently resolves
@@ -78,6 +94,7 @@ read as one.
 """
 
 import hashlib
+import re
 
 import yaml
 
@@ -148,6 +165,19 @@ REMOVALS = {
                       'only supported path for one that is no longer needed.',
         },
     },
+    # Paired with the matching DEPENDENCY_REMOVALS entry above: a packaged
+    # archive vendored ONE LEVEL INSIDE a subchart (redis-cache standing in
+    # for e.g. free5GC's NRF), modeling the real free5GC MongoDB finding
+    # exactly. REMOVALS already supports any charts/ path regardless of
+    # nesting depth -- no code change was needed here, only this entry.
+    ('multi-nf', '0.1.0', 'a' * 40): {
+        'charts/redis-cache/charts/cache-backend-1.0.0.tgz': {
+            'original_sha256': 'a5074b8115423916cf9124318cd20b9c879bea90269c09c753de73d9e844630c',
+            'reason': 'Synthetic reproduction of a redundant, subchart-vendored packaged '
+                      'dependency archive (see pipeline design report, "MongoDB '
+                      'dependencies") -- superseded by an independently provisioned instance.',
+        },
+    },
 }
 
 # Paths a removal may never target, regardless of registry content -- a
@@ -155,54 +185,110 @@ REMOVALS = {
 # narrower, dedicated contracts below instead of whole-file removal.
 _REMOVAL_FORBIDDEN_TARGETS = {'Chart.yaml', 'values.yaml', 'values.schema.json'}
 
-# {(chart_name, chart_version, source_commit): {
-#     'original_sha256': <digest of the ENTIRE original values.yaml>,
+# {(chart_name, chart_version, source_commit): [{
+#     'target_path': <'values.yaml' | 'Chart.yaml' | a bounded, vendored
+#                      subchart equivalent -- see _validate_target_path>,
+#     'original_sha256': <digest of the ENTIRE original target file>,
 #     'overrides': {'dotted.key.path': {
 #         'value': <fixed, reviewed, scalar value>,
 #         'purpose': <required, non-empty>,
 #         'security_impact': <required, non-empty>,
 #     }},
-# }}
+# }, ...]}
 # PHASE 2a: a FIXED set of already-existing key paths, flipped to a FIXED,
-# reviewed scalar value. Never introduces a new key (the path must already
-# resolve in the parsed original file); never accepts a non-scalar value
-# (no smuggling structured content through a single "override"); the
-# ENTIRE original file is digest-pinned, not just the touched keys.
+# reviewed scalar value, in ONE OR MORE explicitly reviewed target files
+# (the top-level values.yaml and/or a vendored subchart's own). Never
+# introduces a new key (the path must already resolve in the parsed
+# original file); never accepts a non-scalar value (no smuggling
+# structured content through a single "override"); the ENTIRE original
+# file is digest-pinned per target, not just the touched keys.
 VALUES_OVERRIDES = {
-    ('multi-nf', '0.1.0', '8' * 40): {
-        'original_sha256': '7ccceec13e02e4f673c961cff66240f9694a9138dfe791b1f8e45c10299db2ea',
-        'overrides': {
-            'probe.tag': {
-                'value': 'v1.0.1',
-                'purpose': 'Synthetic demonstration of the values-override contract itself '
-                           '(tests/test_telecom_multi_image.py: ChartAdapterValuesOverrideTests) '
-                           '-- pins the probe utility image to a newer reviewed tag.',
-                'security_impact': 'No security-relevant change: a tag-reference string only, '
-                                    'still subject to the full existing image-declaration and '
-                                    'live registry verification downstream.',
+    ('multi-nf', '0.1.0', '8' * 40): [
+        {
+            'target_path': 'values.yaml',
+            'original_sha256': '7ccceec13e02e4f673c961cff66240f9694a9138dfe791b1f8e45c10299db2ea',
+            'overrides': {
+                'probe.tag': {
+                    'value': 'v1.0.1',
+                    'purpose': 'Synthetic demonstration of the values-override contract itself '
+                               '(tests/test_telecom_multi_image.py: ChartAdapterValuesOverrideTests) '
+                               '-- pins the probe utility image to a newer reviewed tag.',
+                    'security_impact': 'No security-relevant change: a tag-reference string only, '
+                                        'still subject to the full existing image-declaration and '
+                                        'live registry verification downstream.',
+                },
             },
         },
-    },
+    ],
+    # Synthetic demonstration of the SUBCHART-SCOPED case -- modeled on the
+    # real free5GC finding that a vendored subchart's own values.yaml can
+    # carry configuration this pipeline needs to adjust (e.g. a database
+    # connection toggle), not just the top-level chart's. Used only by
+    # tests/test_telecom_multi_image.py: SubchartScopedAdaptationTests.
+    ('multi-nf', '0.1.0', 'a' * 40): [
+        {
+            'target_path': 'charts/redis-cache/values.yaml',
+            'original_sha256': 'f2427ebc6f8856753346846432abee232b4d1be41acc8a252fede03c9c0de921',
+            'overrides': {
+                'cacheMode': {
+                    'value': 'cluster',
+                    'purpose': 'Synthetic demonstration of a subchart-scoped values override '
+                               '(tests/test_telecom_multi_image.py: SubchartScopedAdaptationTests).',
+                    'security_impact': 'No security-relevant change: a plain configuration '
+                                        'string, not a credential or capability.',
+                },
+            },
+        },
+    ],
 }
 
-# {(chart_name, chart_version, source_commit): {
-#     'original_sha256': <digest of the ENTIRE original Chart.yaml>,
+# {(chart_name, chart_version, source_commit): [{
+#     'target_path': <'values.yaml' | 'Chart.yaml' | a bounded, vendored
+#                      subchart equivalent -- see _validate_target_path>,
+#     'original_sha256': <digest of the ENTIRE original target file>,
 #     'removals': [{'name': ..., 'version': ..., 'reason': <required, non-empty>}],
-# }}
+# }, ...]}
 # PHASE 2b: drop ONE OR MORE named (name, version) dependency entries from
-# Chart.yaml's `dependencies:` list. Every other field and every other
-# dependency is preserved (re-serialized, not hand-edited). Raises if a
-# named (name, version) pair is not actually present -- never silently a
-# no-op for a stale or mistaken registry entry.
+# a target Chart.yaml's `dependencies:` list -- the top-level one and/or a
+# vendored subchart's own (e.g. free5GC's NRF/UDR/WebUI subcharts each
+# declare their OWN MongoDB dependency in their OWN Chart.yaml, not the
+# top-level free5gc chart's). Every other field and every other dependency
+# is preserved (re-serialized, not hand-edited). Raises if a named
+# (name, version) pair is not actually present in its target -- never
+# silently a no-op for a stale or mistaken registry entry.
 DEPENDENCY_REMOVALS = {
-    ('multi-nf', '0.1.0', '9' * 40): {
-        'original_sha256': 'e55e2f02b5b1f7d5b6cc9041bb4ace3e2a241052113a4638d6962e7775109dc4',
-        'removals': [
-            {'name': 'redis-cache', 'version': '1.0.0',
-             'reason': 'Synthetic demonstration of the dependency-removal contract itself '
-                       '(tests/test_telecom_multi_image.py: ChartAdapterDependencyRemovalTests).'},
-        ],
-    },
+    ('multi-nf', '0.1.0', '9' * 40): [
+        {
+            'target_path': 'Chart.yaml',
+            'original_sha256': 'e55e2f02b5b1f7d5b6cc9041bb4ace3e2a241052113a4638d6962e7775109dc4',
+            'removals': [
+                {'name': 'redis-cache', 'version': '1.0.0',
+                 'reason': 'Synthetic demonstration of the dependency-removal contract itself '
+                           '(tests/test_telecom_multi_image.py: ChartAdapterDependencyRemovalTests).'},
+            ],
+        },
+    ],
+    # Synthetic demonstration of the SUBCHART-SCOPED case, paired with the
+    # matching REMOVALS entry below for the nested packaged archive --
+    # together these model the real free5GC finding exactly: a vendored
+    # subchart (here "redis-cache", standing in for e.g. free5GC's NRF)
+    # declares its OWN dependency on a packaged archive (standing in for
+    # the vendored MongoDB .tgz) in its OWN Chart.yaml, one level below the
+    # top-level chart. Used only by
+    # tests/test_telecom_multi_image.py: SubchartScopedAdaptationTests.
+    ('multi-nf', '0.1.0', 'a' * 40): [
+        {
+            'target_path': 'charts/redis-cache/Chart.yaml',
+            'original_sha256': '62af7521a785376d5cc794a64dc86771e4977d28315dd02b1b42f61191efeb4d',
+            'removals': [
+                {'name': 'cache-backend', 'version': '1.0.0',
+                 'reason': 'Synthetic reproduction of a redundant, subchart-vendored packaged '
+                           'dependency archive (see pipeline design report, "MongoDB '
+                           'dependencies") -- superseded by an independently provisioned '
+                           'instance; its vendored copy is removed by the paired REMOVALS entry.'},
+            ],
+        },
+    ],
 }
 
 
@@ -219,6 +305,34 @@ def _require_verified_evidence(commit, source_evidence):
             source_evidence.get('authority') not in VERIFIED_ACQUISITION_AUTHORITIES or
             source_evidence.get('commit') != commit):
         raise ValueError('Adaptation requires independently verified source acquisition evidence')
+
+
+# How many 'charts/<name>/' prefixes a values.yaml/Chart.yaml target_path
+# may carry before the final filename -- matches subcharts.MAX_SUBCHART_DEPTH
+# (not imported, to avoid a needless cross-module coupling for one constant).
+_MAX_TARGET_DEPTH = 2
+_SUBCHART_NAME = r'[a-z][a-z0-9-]{0,62}'
+_TARGET_PATH_RE = re.compile(
+    r'^(?:charts/%s/){0,%d}(?:values\.yaml|Chart\.yaml)$' % (_SUBCHART_NAME, _MAX_TARGET_DEPTH)
+)
+
+
+def _validate_target_path(target_path):
+    """A values/Chart.yaml adaptation target may ONLY be the top-level
+    `values.yaml`/`Chart.yaml`, or a bounded, vendored subchart's own
+    (`charts/<name>/values.yaml` or `.../Chart.yaml`, up to
+    _MAX_TARGET_DEPTH levels of `charts/<name>/` nesting). The regex
+    itself is the whole defense: it is fully anchored, allows no other
+    filename, and has no character class that could ever match an
+    absolute path (no leading `/`) or a `..` traversal segment (`..` is
+    not a valid subchart name) -- so those are rejected by construction,
+    not by a separate check. `target_path` is always a registry-authored
+    field (see ADAPTERS/REMOVALS/VALUES_OVERRIDES/DEPENDENCY_REMOVALS'
+    docstrings) -- there is no caller-supplied path anywhere in this
+    module."""
+    if not isinstance(target_path, str) or not _TARGET_PATH_RE.fullmatch(target_path):
+        raise ValueError('Unsupported or unreviewed adaptation target path: ' + str(target_path))
+    return target_path
 
 
 class _NoDuplicateKeysLoader(yaml.SafeLoader):
@@ -255,24 +369,25 @@ def _strict_yaml_load(data, invalid_message):
         raise ValueError(invalid_message + ': ' + str(error)) from None
 
 
-def _dotted_lookup(parsed, key_path):
+def _dotted_lookup(parsed, key_path, target_path):
     """Resolve a dotted key path in an already-parsed mapping, requiring
     EVERY level to already exist and EVERY level's siblings to be
     unambiguous (no literal key containing '.' -- which could otherwise be
     confused with a path separator). Returns (parent_dict, final_segment,
-    existing_value); raises ValueError on any violation."""
+    existing_value); raises ValueError on any violation. `target_path`
+    (the file this mapping came from) is only used for error messages."""
     segments = key_path.split('.')
     cursor = parsed
     for segment in segments[:-1]:
         if not isinstance(cursor, dict) or segment not in cursor:
-            raise ValueError('Values override key does not exist in original values.yaml: ' + key_path)
+            raise ValueError('Values override key does not exist in original ' + target_path + ': ' + key_path)
         if any('.' in existing_key for existing_key in cursor if isinstance(existing_key, str)):
-            raise ValueError('Ambiguous dotted-key path in original values.yaml: ' + key_path)
+            raise ValueError('Ambiguous dotted-key path in original ' + target_path + ': ' + key_path)
         cursor = cursor[segment]
     if not isinstance(cursor, dict) or segments[-1] not in cursor:
-        raise ValueError('Values override key does not exist in original values.yaml: ' + key_path)
+        raise ValueError('Values override key does not exist in original ' + target_path + ': ' + key_path)
     if any('.' in existing_key for existing_key in cursor if isinstance(existing_key, str)):
-        raise ValueError('Ambiguous dotted-key path in original values.yaml: ' + key_path)
+        raise ValueError('Ambiguous dotted-key path in original ' + target_path + ': ' + key_path)
     return cursor, segments[-1], cursor[segments[-1]]
 
 
@@ -377,113 +492,149 @@ def adapt(files, manifest, source_evidence=None):
 def apply_values_overrides(files, manifest, source_evidence=None):
     """Return (updated_files, provenance); `files` itself is never mutated.
 
-    Applies ONLY the VALUES_OVERRIDES registry entry (if any) matching this
-    exact chart identity + commit + independently verified source_evidence.
-    No-ops (returns `files` unchanged, []) for schema_version != 2, an
-    unparseable Chart.yaml, or no matching registry entry.
+    Applies every VALUES_OVERRIDES entry (if any) registered for this exact
+    chart identity + commit + independently verified source_evidence, each
+    acting on its own explicit, reviewed `target_path` (the top-level
+    values.yaml, or a bounded, vendored subchart's own -- see
+    _validate_target_path). No-ops (returns `files` unchanged, []) for
+    schema_version != 2, an unparseable Chart.yaml, or no matching registry
+    entry at all.
 
     Every override key path MUST already resolve to an existing value in
-    the ORIGINAL (pre-override) parsed values.yaml -- this never introduces
+    the ORIGINAL (pre-override) parsed target file -- this never introduces
     a new, unreviewed configuration surface, only flips an existing,
     reviewed toggle to a fixed, reviewed scalar value. A non-scalar
     override value is rejected (no smuggling structured content through a
-    single "override"). The entire original values.yaml is digest-pinned;
-    upstream drift in ANY part of the file (not just the touched keys)
-    fails closed.
+    single "override"). The ENTIRE original target file is digest-pinned;
+    upstream drift in ANY part of it (not just the touched keys) fails
+    closed. Two registry entries naming the same `target_path` under one
+    chart identity is a registry-authoring error and is rejected outright.
 
-    `provenance` is a list of {'key_path', 'value', 'purpose',
-    'security_impact'} records, one per override actually applied.
+    `provenance` is a list of {'target_path', 'key_path', 'value',
+    'purpose', 'security_impact'} records, one per override actually
+    applied, across every target_path.
     """
     if manifest.get('schema_version') != 2:
         return files, []
     key = _chart_identity_key(files, manifest)
     if key is None:
         return files, []
-    entry = VALUES_OVERRIDES.get(key)
-    if entry is None:
+    entries = VALUES_OVERRIDES.get(key)
+    if entries is None:
         return files, []
     _require_verified_evidence(key[2], source_evidence)
-    if 'values.yaml' not in files:
-        raise ValueError('Chart metadata/values required for a values override')
-    if hashlib.sha256(files['values.yaml']).hexdigest() != entry['original_sha256']:
-        raise ValueError('values.yaml review is stale: upstream content changed')
-    parsed = _strict_yaml_load(files['values.yaml'], 'Invalid values.yaml content')
-    if not isinstance(parsed, dict):
-        raise ValueError('Invalid values.yaml content')
-    provenance = []
-    for key_path, override in entry['overrides'].items():
-        value = override['value']
-        if value is not None and not isinstance(value, (bool, int, float, str)):
-            raise ValueError('Values override value must be a scalar: ' + key_path)
-        if not isinstance(override.get('purpose'), str) or not override['purpose']:
-            raise ValueError('Values override purpose must be documented: ' + key_path)
-        if not isinstance(override.get('security_impact'), str) or not override['security_impact']:
-            raise ValueError('Values override security impact must be documented: ' + key_path)
-        parent, final_segment, existing_value = _dotted_lookup(parsed, key_path)
-        if existing_value is not None and not isinstance(existing_value, (bool, int, float, str)):
-            raise ValueError('Values override target is not a scalar in original values.yaml: ' + key_path)
-        parent[final_segment] = value
-        provenance.append({'key_path': key_path, 'value': value,
-                            'purpose': override['purpose'], 'security_impact': override['security_impact']})
     updated = dict(files)
-    updated['values.yaml'] = yaml.safe_dump(parsed, sort_keys=True).encode()
+    provenance = []
+    seen_targets = set()
+    for entry in entries:
+        target_path = _validate_target_path(entry.get('target_path'))
+        if target_path in seen_targets:
+            raise ValueError('Duplicate values-override target path in registry: ' + target_path)
+        seen_targets.add(target_path)
+        if target_path not in files:
+            raise ValueError('Values override target file missing from chart: ' + target_path)
+        if hashlib.sha256(files[target_path]).hexdigest() != entry['original_sha256']:
+            raise ValueError(target_path + ' review is stale: upstream content changed')
+        parsed = _strict_yaml_load(files[target_path], 'Invalid ' + target_path + ' content')
+        if not isinstance(parsed, dict):
+            raise ValueError('Invalid ' + target_path + ' content')
+        for key_path, override in entry['overrides'].items():
+            value = override['value']
+            if value is not None and not isinstance(value, (bool, int, float, str)):
+                raise ValueError('Values override value must be a scalar: ' + target_path + '#' + key_path)
+            if not isinstance(override.get('purpose'), str) or not override['purpose']:
+                raise ValueError('Values override purpose must be documented: ' + target_path + '#' + key_path)
+            if not isinstance(override.get('security_impact'), str) or not override['security_impact']:
+                raise ValueError('Values override security impact must be documented: ' +
+                                  target_path + '#' + key_path)
+            parent, final_segment, existing_value = _dotted_lookup(parsed, key_path, target_path)
+            if existing_value is not None and not isinstance(existing_value, (bool, int, float, str)):
+                raise ValueError('Values override target is not a scalar in original ' + target_path + ': ' + key_path)
+            parent[final_segment] = value
+            provenance.append({'target_path': target_path, 'key_path': key_path, 'value': value,
+                                'purpose': override['purpose'], 'security_impact': override['security_impact']})
+        updated[target_path] = yaml.safe_dump(parsed, sort_keys=True).encode()
     return updated, provenance
 
 
 def apply_dependency_removals(files, manifest, source_evidence=None):
     """Return (updated_files, provenance); `files` itself is never mutated.
 
-    Applies ONLY the DEPENDENCY_REMOVALS registry entry (if any) matching
-    this exact chart identity + commit + independently verified
-    source_evidence. No-ops for schema_version != 2, an unparseable
-    Chart.yaml, or no matching registry entry.
+    Applies every DEPENDENCY_REMOVALS entry (if any) registered for this
+    exact chart identity + commit + independently verified
+    source_evidence, each acting on its own explicit, reviewed
+    `target_path` (the top-level Chart.yaml, or a bounded, vendored
+    subchart's own -- see _validate_target_path). No-ops for
+    schema_version != 2, an unparseable Chart.yaml, or no matching registry
+    entry at all.
 
-    Drops each registered (name, version) pair from Chart.yaml's
+    Drops each registered (name, version) pair from its target's
     `dependencies:` list; every other field and every other dependency
-    entry is preserved (re-serialized from the parsed structure, not
-    hand-edited). Raises if a registered (name, version) pair is not
-    actually present in the current `dependencies:` list -- a stale or
-    mistaken registry entry is a loud failure, never a silent no-op.
+    entry in that target is preserved (re-serialized from the parsed
+    structure, not hand-edited). Raises if a registered (name, version)
+    pair is not actually present in its target's current `dependencies:`
+    list -- a stale or mistaken registry entry is a loud failure, never a
+    silent no-op. Two registry entries naming the same (name, version)
+    within one target's removal list, two registry entries naming the same
+    `target_path`, or the target's OWN `dependencies:` list actually
+    declaring the same (name, version) pair twice are all rejected as
+    ambiguous, never resolved by guessing which one "wins".
 
-    `provenance` is a list of {'name', 'version', 'reason'} records, one
-    per dependency actually removed.
+    `provenance` is a list of {'target_path', 'name', 'version', 'reason'}
+    records, one per dependency actually removed, across every target_path.
     """
     if manifest.get('schema_version') != 2:
         return files, []
     key = _chart_identity_key(files, manifest)
     if key is None:
         return files, []
-    entry = DEPENDENCY_REMOVALS.get(key)
-    if entry is None:
+    entries = DEPENDENCY_REMOVALS.get(key)
+    if entries is None:
         return files, []
     _require_verified_evidence(key[2], source_evidence)
-    if 'Chart.yaml' not in files:
-        raise ValueError('Chart metadata required for a dependency removal')
-    if hashlib.sha256(files['Chart.yaml']).hexdigest() != entry['original_sha256']:
-        raise ValueError('Chart.yaml review is stale: upstream content changed')
-    parsed = _strict_yaml_load(files['Chart.yaml'], 'Invalid Chart.yaml content')
-    if not isinstance(parsed, dict) or not isinstance(parsed.get('dependencies'), list):
-        raise ValueError('Chart.yaml dependencies declaration missing or invalid')
-    pending = {}
-    for removal in entry['removals']:
-        if not isinstance(removal.get('reason'), str) or not removal['reason']:
-            raise ValueError('Dependency removal reason must be documented: ' + str(removal.get('name')))
-        pending[(removal['name'], removal['version'])] = removal['reason']
-    remaining = []
-    provenance = []
-    for dep in parsed['dependencies']:
-        if not isinstance(dep, dict):
-            raise ValueError('Invalid Chart.yaml dependency entry')
-        dep_key = (dep.get('name'), dep.get('version'))
-        if dep_key in pending:
-            provenance.append({'name': dep_key[0], 'version': dep_key[1], 'reason': pending[dep_key]})
-            continue
-        remaining.append(dep)
-    missing = set(pending) - {(p['name'], p['version']) for p in provenance}
-    if missing:
-        raise ValueError('Dependency removal target not found in Chart.yaml: ' +
-                          ', '.join(sorted(name for name, version in missing)))
-    parsed['dependencies'] = remaining
     updated = dict(files)
-    updated['Chart.yaml'] = yaml.safe_dump(parsed, sort_keys=True).encode()
+    provenance = []
+    seen_targets = set()
+    for entry in entries:
+        target_path = _validate_target_path(entry.get('target_path'))
+        if target_path in seen_targets:
+            raise ValueError('Duplicate dependency-removal target path in registry: ' + target_path)
+        seen_targets.add(target_path)
+        if target_path not in files:
+            raise ValueError('Dependency removal target file missing from chart: ' + target_path)
+        if hashlib.sha256(files[target_path]).hexdigest() != entry['original_sha256']:
+            raise ValueError(target_path + ' review is stale: upstream content changed')
+        parsed = _strict_yaml_load(files[target_path], 'Invalid ' + target_path + ' content')
+        if not isinstance(parsed, dict) or not isinstance(parsed.get('dependencies'), list):
+            raise ValueError(target_path + ' dependencies declaration missing or invalid')
+        pending = {}
+        for removal in entry['removals']:
+            if not isinstance(removal.get('reason'), str) or not removal['reason']:
+                raise ValueError('Dependency removal reason must be documented: ' +
+                                  target_path + '#' + str(removal.get('name')))
+            dep_key = (removal['name'], removal['version'])
+            if dep_key in pending:
+                raise ValueError('Duplicate dependency removal identity in registry: ' +
+                                  target_path + '#' + str(dep_key))
+            pending[dep_key] = removal['reason']
+        remaining = []
+        found = set()
+        for dep in parsed['dependencies']:
+            if not isinstance(dep, dict):
+                raise ValueError('Invalid ' + target_path + ' dependency entry')
+            dep_key = (dep.get('name'), dep.get('version'))
+            if dep_key in pending:
+                if dep_key in found:
+                    raise ValueError('Ambiguous dependency identity in ' + target_path + ': ' + str(dep_key))
+                found.add(dep_key)
+                provenance.append({'target_path': target_path, 'name': dep_key[0], 'version': dep_key[1],
+                                    'reason': pending[dep_key]})
+                continue
+            remaining.append(dep)
+        missing = set(pending) - found
+        if missing:
+            raise ValueError('Dependency removal target not found in ' + target_path + ': ' +
+                              ', '.join(sorted(name for name, version in missing)))
+        parsed['dependencies'] = remaining
+        updated[target_path] = yaml.safe_dump(parsed, sort_keys=True).encode()
     return updated, provenance

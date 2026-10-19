@@ -30,7 +30,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
-from telecom.contract import validate
+from telecom.contract import identity, validate
 from telecom import chart_adapters, multi_image, subcharts
 from telecom.package import prepare
 
@@ -1451,8 +1451,8 @@ class ChartAdapterValuesOverrideTests(unittest.TestCase):
         updated, provenance = chart_adapters.apply_values_overrides(self.files, self.manifest, self.evidence)
         parsed = yaml.safe_load(updated['values.yaml'])
         self.assertEqual(parsed['probe']['tag'], 'v1.0.1')
-        registered = chart_adapters.VALUES_OVERRIDES[('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)]['overrides']['probe.tag']
-        self.assertEqual(provenance, [{'key_path': 'probe.tag', 'value': 'v1.0.1',
+        registered = chart_adapters.VALUES_OVERRIDES[('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)][0]['overrides']['probe.tag']
+        self.assertEqual(provenance, [{'target_path': 'values.yaml', 'key_path': 'probe.tag', 'value': 'v1.0.1',
                                         'purpose': registered['purpose'], 'security_impact': registered['security_impact']}])
         # unrelated keys preserved
         self.assertEqual(parsed['amf']['tag'], 'v1.0.0')
@@ -1486,8 +1486,9 @@ class ChartAdapterValuesOverrideTests(unittest.TestCase):
         values.yaml -- exercised via mock.patch.dict with a deliberately
         bad registry entry, never a caller-supplied override."""
         key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
-        bad_entry = {key: {'original_sha256': hashlib.sha256(self.files['values.yaml']).hexdigest(),
-                            'overrides': {'mongodb.enabled': {'value': False, 'purpose': 'x', 'security_impact': 'x'}}}}
+        bad_entry = {key: [{'target_path': 'values.yaml',
+                             'original_sha256': hashlib.sha256(self.files['values.yaml']).hexdigest(),
+                             'overrides': {'mongodb.enabled': {'value': False, 'purpose': 'x', 'security_impact': 'x'}}}]}
         with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
             with self.assertRaisesRegex(ValueError, 'does not exist in original values.yaml'):
                 chart_adapters.apply_values_overrides(self.files, self.manifest, self.evidence)
@@ -1496,8 +1497,10 @@ class ChartAdapterValuesOverrideTests(unittest.TestCase):
         """No arbitrary YAML edits: an override value that is a dict/list
         is rejected outright, never applied."""
         key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
-        bad_entry = {key: {'original_sha256': hashlib.sha256(self.files['values.yaml']).hexdigest(),
-                            'overrides': {'probe.tag': {'value': {'nested': 'structure'}, 'purpose': 'x', 'security_impact': 'x'}}}}
+        bad_entry = {key: [{'target_path': 'values.yaml',
+                             'original_sha256': hashlib.sha256(self.files['values.yaml']).hexdigest(),
+                             'overrides': {'probe.tag': {'value': {'nested': 'structure'},
+                                                          'purpose': 'x', 'security_impact': 'x'}}}]}
         with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
             with self.assertRaisesRegex(ValueError, 'must be a scalar'):
                 chart_adapters.apply_values_overrides(self.files, self.manifest, self.evidence)
@@ -1513,8 +1516,9 @@ class ChartAdapterValuesOverrideTests(unittest.TestCase):
         an ambiguity it cannot correctly resolve -- fails closed instead."""
         duplicated = b'probe:\n  tag: v1.0.0\nprobe:\n  tag: v2.0.0\n'
         key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
-        bad_entry = {key: {'original_sha256': hashlib.sha256(duplicated).hexdigest(),
-                            'overrides': {'probe.tag': {'value': 'v3.0.0', 'purpose': 'x', 'security_impact': 'x'}}}}
+        bad_entry = {key: [{'target_path': 'values.yaml',
+                             'original_sha256': hashlib.sha256(duplicated).hexdigest(),
+                             'overrides': {'probe.tag': {'value': 'v3.0.0', 'purpose': 'x', 'security_impact': 'x'}}}]}
         files = {'Chart.yaml': self.files['Chart.yaml'], 'values.yaml': duplicated}
         with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
             with self.assertRaisesRegex(ValueError, 'Invalid values.yaml content'):
@@ -1525,8 +1529,9 @@ class ChartAdapterValuesOverrideTests(unittest.TestCase):
         scalar -- rejected, never silently overwritten."""
         original = b'probe:\n  tag:\n    - v1.0.0\n    - v2.0.0\n'
         key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
-        bad_entry = {key: {'original_sha256': hashlib.sha256(original).hexdigest(),
-                            'overrides': {'probe.tag': {'value': 'v3.0.0', 'purpose': 'x', 'security_impact': 'x'}}}}
+        bad_entry = {key: [{'target_path': 'values.yaml',
+                             'original_sha256': hashlib.sha256(original).hexdigest(),
+                             'overrides': {'probe.tag': {'value': 'v3.0.0', 'purpose': 'x', 'security_impact': 'x'}}}]}
         files = {'Chart.yaml': self.files['Chart.yaml'], 'values.yaml': original}
         with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
             with self.assertRaisesRegex(ValueError, 'is not a scalar in original values.yaml'):
@@ -1539,8 +1544,9 @@ class ChartAdapterValuesOverrideTests(unittest.TestCase):
         guessing which interpretation is correct."""
         original = b'probe:\n  tag: v1.0.0\n  "extra.key": true\n'
         key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
-        bad_entry = {key: {'original_sha256': hashlib.sha256(original).hexdigest(),
-                            'overrides': {'probe.tag': {'value': 'v3.0.0', 'purpose': 'x', 'security_impact': 'x'}}}}
+        bad_entry = {key: [{'target_path': 'values.yaml',
+                             'original_sha256': hashlib.sha256(original).hexdigest(),
+                             'overrides': {'probe.tag': {'value': 'v3.0.0', 'purpose': 'x', 'security_impact': 'x'}}}]}
         files = {'Chart.yaml': self.files['Chart.yaml'], 'values.yaml': original}
         with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
             with self.assertRaisesRegex(ValueError, 'Ambiguous dotted-key path'):
@@ -1567,8 +1573,9 @@ class ChartAdapterDependencyRemovalTests(unittest.TestCase):
         self.assertEqual(parsed['dependencies'], [])
         self.assertEqual(parsed['name'], 'multi-nf')    # unrelated metadata preserved
         self.assertEqual(parsed['version'], '0.1.0')
-        registered = chart_adapters.DEPENDENCY_REMOVALS[('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)]['removals'][0]
-        self.assertEqual(provenance, [{'name': 'redis-cache', 'version': '1.0.0', 'reason': registered['reason']}])
+        registered = chart_adapters.DEPENDENCY_REMOVALS[('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)][0]['removals'][0]
+        self.assertEqual(provenance, [{'target_path': 'Chart.yaml', 'name': 'redis-cache', 'version': '1.0.0',
+                                        'reason': registered['reason']}])
 
     def test_original_files_dict_never_mutated(self):
         original = dict(self.files)
@@ -1596,8 +1603,9 @@ class ChartAdapterDependencyRemovalTests(unittest.TestCase):
         """Registered to remove a name that Chart.yaml's dependencies:
         list does not actually declare -- raises, never a silent no-op."""
         key = ('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)
-        bad_entry = {key: {'original_sha256': hashlib.sha256(PARENT_CHART_WITH_DEPENDENCY).hexdigest(),
-                            'removals': [{'name': 'other-cache', 'version': '1.0.0', 'reason': 'x'}]}}
+        bad_entry = {key: [{'target_path': 'Chart.yaml',
+                             'original_sha256': hashlib.sha256(PARENT_CHART_WITH_DEPENDENCY).hexdigest(),
+                             'removals': [{'name': 'other-cache', 'version': '1.0.0', 'reason': 'x'}]}]}
         with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
             with self.assertRaisesRegex(ValueError, 'Dependency removal target not found'):
                 chart_adapters.apply_dependency_removals(self.files, self.manifest, self.evidence)
@@ -1605,8 +1613,9 @@ class ChartAdapterDependencyRemovalTests(unittest.TestCase):
     def test_dependency_version_mismatch_rejected(self):
         """Right name, wrong version -- still not a match, still raises."""
         key = ('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)
-        bad_entry = {key: {'original_sha256': hashlib.sha256(PARENT_CHART_WITH_DEPENDENCY).hexdigest(),
-                            'removals': [{'name': 'redis-cache', 'version': '9.9.9', 'reason': 'x'}]}}
+        bad_entry = {key: [{'target_path': 'Chart.yaml',
+                             'original_sha256': hashlib.sha256(PARENT_CHART_WITH_DEPENDENCY).hexdigest(),
+                             'removals': [{'name': 'redis-cache', 'version': '9.9.9', 'reason': 'x'}]}]}
         with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
             with self.assertRaisesRegex(ValueError, 'Dependency removal target not found'):
                 chart_adapters.apply_dependency_removals(self.files, self.manifest, self.evidence)
@@ -1621,8 +1630,9 @@ class ChartAdapterDependencyRemovalTests(unittest.TestCase):
                       b'dependencies:\n  - name: redis-cache\n    version: 1.0.0\n'
                       b'dependencies:\n  - name: other\n    version: 2.0.0\n')
         key = ('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)
-        bad_entry = {key: {'original_sha256': hashlib.sha256(duplicated).hexdigest(),
-                            'removals': [{'name': 'redis-cache', 'version': '1.0.0', 'reason': 'x'}]}}
+        bad_entry = {key: [{'target_path': 'Chart.yaml',
+                             'original_sha256': hashlib.sha256(duplicated).hexdigest(),
+                             'removals': [{'name': 'redis-cache', 'version': '1.0.0', 'reason': 'x'}]}]}
         with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
             with self.assertRaisesRegex(ValueError, 'Invalid Chart.yaml content'):
                 chart_adapters.apply_dependency_removals({'Chart.yaml': duplicated}, self.manifest, self.evidence)
@@ -1633,11 +1643,261 @@ class ChartAdapterDependencyRemovalTests(unittest.TestCase):
         malformed = (b'apiVersion: v2\nname: multi-nf\nversion: 0.1.0\n'
                      b'dependencies:\n  - "just-a-string"\n')
         key = ('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)
-        bad_entry = {key: {'original_sha256': hashlib.sha256(malformed).hexdigest(),
-                            'removals': [{'name': 'redis-cache', 'version': '1.0.0', 'reason': 'x'}]}}
+        bad_entry = {key: [{'target_path': 'Chart.yaml',
+                             'original_sha256': hashlib.sha256(malformed).hexdigest(),
+                             'removals': [{'name': 'redis-cache', 'version': '1.0.0', 'reason': 'x'}]}]}
         with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
             with self.assertRaisesRegex(ValueError, 'Invalid Chart.yaml dependency entry'):
                 chart_adapters.apply_dependency_removals({'Chart.yaml': malformed}, self.manifest, self.evidence)
+
+
+REDIS_CHART_WITH_NESTED_DEP = (
+    b'apiVersion: v2\nname: redis-cache\nversion: 1.0.0\n'
+    b'dependencies:\n  - name: cache-backend\n    version: 1.0.0\n'
+)
+CACHE_BACKEND_ARCHIVE = b'synthetic-nested-packaged-dependency-for-subchart-scoped-removal-tests\n'
+REDIS_VALUES = b'cacheMode: standalone\nmaxMemoryMb: 256\n'
+
+
+class SubchartScopedAdaptationTests(unittest.TestCase):
+    """Extends apply_values_overrides()/apply_dependency_removals() to
+    target a vendored subchart's own values.yaml/Chart.yaml, not only the
+    top-level chart's -- modeled directly on the real free5GC finding that
+    NRF/UDR/WebUI each declare their OWN MongoDB dependency inside their
+    OWN Chart.yaml, one level below the top-level free5gc chart. "redis-cache"
+    here stands in for that pattern; "cache-backend" stands in for the
+    vendored MongoDB archive. Keyed to synthetic commit ('a'*40); no real
+    free5GC entry exists."""
+
+    SUBCHART_COMMIT = 'a' * 40
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name)
+        shutil.copytree(CHART, self.workspace / 'chart')
+        (self.workspace / 'chart/Chart.yaml').write_bytes(PARENT_CHART_WITH_DEPENDENCY)
+        redis_root = self.workspace / 'chart/charts/redis-cache'
+        (redis_root / 'templates').mkdir(parents=True)
+        (redis_root / 'charts').mkdir(parents=True)
+        (redis_root / 'Chart.yaml').write_bytes(REDIS_CHART_WITH_NESTED_DEP)
+        (redis_root / 'values.yaml').write_bytes(REDIS_VALUES)
+        (redis_root / 'templates/deployment.yaml').write_bytes(SUBCHART_DEPLOYMENT)
+        (redis_root / 'charts/cache-backend-1.0.0.tgz').write_bytes(CACHE_BACKEND_ARCHIVE)
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': self.SUBCHART_COMMIT}
+        manifest['images'] = manifest['images'] + [REDIS_IMAGE_ENTRY]
+        self.manifest = validate(manifest)
+        self.evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': self.SUBCHART_COMMIT}
+
+    def read_files(self, extra=()):
+        names = ['Chart.yaml', 'values.yaml', 'charts/redis-cache/Chart.yaml', 'charts/redis-cache/values.yaml',
+                 'charts/redis-cache/templates/deployment.yaml', 'charts/redis-cache/charts/cache-backend-1.0.0.tgz']
+        files = {name: (self.workspace / 'chart' / name).read_bytes() for name in names}
+        files.update(extra)
+        return files
+
+    def vendored_dependencies_after_adaptation(self):
+        """redis-cache itself remains a (now smaller) vendored subchart of
+        the top-level chart after adaptation -- separately, and
+        pre-existing from an earlier milestone, subcharts.py still
+        requires an explicit reviewed inventory for whatever vendored
+        content remains. Computed here from the SAME chart_adapters
+        functions prepare() calls internally, so it exactly matches what
+        prepare() will independently produce."""
+        files = self.read_files()
+        files, _ = chart_adapters.adapt(files, self.manifest, self.evidence)
+        files, _ = chart_adapters.apply_values_overrides(files, self.manifest, self.evidence)
+        files, _ = chart_adapters.apply_dependency_removals(files, self.manifest, self.evidence)
+        return {n: hashlib.sha256(v).hexdigest() for n, v in files.items() if n.startswith('charts/')}
+
+    def test_subchart_scoped_values_override_and_dependency_removal_end_to_end(self):
+        """Full package.prepare() run: a subchart-scoped values override,
+        a subchart-scoped dependency removal, and the paired nested-archive
+        removal all compose correctly, in the right order, and
+        subcharts.validate() sees a fully consistent post-adaptation state
+        (dependency/archive consistency)."""
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence,
+                          vendored_dependencies=self.vendored_dependencies_after_adaptation())
+        provenance = result['adaptation_provenance']
+        self.assertEqual(provenance['values_overrides_applied'],
+                          [{'target_path': 'charts/redis-cache/values.yaml', 'key_path': 'cacheMode',
+                            'value': 'cluster',
+                            'purpose': chart_adapters.VALUES_OVERRIDES[('multi-nf', '0.1.0', self.SUBCHART_COMMIT)]
+                                       [0]['overrides']['cacheMode']['purpose'],
+                            'security_impact': chart_adapters.VALUES_OVERRIDES[
+                                ('multi-nf', '0.1.0', self.SUBCHART_COMMIT)][0]['overrides']['cacheMode'][
+                                'security_impact']}])
+        self.assertEqual([d['target_path'] for d in provenance['dependency_declarations_removed']],
+                          ['charts/redis-cache/Chart.yaml'])
+        self.assertEqual([p['path'] for p in provenance['removed_files']],
+                          ['charts/redis-cache/charts/cache-backend-1.0.0.tgz'])
+        self.assertIn('redis-cache', result['image_discovery'])
+
+    def test_post_adaptation_digest_reflects_nested_modified_files(self):
+        """chart_digest is computed (by package.prepare(), using the exact
+        same formula reproduced here) from the FULLY adapted file set,
+        including the nested subchart files this round's mechanism
+        touches -- not just the top-level ones."""
+        root = self.workspace / 'chart'
+        raw_files = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+        raw_digest = 'sha256:' + identity({n: hashlib.sha256(v).hexdigest() for n, v in raw_files.items()})
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence,
+                          vendored_dependencies=self.vendored_dependencies_after_adaptation())
+        self.assertNotEqual(result['chart_digest'], raw_digest)
+
+    def test_wrong_target_path_rejected(self):
+        for bad_path in ('/etc/values.yaml', '../values.yaml', 'charts/redis-cache/secrets.yaml',
+                          'charts/../values.yaml', 'charts/redis-cache/charts/a/charts/b/values.yaml'):
+            key = ('multi-nf', '0.1.0', self.SUBCHART_COMMIT)
+            bad_entry = {key: [{'target_path': bad_path, 'original_sha256': 'f' * 64,
+                                 'overrides': {'x': {'value': 1, 'purpose': 'x', 'security_impact': 'x'}}}]}
+            with self.subTest(bad_path=bad_path), mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
+                with self.assertRaisesRegex(ValueError, 'Unsupported or unreviewed adaptation target path'):
+                    chart_adapters.apply_values_overrides(self.read_files(), self.manifest, self.evidence)
+
+    def test_bounded_nesting_depth_exactly_two_accepted(self):
+        self.assertEqual(chart_adapters._validate_target_path('charts/redis-cache/charts/x/values.yaml'),
+                          'charts/redis-cache/charts/x/values.yaml')
+
+    def test_missing_subchart_target_rejected(self):
+        files = self.read_files()
+        del files['charts/redis-cache/values.yaml']
+        with self.assertRaisesRegex(ValueError, 'Values override target file missing'):
+            chart_adapters.apply_values_overrides(files, self.manifest, self.evidence)
+
+    def test_nested_duplicate_yaml_key_fails_closed(self):
+        duplicated = b'cacheMode: a\ncacheMode: b\n'
+        key = ('multi-nf', '0.1.0', self.SUBCHART_COMMIT)
+        bad_entry = {key: [{'target_path': 'charts/redis-cache/values.yaml',
+                             'original_sha256': hashlib.sha256(duplicated).hexdigest(),
+                             'overrides': {'cacheMode': {'value': 'c', 'purpose': 'x', 'security_impact': 'x'}}}]}
+        files = self.read_files({'charts/redis-cache/values.yaml': duplicated})
+        with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Invalid charts/redis-cache/values.yaml content'):
+                chart_adapters.apply_values_overrides(files, self.manifest, self.evidence)
+
+    def test_nested_ambiguous_dotted_key_path_rejected(self):
+        original = b'cacheMode: standalone\n"extra.key": true\n'
+        key = ('multi-nf', '0.1.0', self.SUBCHART_COMMIT)
+        bad_entry = {key: [{'target_path': 'charts/redis-cache/values.yaml',
+                             'original_sha256': hashlib.sha256(original).hexdigest(),
+                             'overrides': {'cacheMode': {'value': 'c', 'purpose': 'x', 'security_impact': 'x'}}}]}
+        files = self.read_files({'charts/redis-cache/values.yaml': original})
+        with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Ambiguous dotted-key path'):
+                chart_adapters.apply_values_overrides(files, self.manifest, self.evidence)
+
+    def test_duplicate_target_path_in_values_override_registry_rejected(self):
+        key = ('multi-nf', '0.1.0', self.SUBCHART_COMMIT)
+        bad_entry = {key: [
+            {'target_path': 'charts/redis-cache/values.yaml',
+             'original_sha256': hashlib.sha256(REDIS_VALUES).hexdigest(),
+             'overrides': {'cacheMode': {'value': 'a', 'purpose': 'x', 'security_impact': 'x'}}},
+            {'target_path': 'charts/redis-cache/values.yaml',
+             'original_sha256': hashlib.sha256(REDIS_VALUES).hexdigest(),
+             'overrides': {'maxMemoryMb': {'value': 512, 'purpose': 'x', 'security_impact': 'x'}}},
+        ]}
+        with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Duplicate values-override target path'):
+                chart_adapters.apply_values_overrides(self.read_files(), self.manifest, self.evidence)
+
+    def test_duplicate_dependency_identity_in_registry_rejected(self):
+        key = ('multi-nf', '0.1.0', self.SUBCHART_COMMIT)
+        bad_entry = {key: [{'target_path': 'charts/redis-cache/Chart.yaml',
+                             'original_sha256': hashlib.sha256(REDIS_CHART_WITH_NESTED_DEP).hexdigest(),
+                             'removals': [{'name': 'cache-backend', 'version': '1.0.0', 'reason': 'x'},
+                                          {'name': 'cache-backend', 'version': '1.0.0', 'reason': 'y'}]}]}
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Duplicate dependency removal identity'):
+                chart_adapters.apply_dependency_removals(self.read_files(), self.manifest, self.evidence)
+
+    def test_ambiguous_dependency_identity_in_actual_file_rejected(self):
+        """The ACTUAL target file (not the registry) declares the same
+        (name, version) dependency twice -- ambiguous, rejected rather
+        than silently removing just one occurrence."""
+        ambiguous = (b'apiVersion: v2\nname: redis-cache\nversion: 1.0.0\n'
+                     b'dependencies:\n  - name: cache-backend\n    version: 1.0.0\n'
+                     b'  - name: cache-backend\n    version: 1.0.0\n')
+        key = ('multi-nf', '0.1.0', self.SUBCHART_COMMIT)
+        bad_entry = {key: [{'target_path': 'charts/redis-cache/Chart.yaml',
+                             'original_sha256': hashlib.sha256(ambiguous).hexdigest(),
+                             'removals': [{'name': 'cache-backend', 'version': '1.0.0', 'reason': 'x'}]}]}
+        files = self.read_files({'charts/redis-cache/Chart.yaml': ambiguous})
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Ambiguous dependency identity'):
+                chart_adapters.apply_dependency_removals(files, self.manifest, self.evidence)
+
+    def test_duplicate_target_path_in_dependency_removal_registry_rejected(self):
+        key = ('multi-nf', '0.1.0', self.SUBCHART_COMMIT)
+        bad_entry = {key: [
+            {'target_path': 'charts/redis-cache/Chart.yaml',
+             'original_sha256': hashlib.sha256(REDIS_CHART_WITH_NESTED_DEP).hexdigest(),
+             'removals': [{'name': 'cache-backend', 'version': '1.0.0', 'reason': 'x'}]},
+            {'target_path': 'charts/redis-cache/Chart.yaml',
+             'original_sha256': hashlib.sha256(REDIS_CHART_WITH_NESTED_DEP).hexdigest(),
+             'removals': [{'name': 'cache-backend', 'version': '1.0.0', 'reason': 'y'}]},
+        ]}
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Duplicate dependency-removal target path'):
+                chart_adapters.apply_dependency_removals(self.read_files(), self.manifest, self.evidence)
+
+    def test_subchart_target_original_sha_mismatch_rejected(self):
+        """Upstream drift in the SUBCHART file (not the top-level chart)
+        must fail closed exactly like top-level drift does."""
+        files = self.read_files()
+        files['charts/redis-cache/values.yaml'] = files['charts/redis-cache/values.yaml'] + b'\nextra: true\n'
+        with self.assertRaisesRegex(ValueError, 'charts/redis-cache/values.yaml review is stale'):
+            chart_adapters.apply_values_overrides(files, self.manifest, self.evidence)
+
+    def test_subchart_wrong_source_commit_no_adaptation_applied(self):
+        """A chart identity mismatch (wrong source commit) silently
+        applies no subchart-scoped adaptation at all -- not an error,
+        just an absent match, exactly mirroring the top-level behavior."""
+        manifest = copy.deepcopy(dict(self.manifest))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '6' * 40}
+        files = self.read_files()
+        updated, provenance = chart_adapters.apply_values_overrides(files, manifest, self.evidence)
+        self.assertEqual(updated, files)
+        self.assertEqual(provenance, [])
+        updated, provenance = chart_adapters.apply_dependency_removals(files, manifest, self.evidence)
+        self.assertEqual(updated, files)
+        self.assertEqual(provenance, [])
+
+    def test_subchart_unverified_source_evidence_rejected(self):
+        """A declared-but-unverified acquisition authority is rejected for
+        subchart-scoped targets exactly like it is for top-level ones."""
+        declared = {'authority': 'PROVIDER_DECLARED', 'commit': self.SUBCHART_COMMIT}
+        with self.assertRaisesRegex(ValueError, 'verified source acquisition evidence'):
+            chart_adapters.apply_values_overrides(self.read_files(), self.manifest, declared)
+        with self.assertRaisesRegex(ValueError, 'verified source acquisition evidence'):
+            chart_adapters.apply_dependency_removals(self.read_files(), self.manifest, declared)
+
+    def test_missing_archive_removal_rejected_even_with_dependency_declaration_removed(self):
+        """The paired REMOVALS entry is the ONLY thing that deletes the
+        vendored packaged archive -- if it is absent, subcharts.py's
+        unconditional Option B rejection fires regardless of the
+        Chart.yaml dependency-declaration removal having been correctly
+        applied. One of the two reviewed operations being missing must
+        still fail closed, never package a partially-adapted chart."""
+        with mock.patch.dict(chart_adapters.REMOVALS, {}, clear=True):
+            vendored = self.vendored_dependencies_after_adaptation()
+            with self.assertRaisesRegex(ValueError, 'Packaged Helm dependency archives'):
+                prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence,
+                        vendored_dependencies=vendored)
+
+    def test_missing_dependency_declaration_removal_rejected_even_with_archive_removed(self):
+        """The paired DEPENDENCY_REMOVALS entry is the ONLY thing that
+        drops the Chart.yaml declaration -- if it is absent,
+        subcharts.validate() catches the resulting declared-but-not-
+        vendored inconsistency even though the archive itself was
+        correctly removed, so a half-applied adaptation pair still fails
+        closed rather than packaging successfully."""
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, {}, clear=True):
+            vendored = self.vendored_dependencies_after_adaptation()
+            with self.assertRaisesRegex(ValueError, 'Declared dependency is not vendored locally'):
+                prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence,
+                        vendored_dependencies=vendored)
 
 
 class UnifiedAdaptationProvenanceTests(unittest.TestCase):
