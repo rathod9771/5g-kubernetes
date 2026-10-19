@@ -183,7 +183,7 @@ class Pipeline:
                         if spec['image_mode']!='prebuilt': raise Denied('Multi-image manifests require prebuilt image mode')
                         manifest=validate(manifest)
                         stage='package';self._state(principal,job,'PACKAGING')
-                        package=prepare(source_root,spec['chart'],manifest,self.service.helm)
+                        package=prepare(source_root,spec['chart'],manifest,self.service.helm,source_evidence=evidence)
                         if cancel(): raise ExecutionError(stage,'CANCELLED')
                         self._state(principal,job,'PACKAGE_VALIDATED',package_digests=package['package_digests'])
                         stage='image';self._state(principal,job,'VERIFYING_IMAGES',rendered_identities=sorted(package['image_discovery']))

@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 from telecom.contract import validate
-from telecom import multi_image
+from telecom import chart_adapters, multi_image
 from telecom.package import prepare
 
 MANIFEST = json.loads((ROOT / 'examples/telecom/multi-nf.json').read_text())
@@ -689,6 +689,193 @@ class PrepareV2PackagingTests(unittest.TestCase):
         overlay.write_text(values)
         with self.assertRaises(ValueError):
             prepare(self.workspace, 'chart', self.manifest, helm='helm')
+
+
+HOOK_ORIGINAL = (b'apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Release.Name }}-connectivity-test\n'
+                  b'  annotations:\n    helm.sh/hook: test\nspec:\n  containers:\n    - name: test\n'
+                  b'      image: busybox\n      command: ["sh", "-c", "echo ok"]\n')
+
+BUSYBOX_IMAGE_ENTRY = {
+    'identity': 'busybox-test', 'kind': 'supporting-container', 'role': None, 'purpose': 'test-utility',
+    'repository': 'example.invalid/research/busybox', 'tag_pin': 'v1.36.1',
+    'digest': 'sha256:' + 'b' * 64, 'platform': 'linux/amd64',
+}
+
+
+class ChartAdapterTests(unittest.TestCase):
+    """Synthetic reproduction of the documented free5GC defect: a Helm test
+    hook hardcodes `image: busybox` and omits pod-security settings,
+    bypassing the chart's own values.yaml-driven image contract entirely
+    (a literal image string cannot be fixed by --set/a values overlay).
+    This exercises chart_adapters.py's own offline, byte-digest-gated patch
+    mechanism against a purpose-built fixture matching its one registered
+    SYNTHETIC entry. It never fetches, clones, or asserts anything about the
+    real upstream free5GC chart, which exists only on the Dell and was not
+    accessed from this (HP) environment."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name)
+        shutil.copytree(CHART, self.workspace / 'chart')
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '0' * 40}
+        manifest['images'] = manifest['images'] + [BUSYBOX_IMAGE_ENTRY]
+        self.manifest = validate(manifest)
+        # The evidence execution.acquire() would have produced for THIS
+        # commit, had pipeline.run() actually acquired it. Threaded through
+        # explicitly here because these tests call prepare() directly,
+        # bypassing pipeline.run()/acquire() -- see
+        # test_telecom_multi_image_pipeline.py for the real, end-to-end
+        # acquire()-backed path.
+        self.evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': '0' * 40}
+
+    def write_hook(self, content):
+        (self.workspace / 'chart/templates/test-hook.yaml').write_bytes(content)
+
+    def test_hardcoded_busybox_hook_rejected_without_matching_adapter(self):
+        """A different source commit means no registered adapter matches --
+        the hook is rejected on its own merits (Option B), never silently
+        passed through just because an adapter mechanism exists somewhere.
+        No evidence is passed at all, proving it's irrelevant when nothing
+        matches the registry in the first place."""
+        self.write_hook(HOOK_ORIGINAL)
+        manifest = copy.deepcopy(dict(self.manifest))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '1' * 40}
+        with self.assertRaises(ValueError):
+            prepare(self.workspace, 'chart', manifest, helm='helm')
+
+    def test_hardcoded_busybox_hook_adapted_to_digest_pinned_and_compliant(self):
+        self.write_hook(HOOK_ORIGINAL)
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+        self.assertEqual([a['path'] for a in result['adapted_files']], ['templates/test-hook.yaml'])
+        discovery = result['image_discovery']
+        self.assertIn('busybox-test', discovery)
+        self.assertEqual(discovery['busybox-test']['kind'], 'digest')
+        self.assertTrue(all(o['hook'] for o in discovery['busybox-test']['occurrences']))
+
+    def test_prepare_never_produces_registry_verification_evidence(self):
+        """Adaptation only gets a hook PAST packaging; it never substitutes
+        for the pipeline's own independent, live registry verification
+        (pipeline.verify_images), which prepare() alone never runs."""
+        self.write_hook(HOOK_ORIGINAL)
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+        self.assertNotIn('image_verification', result)
+
+    def test_adapter_rejects_stale_review_when_hook_content_drifted(self):
+        self.write_hook(HOOK_ORIGINAL.replace(b'echo ok', b'echo mutated'))
+        with self.assertRaisesRegex(ValueError, 'stale'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+
+    def test_adapter_target_file_missing_rejected(self):
+        # No templates/test-hook.yaml written at all; the registered adapter
+        # has nothing to patch, so it must fail closed rather than no-op.
+        with self.assertRaisesRegex(ValueError, 'missing'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+
+    def test_adapter_does_not_mask_unrelated_undeclared_image(self):
+        """Adaptation only ever touches its own registered target file; an
+        unrelated undeclared image elsewhere in the same chart is still
+        caught by the unweakened multi_image.verify() check."""
+        self.write_hook(HOOK_ORIGINAL)
+        bad = self.workspace / 'chart/templates/rogue.yaml'
+        bad.write_text('apiVersion: v1\nkind: Pod\nmetadata:\n  name: rogue\nspec:\n'
+                        '  automountServiceAccountToken: false\n  containers:\n'
+                        '    - name: x\n      image: attacker.invalid/payload:v1\n')
+        with self.assertRaises(ValueError):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+
+    def test_adapted_hook_still_requires_its_image_to_be_declared(self):
+        """A badly-reviewed adapter patch -- one whose replacement image
+        isn't actually declared in manifest['images'] -- is still caught by
+        the normal image-declaration check; adaptation doesn't get a free
+        pass just because the content came from a reviewed patch, verified
+        evidence and all."""
+        self.write_hook(HOOK_ORIGINAL)
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '0' * 40}
+        # busybox-test is deliberately NOT declared here.
+        manifest = validate(manifest)
+        with self.assertRaises(ValueError):
+            prepare(self.workspace, 'chart', manifest, helm='helm', source_evidence=self.evidence)
+
+    def test_vendored_subchart_directory_rejected_today(self):
+        """Documents CURRENT behavior, not new support: a `charts/` vendored
+        subchart tree (how free5GC-style charts bundle dependencies) is
+        rejected outright by safe_chart_inputs()'s path allowlist today --
+        see the REPORT's 'free5GC-specific limitations' for why full
+        dependency-chart traversal is explicitly out of scope here. The hook
+        is adapted successfully first (valid evidence), isolating this as
+        the one and only remaining failure."""
+        self.write_hook(HOOK_ORIGINAL)
+        sub = self.workspace / 'chart/charts/mongodb/templates'
+        sub.mkdir(parents=True)
+        (self.workspace / 'chart/charts/mongodb/Chart.yaml').write_text(
+            'apiVersion: v2\nname: mongodb\nversion: 1.0.0\n')
+        with self.assertRaises(ValueError):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+
+    def test_embedded_private_key_in_template_rejected(self):
+        self.write_hook(HOOK_ORIGINAL)
+        bad = self.workspace / 'chart/templates/keyed.yaml'
+        bad.write_text('# -----BEGIN RSA PRIVATE KEY-----\n# fake\n# -----END RSA PRIVATE KEY-----\n')
+        with self.assertRaises(ValueError):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+
+    def test_adapter_is_noop_for_schema_v1(self):
+        v1 = validate(json.loads((ROOT / 'examples/telecom/ran.json').read_text()))
+        files = {'Chart.yaml': b'name: multi-nf\nversion: 0.1.0\n'}
+        adapted, provenance = chart_adapters.adapt(files, v1)
+        self.assertEqual(adapted, files)
+        self.assertEqual(provenance, [])
+
+    def test_missing_source_evidence_rejects_adaptation(self):
+        """Direct prepare() call, bypassing pipeline.run()/acquire() entirely
+        -- no source_evidence at all -- cannot trigger adaptation even
+        though the chart identity otherwise matches a registered entry."""
+        self.write_hook(HOOK_ORIGINAL)
+        with self.assertRaisesRegex(ValueError, 'verified source acquisition evidence'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm')
+
+    def test_provider_declared_evidence_rejected_for_adaptation(self):
+        """A source that was never actually acquired (oci/helm, or any
+        source whose evidence is merely self-reported) must not unlock
+        adaptation just because a dict happens to be present."""
+        self.write_hook(HOOK_ORIGINAL)
+        declared = {'authority': 'PROVIDER_DECLARED', 'commit': '0' * 40}
+        with self.assertRaisesRegex(ValueError, 'verified source acquisition evidence'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=declared)
+
+    def test_evidence_commit_mismatch_rejected(self):
+        """A verified authority whose OWN commit field disagrees with the
+        manifest's declared commit must not authorize adaptation -- the
+        evidence has to attest to the EXACT commit being packaged."""
+        self.write_hook(HOOK_ORIGINAL)
+        mismatched = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': '9' * 40}
+        with self.assertRaisesRegex(ValueError, 'verified source acquisition evidence'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=mismatched)
+
+    def test_fabricated_evidence_still_blocked_by_content_drift(self):
+        """A hand-constructed dict that LOOKS exactly like genuine acquire()
+        evidence (right shape, right authority, right commit) -- never
+        produced by any real acquisition -- still cannot make adaptation
+        accept drifted content. The real security boundary is the per-file
+        byte-exact digest match, not the evidence dict's shape; a caller
+        able to fabricate the latter still gains nothing without the
+        former (see chart_adapters.adapt()'s documented limitation)."""
+        fabricated = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': '0' * 40}
+        self.write_hook(HOOK_ORIGINAL.replace(b'echo ok', b'echo mutated'))
+        with self.assertRaisesRegex(ValueError, 'stale'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=fabricated)
+
+    def test_unreviewed_chart_identity_remains_unchanged_regardless_of_evidence(self):
+        """Even picture-perfect evidence cannot force adaptation onto a
+        chart identity with no registered adapter entry at all."""
+        files = {'Chart.yaml': b'name: some-other-chart\nversion: 9.9.9\n'}
+        manifest = dict(self.manifest, source={'kind': 'local-git', 'path': 'chart', 'commit': '0' * 40})
+        adapted, provenance = chart_adapters.adapt(files, manifest, self.evidence)
+        self.assertEqual(adapted, files)
+        self.assertEqual(provenance, [])
 
 
 if __name__ == '__main__':

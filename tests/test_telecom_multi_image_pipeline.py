@@ -16,6 +16,7 @@ tests mock `telecom.pipeline.prebuilt` -- no live registry, cluster or OSM
 call is made anywhere in this file.
 """
 import copy
+import hashlib
 import json
 import shutil
 import subprocess
@@ -28,6 +29,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 
+from telecom import chart_adapters
 from telecom.execution import ExecutionError, Policy
 from telecom.pipeline import Pipeline
 from telecom.security import Denied, Principal
@@ -36,6 +38,9 @@ from telecom.service import Service
 HELM = '/usr/local/bin/helm.real' if Path('/usr/local/bin/helm.real').exists() else 'helm'
 MANIFEST = json.loads((ROOT / 'examples/telecom/multi-nf.json').read_text())
 CHART = ROOT / 'examples/telecom/multi-nf-chart'
+HOOK_ORIGINAL = (b'apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Release.Name }}-connectivity-test\n'
+                  b'  annotations:\n    helm.sh/hook: test\nspec:\n  containers:\n    - name: test\n'
+                  b'      image: busybox\n      command: ["sh", "-c", "echo ok"]\n')
 
 
 class MultiImagePipelineTests(unittest.TestCase):
@@ -95,6 +100,94 @@ class MultiImagePipelineTests(unittest.TestCase):
             self.assertEqual(evidence['digest'], declared[identity]['digest'])
             self.assertEqual(evidence['rendered_reference_kind'], 'tag')
         self.assertFalse(release['production_eligible'])
+
+    def test_digest_pinned_hook_does_not_unlock_publication(self):
+        """A hook whose rendered reference is a literal `repo@sha256` digest
+        (the kind of content a reviewed chart-adaptation patch produces, see
+        chart_adapters.py) legitimately achieves per-image digest-pinned
+        execution -- but the release's OVERALL digest_pinned_execution stays
+        False, and registry_gate stays closed, because this chart family's
+        NF containers are still tag-based. One digest-pinned hook does not
+        unlock publication by itself."""
+        hook = (
+            b'apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Release.Name }}-connectivity-test\n'
+            b'  annotations:\n    helm.sh/hook: test\nspec:\n  automountServiceAccountToken: false\n'
+            b'  containers:\n    - name: test\n'
+            b'      image: example.invalid/research/busybox@sha256:' + b'b' * 64 + b'\n'
+            b'      command: ["sh", "-c", "echo ok"]\n'
+            b'      securityContext:\n        runAsNonRoot: true\n        allowPrivilegeEscalation: false\n'
+            b'        capabilities:\n          drop: ["ALL"]\n'
+            b'      resources:\n        limits:\n          cpu: 50m\n          memory: 32Mi\n'
+        )
+        (self.repo / 'chart/templates/test-hook.yaml').write_bytes(hook)
+        subprocess.run(['git', '-C', str(self.repo), 'add', '.'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), '-c', 'user.name=Offline', '-c', 'user.email=offline@example.invalid',
+                         'commit', '-m', 'add digest-pinned hook'], check=True, capture_output=True)
+        sha = subprocess.check_output(['git', '-C', str(self.repo), 'rev-parse', 'HEAD']).decode().strip()
+        manifest = copy.deepcopy(MANIFEST)
+        manifest['source'] = {'kind': 'local-git', 'path': 'repo', 'commit': sha}
+        manifest['images'] = manifest['images'] + [{
+            'identity': 'busybox-test', 'kind': 'supporting-container', 'role': None, 'purpose': 'test-utility',
+            'repository': 'example.invalid/research/busybox', 'tag_pin': 'v1.36.1',
+            'digest': 'sha256:' + 'b' * 64, 'platform': 'linux/amd64',
+        }]
+        workload = self.service.register(self.principal, manifest, 'register-hook')
+        job = self.pipeline.queue(self.principal, workload['id'], 'chart', 'queue-hook')
+        digests = dict(self.digests)
+        digests[('example.invalid/research/busybox', 'v1.36.1')] = 'sha256:' + 'b' * 64
+        resolve_patch, prebuilt_patch = self.mocks(tag_digests=digests)
+        with resolve_patch, prebuilt_patch:
+            result = self.pipeline.run(self.principal, job['id'])
+        self.assertEqual(result['state'], 'COMPLETED', result)
+        release = self.service.journal.get(self.principal, 'releases', result['release_id'])
+        self.assertEqual(release['image_verification']['busybox-test']['rendered_reference_kind'], 'digest')
+        self.assertTrue(release['image_verification']['busybox-test']['digest_pinned_execution'])
+        self.assertFalse(release['digest_pinned_execution'])
+        with self.assertRaises(Denied):
+            self.pipeline.registry_gate(self.principal, release)
+
+    def test_real_acquire_verified_evidence_unlocks_registered_adapter(self):
+        """End-to-end: a hook byte-identical to chart_adapters.py's one
+        registered SYNTHETIC entry, committed at a REAL git commit, goes
+        through the genuine pipeline.run() -> execution.acquire() path --
+        not a hand-constructed evidence dict (those are exercised in
+        isolation in tests/test_telecom_multi_image.py:ChartAdapterTests).
+        Git commit hashes can't be chosen arbitrarily, so the adapter is
+        temporarily registered under this test's actual, dynamically
+        computed commit sha (mock.patch.dict, restored after the test) --
+        this proves the source-evidence trust-binding fix works through a
+        genuine acquire()-verified commit, not just a plausible-looking
+        dict."""
+        (self.repo / 'chart/templates/test-hook.yaml').write_bytes(HOOK_ORIGINAL)
+        subprocess.run(['git', '-C', str(self.repo), 'add', '.'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), '-c', 'user.name=Offline', '-c', 'user.email=offline@example.invalid',
+                         'commit', '-m', 'add hardcoded busybox hook'], check=True, capture_output=True)
+        sha = subprocess.check_output(['git', '-C', str(self.repo), 'rev-parse', 'HEAD']).decode().strip()
+        base_entry = chart_adapters.ADAPTERS[('multi-nf', '0.1.0', '0' * 40)]
+        manifest = copy.deepcopy(MANIFEST)
+        manifest['source'] = {'kind': 'local-git', 'path': 'repo', 'commit': sha}
+        manifest['images'] = manifest['images'] + [{
+            'identity': 'busybox-test', 'kind': 'supporting-container', 'role': None, 'purpose': 'test-utility',
+            'repository': 'example.invalid/research/busybox', 'tag_pin': 'v1.36.1',
+            'digest': 'sha256:' + 'b' * 64, 'platform': 'linux/amd64',
+        }]
+        workload = self.service.register(self.principal, manifest, 'register-adapted-hook')
+        job = self.pipeline.queue(self.principal, workload['id'], 'chart', 'queue-adapted-hook')
+        digests = dict(self.digests)
+        digests[('example.invalid/research/busybox', 'v1.36.1')] = 'sha256:' + 'b' * 64
+        resolve_patch, prebuilt_patch = self.mocks(tag_digests=digests)
+        with mock.patch.dict(chart_adapters.ADAPTERS, {('multi-nf', '0.1.0', sha): base_entry}), \
+                resolve_patch, prebuilt_patch:
+            result = self.pipeline.run(self.principal, job['id'])
+        self.assertEqual(result['state'], 'COMPLETED', result)
+        release = self.service.journal.get(self.principal, 'releases', result['release_id'])
+        self.assertEqual(release['package']['adapted_files'], [{
+            'path': 'templates/test-hook.yaml',
+            'original_sha256': base_entry['templates/test-hook.yaml']['original_sha256'],
+            'replacement_sha256': hashlib.sha256(base_entry['templates/test-hook.yaml']['replacement']).hexdigest(),
+        }])
+        self.assertTrue(release['image_verification']['busybox-test']['digest_pinned_execution'])
+        self.assertFalse(release['digest_pinned_execution'])
 
     def test_wrong_architecture_fails_closed_no_release_persisted(self):
         result = self.run_job(platform='linux/arm64')

@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 import yaml
 from osm_packages import safe_chart_inputs, descriptors, validate_references, archive_bytes, json_bytes
+from . import chart_adapters
 from .contract import confined, digest, identity
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,7 +40,8 @@ def source_evidence(source, workspace):
             'fetch':'NOT_RUN', 'registry_verification':'NOT_RUN', 'build':'NOT_RUN'}
 
 
-def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None, reviewed_inputs=None):
+def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None, reviewed_inputs=None,
+            source_evidence=None):
     chart = confined(workspace, chart_path)
     if not chart.is_dir():
         raise ValueError('Local chart directory required for offline packaging')
@@ -71,6 +73,13 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
     fd=os.open(chart,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     try: capture(fd)
     finally: os.close(fd)
+    # Adaptation (if this exact chart name/version/source-commit has a
+    # reviewed entry, AND source_evidence proves independently verified
+    # acquisition -- see chart_adapters.adapt()) runs BEFORE
+    # safe_chart_inputs/multi_image.verify, not instead of them: the adapted
+    # file set still passes through the exact same, unweakened checks below
+    # as any organically authored template.
+    files, adapted_files = chart_adapters.adapt(files, manifest, source_evidence)
     safe_chart_inputs(files, reviewed=reviewed_inputs)
     for p in ('Chart.yaml', 'values.yaml'):
         if p not in files:
@@ -160,7 +169,7 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
     validate_references(scenario, inputs)
     artifacts = {scenario[k]+'.tar.gz':archive_bytes(scenario[k], {n:v for n,v in inputs.items() if n.startswith(scenario[k]+'/')}) for k in ('knf_package','nsd_package')}
     return {'namespace_portable':namespace_portable,'scenario':scenario, 'chart_digest':'sha256:'+content_hash,
-            'image_discovery':image_discovery,
+            'image_discovery':image_discovery, 'adapted_files':adapted_files,
             'package_digests':{k:'sha256:'+__import__('hashlib').sha256(v).hexdigest() for k,v in artifacts.items()},
             'helm_validation':{'outcome':'PASS','authority':'PLATFORM_OFFLINE_VERIFIED','deployed':False},
             'artifacts':{k:v.hex() for k,v in artifacts.items()}}
