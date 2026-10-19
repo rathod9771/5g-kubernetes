@@ -17,7 +17,7 @@ import unittest
 from unittest import mock
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
-from telecom.execution import (Policy,ExecutionError,acquire,unpack,oci_layout,prebuilt,build,command,verify_webhook,helm_source)
+from telecom.execution import (Policy,ExecutionError,acquire,unpack,oci_layout,prebuilt,build,command,verify_webhook,helm_source,MAX_SOURCE)
 from telecom.pipeline import Pipeline
 from telecom.service import Service,SimulatedCatalog
 from telecom.security import Principal,Denied
@@ -369,5 +369,198 @@ class PipelineTests(unittest.TestCase):
     def test_malformed_policy_cannot_turn_allowlist_into_substring_match(self):
         with self.assertRaises(Denied):Policy({'github_repositories':'https://github.com/a/b-internal'})
         with self.assertRaises(Denied):Policy({'secrets':[]})
+
+class ChartScopedSubmoduleTests(unittest.TestCase):
+    """Adversarial coverage for acquire()'s chart_path-scoped submodule/
+    symlink safety boundary -- modeled directly on the real free5GC finding
+    (github.com/free5gc/free5gc-helm, commit
+    d22485f5a95fd6bb97ec1252f0933ef5da17f96d) that charts/free5gc is a safe
+    subtree to onboard even though the same repository, elsewhere, vendors
+    an unrelated submodule at charts/free-ran-ue -- the exact scenario
+    execution.acquire() previously rejected outright (see
+    chart_adapters.py's REMOVALS/DEPENDENCY_REMOVALS comments for that
+    earlier finding)."""
+
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.repo=self.root/'repo';self.repo.mkdir()
+        subprocess.run(['git','init','--template=',str(self.repo)],check=True,capture_output=True)
+        self.policy=Policy({'local_roots':{'alice':'.'}})
+        self._outs=0
+
+    def tearDown(self): self.tmp.cleanup()
+
+    def git(self,*args):
+        return subprocess.run(['git','-C',str(self.repo)]+list(args),check=True,capture_output=True).stdout
+
+    def commit(self,message='fixture'):
+        self.git('-c','user.name=t','-c','user.email=t@example.invalid','commit','-q','-m',message)
+        return self.git('rev-parse','HEAD').decode().strip()
+
+    def write_base_chart(self):
+        (self.repo/'charts/free5gc/templates').mkdir(parents=True,exist_ok=True)
+        (self.repo/'charts/free5gc/Chart.yaml').write_text('name: free5gc\nversion: 1.1.7\n')
+        (self.repo/'charts/free5gc/templates/a.yaml').write_text('x: 1\n')
+        (self.repo/'charts/other').mkdir(parents=True,exist_ok=True)
+        (self.repo/'charts/other/Chart.yaml').write_text('name: other\n')
+        self.git('add','-A')
+        return self.commit('base')
+
+    def add_gitlink(self,path):
+        self.git('update-index','--add','--cacheinfo','160000,'+('a'*40)+','+path)
+
+    def source(self,sha):
+        return {'kind':'local-git','path':'repo','commit':sha}
+
+    def out(self):
+        self._outs+=1;return self.root/('out%d'%self._outs)
+
+    def test_unrelated_sibling_submodule_allowed_for_requested_chart(self):
+        self.write_base_chart()
+        self.add_gitlink('charts/free-ran-ue')
+        sha=self.commit('add sibling gitlink')
+        destination=self.out()
+        result=acquire(self.source(sha),self.root,destination,self.policy,chart_path='charts/free5gc')
+        self.assertTrue((destination/'Chart.yaml').is_file())
+        self.assertFalse((destination/'free-ran-ue').exists())
+        self.assertEqual(result['commit'],sha)
+
+    def test_submodule_inside_selected_chart_rejected(self):
+        self.write_base_chart()
+        self.add_gitlink('charts/free5gc/vendor')
+        sha=self.commit('nested gitlink inside chart')
+        with self.assertRaises(ExecutionError) as cm:
+            acquire(self.source(sha),self.root,self.out(),self.policy,chart_path='charts/free5gc')
+        self.assertEqual(cm.exception.code,'SUBMODULE_NOT_SUPPORTED')
+
+    def test_submodule_at_selected_chart_path_rejected(self):
+        self.write_base_chart()
+        self.add_gitlink('charts/vendored-ue')
+        sha=self.commit('gitlink at the exact requested path')
+        with self.assertRaises(ExecutionError) as cm:
+            acquire(self.source(sha),self.root,self.out(),self.policy,chart_path='charts/vendored-ue')
+        self.assertEqual(cm.exception.code,'SUBMODULE_NOT_SUPPORTED')
+
+    def test_submodule_at_ancestor_of_selected_chart_rejected(self):
+        self.write_base_chart()
+        self.add_gitlink('charts/vendored-ue')
+        sha=self.commit('gitlink ancestor of requested nested path')
+        with self.assertRaises(ExecutionError) as cm:
+            acquire(self.source(sha),self.root,self.out(),self.policy,chart_path='charts/vendored-ue/nested/path')
+        self.assertEqual(cm.exception.code,'SUBMODULE_NOT_SUPPORTED')
+
+    def test_invalid_chart_path_rejected(self):
+        sha=self.write_base_chart()
+        for bad in ('','.','/charts/free5gc','../escape','charts/../free5gc','charts//free5gc','charts/free5gc/'):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ExecutionError) as cm:
+                    acquire(self.source(sha),self.root,self.out(),self.policy,chart_path=bad)
+                self.assertEqual(cm.exception.code,'INVALID_CHART_PATH')
+
+    def test_symlink_inside_selected_chart_rejected(self):
+        self.write_base_chart()
+        (self.repo/'charts/free5gc/evil').symlink_to('/etc/passwd')
+        self.git('add','-A')
+        sha=self.commit('symlink inside chart')
+        with self.assertRaises(ExecutionError) as cm:
+            acquire(self.source(sha),self.root,self.out(),self.policy,chart_path='charts/free5gc')
+        self.assertEqual(cm.exception.code,'SYMLINK_NOT_SUPPORTED')
+
+    def test_wrong_source_commit_rejected(self):
+        self.write_base_chart()
+        with self.assertRaises(ExecutionError):
+            acquire(self.source('1'*40),self.root,self.out(),self.policy,chart_path='charts/free5gc')
+
+    def test_source_content_drift_across_commits_never_stale(self):
+        """Re-acquiring the SAME chart_path at two different, independently
+        pinned commits always returns exactly that commit's content --
+        never a stale/leftover copy from a previous call."""
+        sha1=self.write_base_chart()
+        (self.repo/'charts/free5gc/Chart.yaml').write_text('name: free5gc\nversion: 1.1.8\n')
+        self.git('add','-A')
+        sha2=self.commit('bump version')
+        out1,out2=self.out(),self.out()
+        result1=acquire(self.source(sha1),self.root,out1,self.policy,chart_path='charts/free5gc')
+        result2=acquire(self.source(sha2),self.root,out2,self.policy,chart_path='charts/free5gc')
+        self.assertIn('1.1.7',(out1/'Chart.yaml').read_text())
+        self.assertIn('1.1.8',(out2/'Chart.yaml').read_text())
+        self.assertNotEqual(result1['archive_digest'],result2['archive_digest'])
+
+    def test_root_scope_still_rejects_unrelated_submodule_unweakened(self):
+        """chart_path=None (every existing caller's behavior today) stays
+        exactly as strict as before this feature existed: ANY submodule
+        anywhere is still rejected, even one that would be an allowed
+        sibling under a chart_path scope."""
+        self.write_base_chart()
+        self.add_gitlink('charts/free-ran-ue')
+        sha=self.commit('sibling gitlink, root scope')
+        with self.assertRaises(ExecutionError) as cm:
+            acquire(self.source(sha),self.root,self.out(),self.policy)
+        self.assertEqual(cm.exception.code,'SUBMODULE_NOT_SUPPORTED')
+
+    def test_chart_path_pointing_at_a_file_rejected(self):
+        sha=self.write_base_chart()
+        with self.assertRaises(ExecutionError) as cm:
+            acquire(self.source(sha),self.root,self.out(),self.policy,chart_path='charts/free5gc/Chart.yaml')
+        self.assertEqual(cm.exception.code,'CHART_PATH_NOT_A_DIRECTORY')
+
+    def test_archive_contains_exactly_the_selected_chart_subtree(self):
+        """The extracted destination contains EXACTLY the chart subtree's
+        files -- no more, no less, matching `git ls-tree -r` of that exact
+        subtree -- and every file's content is byte-for-byte what git
+        itself reports for that blob. Also confirms the path layout
+        (chart-root-relative, e.g. 'Chart.yaml' not 'charts/free5gc/
+        Chart.yaml') is exactly what package.py's own file-capture code
+        expects."""
+        self.write_base_chart()
+        self.add_gitlink('charts/free-ran-ue')
+        sha=self.commit('with unrelated sibling gitlink')
+        destination=self.out()
+        acquire(self.source(sha),self.root,destination,self.policy,chart_path='charts/free5gc')
+        expected=set(self.git('ls-tree','-r','--name-only',sha+':charts/free5gc').decode().splitlines())
+        extracted={str(p.relative_to(destination)) for p in destination.rglob('*') if p.is_file()}
+        self.assertEqual(expected,extracted)
+        for rel in expected:
+            self.assertEqual((destination/rel).read_bytes(),self.git('show',sha+':charts/free5gc/'+rel))
+
+    def test_result_echoes_verified_commit_authority_and_chart_path(self):
+        """source_evidence built from this result can state the commit,
+        acquisition authority AND the actually-verified chart_path as
+        plain, retained facts -- chart_path is None for root-scope, the
+        exact string for a scoped acquisition, never silently dropped."""
+        sha=self.write_base_chart()
+        root_result=acquire(self.source(sha),self.root,self.out(),self.policy)
+        self.assertEqual(root_result['commit'],sha)
+        self.assertEqual(root_result['authority'],'LOCAL_OBJECTS_VERIFIED')
+        self.assertIsNone(root_result['chart_path'])
+        scoped_result=acquire(self.source(sha),self.root,self.out(),self.policy,chart_path='charts/free5gc')
+        self.assertEqual(scoped_result['commit'],sha)
+        self.assertEqual(scoped_result['authority'],'LOCAL_OBJECTS_VERIFIED')
+        self.assertEqual(scoped_result['chart_path'],'charts/free5gc')
+
+    def test_file_size_budget_still_enforced_for_scoped_archive(self):
+        """unpack()'s existing MAX_SOURCE/expansion budget is untouched and
+        still fires for a chart-scoped archive, exactly as it always has
+        for a whole-repository one."""
+        self.write_base_chart()
+        (self.repo/'charts/free5gc/big.bin').write_bytes(b'x'*(MAX_SOURCE+1))
+        self.git('add','-A')
+        sha=self.commit('oversized file inside chart')
+        with self.assertRaises(ExecutionError) as cm:
+            acquire(self.source(sha),self.root,self.out(),self.policy,chart_path='charts/free5gc')
+        self.assertIn(cm.exception.code,('ARCHIVE_BUDGET','EXPANSION_BUDGET','TRUNCATED_ARCHIVE','OUTPUT_BUDGET'))
+
+    def test_chart_path_cannot_be_supplied_through_untrusted_source_dict(self):
+        """`chart_path` is a distinct keyword argument, never read from the
+        caller-supplied `source` dict -- a 'chart_path' key smuggled into
+        `source` (the one piece of the request a less-trusted caller might
+        influence) is silently ignored, never adopted as a scoping
+        boundary."""
+        sha=self.write_base_chart()
+        self.add_gitlink('charts/free-ran-ue')
+        sha=self.commit('with sibling gitlink')
+        tainted=dict(self.source(sha),chart_path='charts/free5gc')
+        with self.assertRaises(ExecutionError) as cm:
+            acquire(tainted,self.root,self.out(),self.policy)
+        self.assertEqual(cm.exception.code,'SUBMODULE_NOT_SUPPORTED')
 
 if __name__=='__main__':unittest.main()

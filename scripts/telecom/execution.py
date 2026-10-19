@@ -164,9 +164,73 @@ def unpack(data, destination, maximum=MAX_SOURCE):
             target.chmod(0o700 if member.mode&0o111 else 0o600)
     return {'archive_digest':'sha256:'+hashlib.sha256(data).hexdigest(),'files':count,'bytes':total}
 
-def acquire(source, workspace, destination, policy, cancel=lambda:False):
+# A `chart_path` (when given) selects a verified SUBTREE of the acquired
+# commit as the actual acquisition boundary -- e.g. 'charts/free5gc' inside
+# a monorepo that also happens to vendor an unrelated submodule elsewhere
+# (e.g. 'charts/free-ran-ue'). `chart_path=None` (the default, and the only
+# behavior every existing caller uses today) means "the whole commit tree
+# is the boundary" -- unchanged from before this existed.
+#
+# TRUST BOUNDARY: the commit SHA is still the ONLY thing ever pinned/
+# verified (`rev-parse --verify sha^{commit}`, unchanged) -- a chart_path
+# never weakens that: `git archive <sha>:<chart_path>` resolves the subtree
+# through the SAME verified commit object, so any difference in the
+# subtree's content would necessarily be a different commit SHA. What
+# changes is WHICH PART of that one verified tree is read, inspected and
+# archived: content strictly outside chart_path (and outside every one of
+# its ancestor directories) is never read, inspected, descended into, or
+# extracted -- so an unrelated submodule or symlink living there is
+# genuinely irrelevant to the integrity of what this call returns, not
+# merely ignored. Content AT chart_path, INSIDE chart_path, or at any
+# ANCESTOR directory of chart_path is exactly as strictly checked as the
+# original whole-repository behavior always was.
+_CHART_PATH_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*){0,15}')
+
+def _validate_chart_path(chart_path):
+    """Git-tree-relative path only: no leading/trailing/doubled slash, no
+    absolute path, no `.`/`..` segment (a segment must start with an
+    alnum, which `.`/`..` never do) -- the anchored regex itself is the
+    whole defense, exactly as chart_adapters._validate_target_path's own
+    docstring explains for its own, differently-shaped path contract."""
+    if not isinstance(chart_path,str) or not _CHART_PATH_RE.fullmatch(chart_path):
+        raise ExecutionError('source','INVALID_CHART_PATH')
+    return chart_path
+
+def _within_or_ancestor(entry_path, chart_path):
+    """True if `entry_path` is chart_path itself, lies inside it, or is one
+    of its ancestor directories -- the three relationships in which a
+    submodule/symlink at `entry_path` would be, or could stand in for, part
+    of the content this acquisition boundary claims to provide. False only
+    for a genuinely unrelated path (a sibling, cousin, or anything else
+    outside chart_path's own ancestor/descendant chain)."""
+    return (entry_path==chart_path or entry_path.startswith(chart_path+'/') or
+            chart_path.startswith(entry_path+'/'))
+
+def _check_safe_subtree(tree, chart_path):
+    """Scan one `git ls-tree -r` listing of the full verified commit.
+    `chart_path=None` preserves the exact original, unweakened behavior:
+    ANY submodule (mode 160000) anywhere in the whole tree is rejected,
+    exactly as before this existed -- now also any symlink (mode 120000)
+    anywhere, which unpack()'s own tar-type check already rejected later
+    in every such case anyway (git archive represents a tree symlink as a
+    tar symlink member), just not this early or this explicitly. With a
+    `chart_path`, only entries at, inside, or at an ancestor of chart_path
+    are rejected -- never an unrelated sibling/cousin elsewhere in the
+    repository, which this acquisition will never read or archive at all."""
+    for line in tree.splitlines():
+        if not line: continue
+        meta,_,raw_path=line.partition(b'\t')
+        mode=meta.split(b' ',1)[0]
+        if mode not in (b'160000',b'120000'): continue
+        if chart_path is not None:
+            path=raw_path.decode('utf-8','surrogateescape')
+            if not _within_or_ancestor(path,chart_path): continue
+        raise ExecutionError('source','SUBMODULE_NOT_SUPPORTED' if mode==b'160000' else 'SYMLINK_NOT_SUPPORTED')
+
+def acquire(source, workspace, destination, policy, cancel=lambda:False, chart_path=None):
     sha=source.get('commit','')
     if not SHA.fullmatch(sha): raise ExecutionError('source','PINNED_SHA_REQUIRED')
+    if chart_path is not None: chart_path=_validate_chart_path(chart_path)
     with tempfile.TemporaryDirectory(prefix='telecom-git-') as temporary:
         if source['kind']=='local-git':
             repo=confined(workspace,source['path'])
@@ -195,12 +259,28 @@ def acquire(source, workspace, destination, policy, cancel=lambda:False):
         else: raise ExecutionError('source','GIT_SOURCE_REQUIRED')
         found=command(GIT+['-C',str(repo),'rev-parse','--verify',sha+'^{commit}'],cancel=cancel).decode().strip()
         if found!=sha: raise ExecutionError('source','COMMIT_MISMATCH')
-        data=command(GIT+['-C',str(repo),'archive','--format=tar',sha],cancel=cancel)
         # Git archives represent submodules as empty directories: never claim complete source.
+        # Scanned and enforced BEFORE any archive/extraction is attempted -- never initializes,
+        # updates, fetches or executes a submodule; read-only tree inspection only.
         tree=command(GIT+['-C',str(repo),'ls-tree','-r',sha],cancel=cancel)
-        if any(line.startswith(b'160000 ') for line in tree.splitlines()): raise ExecutionError('source','SUBMODULE_NOT_SUPPORTED')
+        _check_safe_subtree(tree,chart_path)
+        if chart_path is None:
+            archive_ref=sha
+        else:
+            resolved=command(GIT+['-C',str(repo),'rev-parse','--verify',sha+':'+chart_path],cancel=cancel).decode().strip()
+            kind=command(GIT+['-C',str(repo),'cat-file','-t',resolved],cancel=cancel).decode().strip()
+            if kind!='tree': raise ExecutionError('source','CHART_PATH_NOT_A_DIRECTORY')
+            # Resolves through the SAME verified commit object (see module-level
+            # TRUST BOUNDARY note above) -- not a second, independently-trusted ref.
+            archive_ref=sha+':'+chart_path
+        data=command(GIT+['-C',str(repo),'archive','--format=tar',archive_ref],cancel=cancel)
         result=unpack(data,destination)
-        result.update(commit=sha,authority='LOCAL_OBJECTS_VERIFIED' if source['kind']=='local-git' else 'GITHUB_FETCH_VERIFIED')
+        # chart_path is echoed back here (not just implied by the caller's own
+        # argument) so a downstream provenance/evidence record built from this
+        # result can state the ACTUALLY-verified acquisition boundary as a
+        # plain fact, never something the caller has to separately remember.
+        result.update(commit=sha,authority='LOCAL_OBJECTS_VERIFIED' if source['kind']=='local-git' else 'GITHUB_FETCH_VERIFIED',
+                       chart_path=chart_path)
         return result
 
 def oci_layout(data, expected=None):
