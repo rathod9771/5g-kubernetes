@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-smf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+      nf: smf
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+        nf: smf
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: smf
+          image: {{ .Values.smf.repository }}:{{ .Values.smf.tag }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

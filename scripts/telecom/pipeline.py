@@ -9,7 +9,7 @@ from assurance.locking import exclusive
 from assurance.model import PROTECTED_NS
 from osm_catalog import Catalog,identifier,parse_response
 from .contract import canonical, confined, identity, validate
-from .execution import Policy, ExecutionError, acquire, build, prebuilt, verify_webhook, helm_source, retain_image, SHA
+from .execution import Policy, ExecutionError, acquire, build, prebuilt, resolve_tag, verify_webhook, helm_source, retain_image, SHA
 from .package import prepare
 from .registry import Publisher
 from .security import Denied
@@ -30,6 +30,51 @@ def scoped_catalog(policy, principal, target):
         raise Denied('OSM research project identity/readback differs')
     return client
 
+def verify_images(manifest, image_discovery, policy, tenant, secret_ref, cancel=lambda:False):
+    """Fail-closed, per-image live registry verification for schema_version=2.
+
+    `image_discovery` is package.prepare()'s per-identity record of what the
+    actual Helm render used (see multi_image.verify): every identity that was
+    actually rendered must independently, currently resolve via HTTPS
+    registry fetch to exactly its declared immutable digest and declared
+    platform/architecture -- the exact digest-addressed OCI content
+    verification schema_version=1 already performs for its single image
+    (execution.prebuilt), looped once per declared image here. A tag-only
+    rendered reference additionally requires a live tag->digest resolution
+    (execution.resolve_tag) proving the tag currently points at the declared
+    digest; either way the per-image evidence below never claims
+    'digest_pinned_execution' for an identity unless every occurrence of it
+    in the render used an immutable repository@sha256 reference, because a
+    registry tag remains mutable after this check runs (see pipeline.run and
+    registry_gate, which both refuse to treat a tag-only release as
+    digest-pinned regardless of how recently it was verified).
+
+    Raises before any image is left unverified: this function either returns
+    complete evidence for every rendered identity or raises, so pipeline.run
+    never seals a release built from partially-verified, declaration-only
+    digests.
+    """
+    by_identity = {entry['identity']: entry for entry in manifest['images']}
+    evidence = {}
+    for image_identity, discovery in sorted(image_discovery.items()):
+        if cancel(): raise ExecutionError('image', 'CANCELLED')
+        entry = by_identity[image_identity]
+        if discovery['kind'] == 'tag':
+            resolved = resolve_tag(entry['repository'], entry['tag_pin'], policy, tenant, secret_ref)
+            if resolved != entry['digest']:
+                raise ExecutionError('image', 'REGISTRY_TAG_DIGEST_DRIFT')
+        image = prebuilt(entry['repository'], entry['digest'], policy, tenant, secret_ref)
+        if image['platform'] != entry['platform']:
+            raise ExecutionError('image', 'PLATFORM_MISMATCH')
+        evidence[image_identity] = {
+            'repository': entry['repository'], 'digest': entry['digest'], 'platform': image['platform'],
+            'verification': image['verification'], 'rendered_reference_kind': discovery['kind'],
+            'digest_pinned_execution': discovery['kind'] == 'digest',
+            'hook_only': all(o['hook'] for o in discovery['occurrences']),
+        }
+    return evidence
+
+
 class Pipeline:
     def __init__(self, service, policy):
         self.service,self.journal,self.policy=service,service.journal,policy
@@ -45,14 +90,24 @@ class Pipeline:
         if not isinstance(chart,str) or not chart or Path(chart).is_absolute() or '..' in Path(chart).parts:
             raise Denied('Relative chart path required')
         if image_mode not in ('prebuilt','dockerfile'): raise ValueError('Unknown image mode')
-        source=copy.deepcopy(workload['manifest']['source'])
+        manifest=workload['manifest']
+        if manifest.get('schema_version')==2 and image_mode=='dockerfile':
+            raise Denied('Dockerfile build-and-publish is not supported for multi-image manifests')
+        source=copy.deepcopy(manifest['source'])
         if commit is not None:
             if source['kind'] not in ('local-git','github') or not SHA.fullmatch(commit): raise Denied('Pinned Git trigger required')
             source['commit']=commit
         if secret_ref is not None:
             if not isinstance(secret_ref,str) or len(secret_ref)>64: raise Denied('Bounded secret reference required')
             purpose='registry-publish' if image_mode=='dockerfile' else 'registry-bearer'
-            self.policy.secret(secret_ref,principal.tenant,purpose,workload['manifest']['image']['repository'])
+            if manifest.get('schema_version')==2:
+                # Preflight the secret against every declared repository, not
+                # only one: schema_version=2 may draw images from several
+                # repositories under the same bearer/publish secret.
+                for entry in manifest['images']:
+                    self.policy.secret(secret_ref,principal.tenant,purpose,entry['repository'])
+            else:
+                self.policy.secret(secret_ref,principal.tenant,purpose,manifest['image']['repository'])
         specification={'workload':workload_id,'chart':chart,'source':source,'image_mode':image_mode,'secret_ref':secret_ref}
         key=identity({'tenant':principal.tenant,'event':event_id,'specification':specification})
         def write(db):
@@ -118,6 +173,48 @@ class Pipeline:
                         evidence=helm_source(spec['source'],root/'source',self.policy);source_root=root/'source'
                     else:
                         evidence={'authority':'PROVIDER_DECLARED','source':spec['source']};source_root=workspace
+                    schema_version=manifest.get('schema_version')
+                    if schema_version not in (1,2): raise Denied('Unsupported capability schema')
+                    if schema_version==2:
+                        # Multi-image manifests: no single values.image to rebind, so
+                        # build-and-publish is unsupported (enforced again here, not only
+                        # at queue() time) and discovery must come from the real render
+                        # before any registry call can know which images to check.
+                        if spec['image_mode']!='prebuilt': raise Denied('Multi-image manifests require prebuilt image mode')
+                        manifest=validate(manifest)
+                        stage='package';self._state(principal,job,'PACKAGING')
+                        package=prepare(source_root,spec['chart'],manifest,self.service.helm)
+                        if cancel(): raise ExecutionError(stage,'CANCELLED')
+                        self._state(principal,job,'PACKAGE_VALIDATED',package_digests=package['package_digests'])
+                        stage='image';self._state(principal,job,'VERIFYING_IMAGES',rendered_identities=sorted(package['image_discovery']))
+                        image_verification=verify_images(manifest,package['image_discovery'],self.policy,principal.tenant,spec['secret_ref'],cancel)
+                        if cancel(): raise ExecutionError(stage,'CANCELLED')
+                        # Fail-closed publication gate: a release is only recorded as
+                        # digest-pinned execution if EVERY rendered image used an
+                        # immutable repository@sha256 reference, never a mutable tag,
+                        # even though every image -- tag or digest -- was independently
+                        # registry-verified above (see registry_gate/verify_images).
+                        digest_pinned=bool(image_verification) and all(e['digest_pinned_execution'] for e in image_verification.values())
+                        self._state(principal,job,'IMAGES_VERIFIED',digest_pinned_execution=digest_pinned)
+                        key=identity({'tenant':principal.tenant,'workload':workload['id'],'source':evidence,
+                                       'images':{i['identity']:i['digest'] for i in manifest['images']},'packages':package['package_digests']})
+                        value={'id':key,'tenant':principal.tenant,'owner':principal.subject,'schema_version':2,'pipeline_version':2,
+                               'workload_id':workload['id'],'job_id':job_id,'deployment_approval':'REQUIRED; INSTANCE_EXECUTION_DISABLED',
+                               'state':'VERIFIED_PACKAGE','source':evidence,'images':manifest['images'],
+                               'image_verification':image_verification,'digest_pinned_execution':digest_pinned,
+                               'manifest_digest':'sha256:'+identity(manifest),'package':package,
+                               'provenance':'CONTENT_VERIFIED','production_eligible':False,
+                               'protocol_verification':'NOT_VERIFIED','history':self.journal.get(principal,'jobs',job_id)['history']+[{'state':'VERIFIED_PACKAGE','at':time.time()}]}
+                        def seal(db):
+                            try:existing=self.journal.get(principal,'releases',key,db)
+                            except Denied:return self.journal.put(db,principal,'releases',key,value,immutable=True)
+                            for field in ('workload_id','source','images','manifest_digest'):
+                                if existing[field]!=value[field]:raise Denied('Immutable release collision')
+                            if existing['package']['package_digests']!=value['package']['package_digests']:
+                                raise Denied('Immutable package collision')
+                            return existing
+                        self.journal.event(principal,'release-'+job_id,{'job':job_id,'release':key},seal)
+                        return self._state(principal,job,'COMPLETED',release_id=key,duration_seconds=time.monotonic()-started)
                     stage='image';self._state(principal,job,'VERIFYING_IMAGE',source=evidence)
                     if spec['image_mode']=='dockerfile':
                         if spec['source']['kind'] not in ('local-git','github'): raise Denied('Dockerfile requires captured Git source')
@@ -174,6 +271,28 @@ class Pipeline:
                 raise
 
     def registry_gate(self,principal,release):
+        if release.get('schema_version')==2:
+            # Multi-image fail-closed gate: a release can only pass this gate
+            # if EVERY declared image rendered by its Helm chart was both
+            # independently registry-verified (content+architecture) AND
+            # referenced by immutable digest in the actual Kubernetes object
+            # -- never a mutable tag masquerading as digest-pinned execution.
+            # Today no onboarded chart can satisfy the second half (see the
+            # REPORT): this keeps schema_version=2 publication closed rather
+            # than weaken the requirement to fit the chart.
+            if release.get('digest_pinned_execution') is not True:
+                raise Denied('Complete digest-pinned multi-image registry verification required')
+            verifications=release.get('image_verification',{})
+            declared={entry['identity']:entry for entry in release.get('images',[])}
+            if not verifications or set(verifications)!=set(declared):
+                raise Denied('Registry image content verification required')
+            for image_identity,entry in verifications.items():
+                expected=declared[image_identity]
+                if (entry.get('verification')!='REGISTRY_CONTENT_VERIFIED' or entry.get('digest_pinned_execution') is not True or
+                        entry.get('digest')!=expected['digest'] or entry.get('repository')!=expected['repository'] or
+                        entry.get('platform')!=expected['platform']):
+                    raise Denied('Registry image content verification required: '+image_identity)
+            return
         image=release.get('image_verification',{})
         if image.get('builder')=='REMOTE_BUILDKIT_TLS':
             reference=image.get('registry',{})

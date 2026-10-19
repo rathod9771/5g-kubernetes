@@ -216,6 +216,10 @@ class Service:
     def evidence(self, principal, ran_id, core_id, tests, metrics, event_id):
         principal.require('verifier')
         ran = self.journal.get(principal,'releases',ran_id); core = self.journal.get(principal,'releases',core_id)
+        if ran.get('schema_version')==2 or core.get('schema_version')==2:
+            # This interoperability-evidence subsystem assumes a single
+            # release['image']; multi-image releases are not wired into it.
+            raise Denied('Multi-image interoperability evidence is not supported')
         rm = self.journal.get(principal,'workloads',ran['workload_id'])['manifest']
         cm = self.journal.get(principal,'workloads',core['workload_id'])['manifest']
         if not set(rm['roles']) & {'gnb','cu','du'} or not set(cm['roles']) & {'amf','smf','upf'}:

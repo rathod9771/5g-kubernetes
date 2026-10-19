@@ -36,6 +36,12 @@ class InitialDeployment:
         principal.require('builder')
         publication=self.service.owned(principal,'publication-requests',publication_id)
         release=self.service.owned(principal,'releases',publication['release_id'])
+        if release.get('schema_version')==2:
+            # Live instance deployment/pod-identity verification (_images_match
+            # in upgrade.py, and this module's own single-image assumptions)
+            # has not been extended to a multi-image release; explicitly
+            # refuse rather than silently deploy against stale assumptions.
+            raise Denied('Multi-image instance deployment is not supported')
         target,catalog=self.target(principal)
         if (publication.get('state')!='PUBLISHED_CONTENT_VERIFIED' or
             publication.get('target_hash')!=identity(catalog) or

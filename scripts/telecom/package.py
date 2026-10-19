@@ -39,10 +39,12 @@ def source_evidence(source, workspace):
             'fetch':'NOT_RUN', 'registry_verification':'NOT_RUN', 'build':'NOT_RUN'}
 
 
-def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None):
+def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None, reviewed_inputs=None):
     chart = confined(workspace, chart_path)
     if not chart.is_dir():
         raise ValueError('Local chart directory required for offline packaging')
+    if reviewed_inputs is not None and manifest.get('schema_version') != 2:
+        raise ValueError('Reviewed vendored chart inventory is only accepted for multi-image manifests')
     files = {}; total = 0; entries = 0
     def capture(fd, prefix='', depth=0):
         nonlocal total, entries
@@ -69,11 +71,13 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
     fd=os.open(chart,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     try: capture(fd)
     finally: os.close(fd)
-    safe_chart_inputs(files)
+    safe_chart_inputs(files, reviewed=reviewed_inputs)
     for p in ('Chart.yaml', 'values.yaml'):
         if p not in files:
             raise ValueError('Chart metadata/values required')
     if verified_image is not None:
+        if manifest.get('schema_version') != 1:
+            raise ValueError('Dockerfile/build-and-publish binding is not supported for multi-image manifests')
         expected=manifest['image']['repository']+'@'+digest(manifest['image']['digest'])
         if verified_image!=expected: raise ValueError('Verified image binding differs')
         values=yaml.safe_load(files['values.yaml'])
@@ -89,38 +93,60 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
         read_command([helm, 'lint', temp, '--strict'])
         rendered = read_command([helm, 'template', 'research-fixture', temp, '--namespace', 'research-sandbox'])
     docs = list(yaml.safe_load_all(rendered))
-    images = []; seen=set(); namespace_portable=True
-    for doc in docs:
-        if not isinstance(doc, dict) or doc.get('kind') not in ('Deployment', 'Service', 'ConfigMap'):
-            raise ValueError('MVP accepts only namespaced Deployment/Service/ConfigMap')
-        metadata = doc.get('metadata', {})
-        namespace_portable=namespace_portable and 'namespace' not in metadata and (doc['kind']!='Service' or doc.get('spec',{}).get('type','ClusterIP')=='ClusterIP')
-        key=(doc['kind'],metadata.get('name'))
-        if not key[1] or key in seen: raise ValueError('Duplicate or unnamed chart resource')
-        seen.add(key)
-        if metadata.get('namespace', 'research-sandbox') != 'research-sandbox' or metadata.get('annotations', {}).get('helm.sh/hook'):
-            raise ValueError('Chart namespace/hook is not authorized')
-        if doc['kind'] == 'Deployment':
-            if doc['spec'].get('replicas',1)!=1: raise ValueError('MVP fixture must be singleton')
-            spec = doc['spec']['template']['spec']
-            if spec.get('automountServiceAccountToken') is not False: raise ValueError('Disable service account token mounting')
-            if any(spec.get(k) for k in ('hostNetwork', 'hostPID', 'hostIPC', 'serviceAccountName', 'initContainers')):
-                raise ValueError('Privileged pod features require separate qualification')
-            if any('hostPath' in v or 'secret' in v for v in spec.get('volumes', [])):
-                raise ValueError('Host/secret mounts forbidden in MVP')
-            for c in spec['containers']:
-                images.append(c['image'])
-                security = c.get('securityContext', {})
-                if any(p.get('hostPort') for p in c.get('ports',[])) or security.get('runAsNonRoot') is not True or security.get('capabilities',{}).get('drop')!=['ALL'] or security.get('privileged') or security.get('allowPrivilegeEscalation') is not False or security.get('capabilities', {}).get('add'):
-                    raise ValueError('Explicit nonprivileged container required')
-                if c.get('envFrom') or any('valueFrom' in v for v in c.get('env', [])):
-                    raise ValueError('Secret/environment references need separate review')
-                limits = c.get('resources', {}).get('limits', {})
-                if not limits.get('cpu') or not limits.get('memory'):
-                    raise ValueError('Container resource limits required')
-    expected = manifest['image']['repository']+'@'+digest(manifest['image']['digest'])
-    if not images or any(i != expected for i in images):
-        raise ValueError('Rendered image must match the immutable capability image')
+    image_discovery = None
+    if manifest.get('schema_version') == 1:
+        images = []; seen=set(); namespace_portable=True
+        for doc in docs:
+            if not isinstance(doc, dict) or doc.get('kind') not in ('Deployment', 'Service', 'ConfigMap'):
+                raise ValueError('MVP accepts only namespaced Deployment/Service/ConfigMap')
+            metadata = doc.get('metadata', {})
+            namespace_portable=namespace_portable and 'namespace' not in metadata and (doc['kind']!='Service' or doc.get('spec',{}).get('type','ClusterIP')=='ClusterIP')
+            key=(doc['kind'],metadata.get('name'))
+            if not key[1] or key in seen: raise ValueError('Duplicate or unnamed chart resource')
+            seen.add(key)
+            if metadata.get('namespace', 'research-sandbox') != 'research-sandbox' or metadata.get('annotations', {}).get('helm.sh/hook'):
+                raise ValueError('Chart namespace/hook is not authorized')
+            if doc['kind'] == 'Deployment':
+                if doc['spec'].get('replicas',1)!=1: raise ValueError('MVP fixture must be singleton')
+                spec = doc['spec']['template']['spec']
+                if spec.get('automountServiceAccountToken') is not False: raise ValueError('Disable service account token mounting')
+                if any(spec.get(k) for k in ('hostNetwork', 'hostPID', 'hostIPC', 'serviceAccountName', 'initContainers')):
+                    raise ValueError('Privileged pod features require separate qualification')
+                if any('hostPath' in v or 'secret' in v for v in spec.get('volumes', [])):
+                    raise ValueError('Host/secret mounts forbidden in MVP')
+                for c in spec['containers']:
+                    images.append(c['image'])
+                    security = c.get('securityContext', {})
+                    if any(p.get('hostPort') for p in c.get('ports',[])) or security.get('runAsNonRoot') is not True or security.get('capabilities',{}).get('drop')!=['ALL'] or security.get('privileged') or security.get('allowPrivilegeEscalation') is not False or security.get('capabilities', {}).get('add'):
+                        raise ValueError('Explicit nonprivileged container required')
+                    if c.get('envFrom') or any('valueFrom' in v for v in c.get('env', [])):
+                        raise ValueError('Secret/environment references need separate review')
+                    limits = c.get('resources', {}).get('limits', {})
+                    if not limits.get('cpu') or not limits.get('memory'):
+                        raise ValueError('Container resource limits required')
+        expected = manifest['image']['repository']+'@'+digest(manifest['image']['digest'])
+        if not images or any(i != expected for i in images):
+            raise ValueError('Rendered image must match the immutable capability image')
+    else:
+        from . import multi_image
+        seen = set(); namespace_portable = True
+        for doc in docs:
+            if not isinstance(doc, dict) or 'kind' not in doc or 'metadata' not in doc:
+                raise ValueError('Invalid/empty rendered resource')
+            metadata = doc.get('metadata', {}) or {}
+            # Hook resources (test/lifecycle) still execute or mutate cluster
+            # state, so they are never exempted from the duplicate-name or
+            # namespace check -- only multi_image.verify's role-completeness
+            # requirement treats them differently.
+            key = (doc['kind'], metadata.get('name'))
+            if not key[1] or key in seen:
+                raise ValueError('Duplicate or unnamed chart resource')
+            seen.add(key)
+            namespace_portable = namespace_portable and 'namespace' not in metadata and (
+                doc['kind'] != 'Service' or doc.get('spec', {}).get('type', 'ClusterIP') == 'ClusterIP')
+            if metadata.get('namespace', 'research-sandbox') != 'research-sandbox':
+                raise ValueError('Chart namespace is not authorized')
+        image_discovery = multi_image.verify(manifest, docs)
     content_hash = identity({n:__import__('hashlib').sha256(v).hexdigest() for n,v in files.items()})
     # Descriptor identity includes the provider capability revision, not just chart bytes.
     name = 'research-'+identity({'chart':content_hash,'capability':manifest})[:20]
@@ -134,6 +160,7 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
     validate_references(scenario, inputs)
     artifacts = {scenario[k]+'.tar.gz':archive_bytes(scenario[k], {n:v for n,v in inputs.items() if n.startswith(scenario[k]+'/')}) for k in ('knf_package','nsd_package')}
     return {'namespace_portable':namespace_portable,'scenario':scenario, 'chart_digest':'sha256:'+content_hash,
+            'image_discovery':image_discovery,
             'package_digests':{k:'sha256:'+__import__('hashlib').sha256(v).hexdigest() for k,v in artifacts.items()},
             'helm_validation':{'outcome':'PASS','authority':'PLATFORM_OFFLINE_VERIFIED','deployed':False},
             'artifacts':{k:v.hex() for k,v in artifacts.items()}}

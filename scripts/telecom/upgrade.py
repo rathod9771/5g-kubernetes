@@ -53,6 +53,11 @@ class InstanceUpdate:
             raise Denied('Only a verified ready instance may be targeted')
         publication = self.service.owned(principal, 'publication-requests', publication_id)
         release = self.service.owned(principal, 'releases', publication['release_id'])
+        if release.get('schema_version') == 2:
+            # _images_match below assumes a single release['image']; a
+            # multi-image release has no such field and live update/rollback
+            # execution is explicitly out of scope for schema_version=2.
+            raise Denied('Multi-image instance update/rollback is not supported')
         target, catalog = self.initial.target(principal)
         if (publication.get('state') != 'PUBLISHED_CONTENT_VERIFIED' or
                 publication.get('target_hash') != identity(catalog) or

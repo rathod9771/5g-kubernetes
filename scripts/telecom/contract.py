@@ -7,12 +7,20 @@ from pathlib import Path
 import re
 from urllib.parse import urlsplit
 
-ROLES = {'gnb', 'cu', 'du', 'amf', 'smf', 'upf', 'nrf', 'ausf', 'udm', 'udr', 'pcf', 'nssf'}
+ROLES = {'gnb', 'cu', 'du', 'amf', 'smf', 'upf', 'nrf', 'ausf', 'udm', 'udr', 'pcf', 'nssf',
+         'bsf', 'chf', 'nef', 'scp'}
 INTERFACES = {'F1-C': 'SCTP', 'F1-U': 'GTP-U', 'N2': 'SCTP', 'N3': 'GTP-U',
               'N4': 'PFCP', 'SBI': 'HTTPS', 'E1': 'SCTP', 'N6': 'IP'}
 REQUIRED = {'gnb': {'N2', 'N3'}, 'cu': {'F1-C', 'F1-U', 'N2', 'N3'},
             'du': {'F1-C', 'F1-U'}, 'amf': {'N2', 'SBI'},
             'smf': {'N4', 'SBI'}, 'upf': {'N3', 'N4', 'N6'}, 'nrf': {'SBI'}}
+
+# schema_version=2 multi-image extension (contract v1 is preserved unchanged
+# above/below; this section only ever runs for a manifest that opts in).
+IMAGE_KINDS = {'network-function', 'supporting-container'}
+SUPPORT_PURPOSES = {'database', 'readiness-probe', 'initialization', 'user-interface', 'test-utility'}
+ELEVATED_CAPABILITIES = {'NET_ADMIN'}
+TAG_PIN = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}')
 
 
 def canonical(value):
@@ -50,12 +58,79 @@ def https(value):
     return value
 
 
+def _validate_hardware(h, *, allow_elevated=False):
+    base = {'mode', 'devices', 'hugepages_mib'}
+    extra = {'elevated_capabilities'} if allow_elevated else set()
+    if (not isinstance(h, dict) or set(h) - (base | extra) or not base <= set(h) or
+            h['mode'] not in ('simulation', 'hardware') or not isinstance(h['devices'], list) or
+            len(h['devices']) > 8 or any(not isinstance(d, str) or not re.fullmatch(r'[a-z0-9/_.-]{1,80}', d) for d in h['devices']) or
+            type(h['hugepages_mib']) is not int or not 0 <= h['hugepages_mib'] <= 262144):
+        raise ValueError('Invalid hardware contract')
+    if h['mode'] == 'simulation' and (h['devices'] or h['hugepages_mib'] or h.get('elevated_capabilities')):
+        raise ValueError('Simulation cannot request hardware')
+    if 'elevated_capabilities' in h:
+        declared = h['elevated_capabilities']
+        if not isinstance(declared, dict) or not declared or len(declared) > 16:
+            raise ValueError('Invalid elevated capability declaration')
+        for image_identity, capabilities in declared.items():
+            if (not re.fullmatch(r'[a-z][a-z0-9-]{0,39}', image_identity) or not isinstance(capabilities, list) or
+                    not capabilities or len(capabilities) > 4 or len(set(capabilities)) != len(capabilities) or
+                    any(c not in ELEVATED_CAPABILITIES for c in capabilities)):
+                raise ValueError('Invalid elevated capability declaration: ' + str(image_identity))
+    return h
+
+
+def _validate_images(images):
+    """schema_version=2 multi-image inventory: role/support identity -> immutable image."""
+    if not isinstance(images, list) or not 1 <= len(images) <= 64:
+        raise ValueError('Declare a bounded multi-image inventory')
+    seen_identity = set()
+    tag_digest = {}
+    for entry in images:
+        if (not isinstance(entry, dict) or
+                set(entry) != {'identity', 'kind', 'role', 'purpose', 'repository', 'tag_pin', 'digest', 'platform'}):
+            raise ValueError('Invalid multi-image entry contract')
+        slug(entry['identity'])
+        if entry['identity'] in seen_identity:
+            raise ValueError('Duplicate image identity: ' + entry['identity'])
+        seen_identity.add(entry['identity'])
+        if entry['kind'] not in IMAGE_KINDS:
+            raise ValueError('Unknown image kind: ' + str(entry['kind']))
+        if entry['kind'] == 'network-function':
+            if entry['purpose'] is not None:
+                raise ValueError('Supporting-container purpose is not valid for a network-function image')
+            role = entry['role']
+            if role not in ROLES and not (isinstance(role, str) and re.fullmatch(r'x-[a-z0-9-]{1,30}', role)):
+                raise ValueError('Unknown role requires an x- extension declaration: ' + str(role))
+        else:
+            if entry['role'] is not None:
+                raise ValueError('Network-function role is not valid for a supporting-container image')
+            if entry['purpose'] not in SUPPORT_PURPOSES:
+                raise ValueError('Unknown supporting-container purpose: ' + str(entry['purpose']))
+        if not re.fullmatch(r'[a-z0-9][a-z0-9./_-]{0,200}', entry['repository']):
+            raise ValueError('Invalid OCI repository: ' + str(entry.get('repository')))
+        digest(entry['digest'])
+        if entry['platform'] not in ('linux/amd64', 'linux/arm64'):
+            raise ValueError('Unsupported image platform: ' + str(entry['identity']))
+        if (not isinstance(entry['tag_pin'], str) or not TAG_PIN.fullmatch(entry['tag_pin']) or
+                entry['tag_pin'].lower() in ('latest', 'master', 'main', 'head')):
+            raise ValueError('Immutable, non-floating tag_pin is required: ' + str(entry['identity']))
+        reference = (entry['repository'], entry['tag_pin'])
+        if reference in tag_digest and tag_digest[reference] != entry['digest']:
+            raise ValueError('Conflicting digest declared for the same repository:tag_pin: ' +
+                              reference[0] + ':' + reference[1])
+        tag_digest[reference] = entry['digest']
+    return images
+
+
 def validate(manifest):
     m = json.loads(canonical(manifest))
-    if m.get('schema_version') != 1:
+    version = m.get('schema_version')
+    if version not in (1, 2):
         raise ValueError('Unsupported capability schema')
-    allowed = {'schema_version', 'name', 'version', 'roles', 'source', 'image', 'interfaces',
+    allowed = {'schema_version', 'name', 'version', 'roles', 'source', 'interfaces',
                'plmn', 'tac', 'slices', 'dnns', 'resources', 'hardware', 'monitoring', 'extensions'}
+    allowed = allowed | ({'image'} if version == 1 else {'images'})
     if set(m) - allowed:
         raise ValueError('Unknown or secret-bearing manifest fields')
     slug(m.get('name'))
@@ -84,14 +159,20 @@ def validate(manifest):
         digest(s['digest'])
     if kind == 'helm':
         digest(s['digest'])
-    image = m['image']
-    if set(image) != {'repository', 'digest', 'platform'} or not re.fullmatch(r'[a-z0-9][a-z0-9./_-]{0,200}', image['repository']):
-        raise ValueError('Invalid immutable image contract')
-    digest(image['digest'])
-    if image['platform'] not in ('linux/amd64', 'linux/arm64'):
-        raise ValueError('Unsupported image platform')
-    if kind == 'oci' and (s['digest'] != image['digest'] or s['repository'] != image['repository']):
-        raise ValueError('Source/image identities disagree')
+    if version == 1:
+        image = m['image']
+        if set(image) != {'repository', 'digest', 'platform'} or not re.fullmatch(r'[a-z0-9][a-z0-9./_-]{0,200}', image['repository']):
+            raise ValueError('Invalid immutable image contract')
+        digest(image['digest'])
+        if image['platform'] not in ('linux/amd64', 'linux/arm64'):
+            raise ValueError('Unsupported image platform')
+        if kind == 'oci' and (s['digest'] != image['digest'] or s['repository'] != image['repository']):
+            raise ValueError('Source/image identities disagree')
+    else:
+        images = _validate_images(m['images'])
+        for role in roles:
+            if not any(entry['kind'] == 'network-function' and entry['role'] == role for entry in images):
+                raise ValueError('Declared role has no approved image: ' + role)
     interfaces = m['interfaces']
     if not isinstance(interfaces, dict) or len(interfaces) > 16:
         raise ValueError('Invalid interface contract')
@@ -126,11 +207,7 @@ def validate(manifest):
     for k, maximum in [('cpu_millicores', 64000), ('memory_mib', 262144)]:
         if type(m['resources'][k]) is not int or not 1 <= m['resources'][k] <= maximum:
             raise ValueError('Invalid resource budget')
-    h = m['hardware']
-    if set(h) != {'mode', 'devices', 'hugepages_mib'} or h['mode'] not in ('simulation', 'hardware') or not isinstance(h['devices'], list) or len(h['devices']) > 8 or any(not isinstance(d, str) or not re.fullmatch(r'[a-z0-9/_.-]{1,80}', d) for d in h['devices']) or type(h['hugepages_mib']) is not int or not 0 <= h['hugepages_mib'] <= 262144:
-        raise ValueError('Invalid hardware contract')
-    if h['mode'] == 'simulation' and (h['devices'] or h['hugepages_mib']):
-        raise ValueError('Simulation cannot request hardware')
+    _validate_hardware(m['hardware'], allow_elevated=(version == 2))
     if set(m['monitoring']) != {'required_metrics', 'optional_metrics'}:
         raise ValueError('Declare monitoring requirements')
     for values in m['monitoring'].values():

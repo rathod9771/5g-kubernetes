@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-amf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+      nf: amf
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+        nf: amf
+    spec:
+      automountServiceAccountToken: false
+      initContainers:
+        - name: wait-nrf
+          image: {{ .Values.probe.repository }}:{{ .Values.probe.tag }}
+          command: ["sh", "-c", "true"]
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 10m
+              memory: 16Mi
+      containers:
+        - name: amf
+          image: {{ .Values.amf.repository }}:{{ .Values.amf.tag }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

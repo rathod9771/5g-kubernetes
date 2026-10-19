@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-upf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+      nf: upf
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+        nf: upf
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: upf
+          image: {{ .Values.upf.repository }}:{{ .Values.upf.tag }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [NET_ADMIN]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1024Mi

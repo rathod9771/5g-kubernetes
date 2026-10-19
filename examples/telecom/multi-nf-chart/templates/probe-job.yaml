@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-connectivity-probe
+spec:
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+        nf: probe
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: probe
+          image: {{ .Values.probe.repository }}:{{ .Values.probe.tag }}
+          command: ["sh", "-c", "true"]
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 10m
+              memory: 16Mi

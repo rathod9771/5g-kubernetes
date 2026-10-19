@@ -284,6 +284,38 @@ def prebuilt(repository, expected, policy, tenant, secret_ref=None):
     return {'digest':expected,'platform':configuration['os']+'/'+configuration['architecture'],
             'verification':'REGISTRY_CONTENT_VERIFIED','requests':2+len(manifest['layers'])}
 
+def resolve_tag(repository, tag_pin, policy, tenant, secret_ref=None):
+    """Live registry fetch of a MUTABLE tag reference; returns its current digest.
+
+    This is the only way to prove a Helm chart's rendered `repository:tag`
+    container reference is not silently pointing at different bytes than an
+    approved manifest's declared digest. It does NOT prove the tag will
+    still resolve to the same bytes at some later, unverified pull time --
+    registry tags remain mutable after this check -- so a tag-based rendered
+    reference must never be recorded as digest-pinned execution even after
+    this call succeeds (see pipeline.verify_images).
+    """
+    if not re.fullmatch(r'[a-z0-9.-]+/[a-z0-9_./-]+', repository) or '..' in repository:
+        raise Denied('Explicit registry/repository required')
+    if not isinstance(tag_pin, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}', tag_pin):
+        raise Denied('Explicit tag reference required')
+    host, name = repository.split('/', 1)
+    if repository not in policy.value.get('oci_repositories', []): raise Denied('Registry repository not approved')
+    headers = {'Accept': 'application/vnd.oci.image.manifest.v1+json'}
+    if secret_ref: headers['Authorization'] = 'Bearer ' + policy.secret(secret_ref, tenant, 'registry-bearer', repository)
+    import ssl
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl.create_default_context()), NoRedirect(), urllib.request.ProxyHandler({}))
+    request = urllib.request.Request('https://'+host+'/v2/'+name+'/manifests/'+tag_pin, headers=headers)
+    try:
+        with opener.open(request, timeout=10) as response: content = response.read(1024*1024+1)
+    except Exception: raise ExecutionError('registry', 'TAG_FETCH_FAILED') from None
+    if len(content) > 1024*1024: raise ExecutionError('registry', 'MANIFEST_BUDGET')
+    manifest = json.loads(content)
+    if manifest.get('mediaType') != 'application/vnd.oci.image.manifest.v1+json' or manifest.get('schemaVersion') != 2:
+        raise ExecutionError('registry', 'SINGLE_OCI_MANIFEST_REQUIRED')
+    return 'sha256:'+hashlib.sha256(content).hexdigest()
+
+
 def build(source_directory, output, policy, tenant, cancel=lambda:False):
     worker=policy.value.get('build_worker',{})
     if worker.get('tenant')!=tenant or worker.get('isolation')!='DEDICATED_OFF_HOST_QUOTA_ENFORCED':

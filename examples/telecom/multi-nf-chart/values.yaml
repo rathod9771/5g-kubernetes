@@ -1,0 +1,18 @@
+amf:
+  repository: example.invalid/research/amf
+  tag: v1.0.0
+smf:
+  repository: example.invalid/research/smf
+  tag: v1.0.0
+upf:
+  repository: example.invalid/research/upf
+  tag: v1.0.0
+mongodb:
+  repository: example.invalid/research/mongodb
+  tag: v7.0.0
+probe:
+  repository: example.invalid/research/probe
+  tag: v1.0.0
+unsafe:
+  includeSecret: false
+  includeMultus: false
