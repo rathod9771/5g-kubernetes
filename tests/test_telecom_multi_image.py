@@ -23,6 +23,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -1305,6 +1308,446 @@ class ChartProfileTests(unittest.TestCase):
         self.pad(150)
         with self.assertRaisesRegex(ValueError, 'budget exceeded'):
             prepare(self.workspace, 'chart', self.manifest, helm='helm', chart_profile='default')
+
+
+LEGACY_MONGO_CONTENT = b'not-a-real-archive-synthetic-fixture-for-removal-tests\n'
+
+
+class ChartAdapterRemovalTests(unittest.TestCase):
+    """PHASE 1: operator-controlled, source-verified file removal in
+    chart_adapters.py -- e.g. dropping a redundant packaged MongoDB
+    dependency archive (see the pipeline design report, "MongoDB
+    dependencies"). Keyed to a synthetic commit ('5'*40) that cannot
+    collide with any real git object id; no real free5GC entry exists."""
+
+    REMOVAL_COMMIT = '5' * 40
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name)
+        shutil.copytree(CHART, self.workspace / 'chart')
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': self.REMOVAL_COMMIT}
+        self.manifest = validate(manifest)
+        self.evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': self.REMOVAL_COMMIT}
+
+    def write_archive(self, content=LEGACY_MONGO_CONTENT):
+        (self.workspace / 'chart/charts').mkdir(parents=True, exist_ok=True)
+        (self.workspace / 'chart/charts/legacy-mongodb-4.2.1.tgz').write_bytes(content)
+
+    def base_files(self, include_archive=True):
+        files = {name: (self.workspace / 'chart' / name).read_bytes() for name in ('Chart.yaml', 'values.yaml')}
+        if include_archive:
+            files['charts/legacy-mongodb-4.2.1.tgz'] = LEGACY_MONGO_CONTENT
+        return files
+
+    def test_correct_removal_applied_with_full_provenance(self):
+        files = self.base_files()
+        adapted, provenance = chart_adapters.adapt(files, self.manifest, self.evidence)
+        self.assertNotIn('charts/legacy-mongodb-4.2.1.tgz', adapted)
+        self.assertEqual(provenance, [{
+            'action': 'remove', 'path': 'charts/legacy-mongodb-4.2.1.tgz',
+            'original_sha256': hashlib.sha256(LEGACY_MONGO_CONTENT).hexdigest(),
+            'reason': chart_adapters.REMOVALS[('multi-nf', '0.1.0', self.REMOVAL_COMMIT)]
+                      ['charts/legacy-mongodb-4.2.1.tgz']['reason'],
+        }])
+        self.assertIn('charts/legacy-mongodb-4.2.1.tgz', files)  # original dict never mutated
+
+    def test_removal_end_to_end_bypasses_archive_rejection(self):
+        """Proves removal happens BEFORE subcharts.validate()'s Option-B
+        archive check -- the chart packages successfully even though it
+        contained a .tgz, because it was removed first, never silently
+        exempted from the archive rule."""
+        self.write_archive()
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+        self.assertEqual([p['path'] for p in result['adapted_files']], ['charts/legacy-mongodb-4.2.1.tgz'])
+        self.assertEqual(result['adapted_files'][0]['action'], 'remove')
+        self.assertEqual(result['adaptation_provenance']['removed_files'], result['adapted_files'])
+
+    def test_wrong_source_commit_no_removal_still_rejected_by_archive_check(self):
+        """A different commit has no matching REMOVALS entry -- the
+        archive is left untouched, and still trips subcharts.py's
+        unconditional Option-B rejection; never silently removed for an
+        unreviewed commit."""
+        self.write_archive()
+        manifest = copy.deepcopy(dict(self.manifest))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '6' * 40}
+        with self.assertRaisesRegex(ValueError, 'Packaged Helm dependency archives'):
+            prepare(self.workspace, 'chart', manifest, helm='helm')
+
+    def test_wrong_acquisition_authority_rejected(self):
+        self.write_archive()
+        declared = {'authority': 'PROVIDER_DECLARED', 'commit': self.REMOVAL_COMMIT}
+        with self.assertRaisesRegex(ValueError, 'verified source acquisition evidence'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=declared)
+
+    def test_source_content_drift_rejected(self):
+        files = self.base_files()
+        files['charts/legacy-mongodb-4.2.1.tgz'] = LEGACY_MONGO_CONTENT + b'tampered'
+        with self.assertRaisesRegex(ValueError, 'Removal review is stale'):
+            chart_adapters.adapt(files, self.manifest, self.evidence)
+
+    def test_unapproved_removal_target_rejected(self):
+        """There is no caller-defined deletion list: with NOTHING
+        registered for this chart identity at all (registries cleared),
+        an arbitrary extra file survives completely untouched -- adapt()
+        has no parameter through which a caller could ask for it to be
+        removed."""
+        files = self.base_files(include_archive=False)
+        files['templates/extra-unregistered.yaml'] = b'kind: ConfigMap\n'
+        with mock.patch.dict(chart_adapters.ADAPTERS, {}, clear=True), \
+                mock.patch.dict(chart_adapters.REMOVALS, {}, clear=True):
+            adapted, provenance = chart_adapters.adapt(files, self.manifest, self.evidence)
+        self.assertIn('templates/extra-unregistered.yaml', adapted)
+        self.assertEqual(provenance, [])
+
+    def test_unsupported_path_rejected_for_removal(self):
+        """Removal targeting Chart.yaml/values.yaml is rejected even if a
+        registry entry mistakenly names one -- exercised via
+        mock.patch.dict with a deliberately bad entry, never via a
+        caller-supplied removal-list argument (adapt() has none)."""
+        files = self.base_files(include_archive=False)
+        bad_key = ('multi-nf', '0.1.0', self.REMOVAL_COMMIT)
+        bad_removals = {bad_key: {'values.yaml': {
+            'original_sha256': hashlib.sha256(files['values.yaml']).hexdigest(),
+            'reason': 'should never be allowed',
+        }}}
+        with mock.patch.dict(chart_adapters.REMOVALS, bad_removals, clear=True):
+            with self.assertRaisesRegex(ValueError, 'may not target chart metadata/values'):
+                chart_adapters.adapt(files, self.manifest, self.evidence)
+
+    def test_missing_removal_target_file_rejected(self):
+        """Once a chart identity has a REMOVALS entry naming a path, that
+        path must actually be present to remove -- a stale/mistaken
+        registry entry is a loud failure, never a silent no-op. (Package
+        digest changing after adaptation is proven by
+        UnifiedAdaptationProvenanceTests.test_package_digest_changes_after_adaptation.)"""
+        files = self.base_files(include_archive=False)
+        with self.assertRaisesRegex(ValueError, 'Removal target file missing'):
+            chart_adapters.adapt(files, self.manifest, self.evidence)
+
+
+class ChartAdapterValuesOverrideTests(unittest.TestCase):
+    """PHASE 2a: narrow, source-verified values.yaml override contract --
+    a FIXED set of already-existing key paths flipped to FIXED, reviewed
+    scalar values. Keyed to the same synthetic commit ('5'*40) as the
+    removal tests; no real free5GC entry exists."""
+
+    OVERRIDE_COMMIT = '8' * 40
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name)
+        shutil.copytree(CHART, self.workspace / 'chart')
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': self.OVERRIDE_COMMIT}
+        self.manifest = validate(manifest)
+        self.evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': self.OVERRIDE_COMMIT}
+        self.files = {name: (self.workspace / 'chart' / name).read_bytes() for name in ('Chart.yaml', 'values.yaml')}
+
+    def test_correct_override_applied_with_full_provenance(self):
+        updated, provenance = chart_adapters.apply_values_overrides(self.files, self.manifest, self.evidence)
+        parsed = yaml.safe_load(updated['values.yaml'])
+        self.assertEqual(parsed['probe']['tag'], 'v1.0.1')
+        registered = chart_adapters.VALUES_OVERRIDES[('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)]['overrides']['probe.tag']
+        self.assertEqual(provenance, [{'key_path': 'probe.tag', 'value': 'v1.0.1',
+                                        'purpose': registered['purpose'], 'security_impact': registered['security_impact']}])
+        # unrelated keys preserved
+        self.assertEqual(parsed['amf']['tag'], 'v1.0.0')
+        self.assertEqual(parsed['mongodb']['repository'], 'example.invalid/research/mongodb')
+
+    def test_original_files_dict_never_mutated(self):
+        original = dict(self.files)
+        chart_adapters.apply_values_overrides(self.files, self.manifest, self.evidence)
+        self.assertEqual(self.files, original)
+
+    def test_wrong_source_commit_no_override_applied(self):
+        manifest = copy.deepcopy(dict(self.manifest))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '6' * 40}
+        updated, provenance = chart_adapters.apply_values_overrides(self.files, manifest, self.evidence)
+        self.assertEqual(updated, self.files)
+        self.assertEqual(provenance, [])
+
+    def test_wrong_acquisition_authority_rejected(self):
+        declared = {'authority': 'PROVIDER_DECLARED', 'commit': self.OVERRIDE_COMMIT}
+        with self.assertRaisesRegex(ValueError, 'verified source acquisition evidence'):
+            chart_adapters.apply_values_overrides(self.files, self.manifest, declared)
+
+    def test_source_content_drift_rejected(self):
+        drifted = dict(self.files)
+        drifted['values.yaml'] = drifted['values.yaml'] + b'\nextra: true\n'
+        with self.assertRaisesRegex(ValueError, 'values.yaml review is stale'):
+            chart_adapters.apply_values_overrides(drifted, self.manifest, self.evidence)
+
+    def test_unknown_values_key_rejected(self):
+        """'mongodb.enabled' is not an existing key in this fixture's
+        values.yaml -- exercised via mock.patch.dict with a deliberately
+        bad registry entry, never a caller-supplied override."""
+        key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
+        bad_entry = {key: {'original_sha256': hashlib.sha256(self.files['values.yaml']).hexdigest(),
+                            'overrides': {'mongodb.enabled': {'value': False, 'purpose': 'x', 'security_impact': 'x'}}}}
+        with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'does not exist in original values.yaml'):
+                chart_adapters.apply_values_overrides(self.files, self.manifest, self.evidence)
+
+    def test_non_scalar_override_value_rejected(self):
+        """No arbitrary YAML edits: an override value that is a dict/list
+        is rejected outright, never applied."""
+        key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
+        bad_entry = {key: {'original_sha256': hashlib.sha256(self.files['values.yaml']).hexdigest(),
+                            'overrides': {'probe.tag': {'value': {'nested': 'structure'}, 'purpose': 'x', 'security_impact': 'x'}}}}
+        with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'must be a scalar'):
+                chart_adapters.apply_values_overrides(self.files, self.manifest, self.evidence)
+
+    def test_override_result_is_deterministic(self):
+        updated1, _ = chart_adapters.apply_values_overrides(self.files, self.manifest, self.evidence)
+        updated2, _ = chart_adapters.apply_values_overrides(self.files, self.manifest, self.evidence)
+        self.assertEqual(updated1['values.yaml'], updated2['values.yaml'])
+
+    def test_duplicate_yaml_key_fails_closed(self):
+        """safe_load() silently resolves a duplicate mapping key to
+        whichever occurrence it sees last; this pipeline must not act on
+        an ambiguity it cannot correctly resolve -- fails closed instead."""
+        duplicated = b'probe:\n  tag: v1.0.0\nprobe:\n  tag: v2.0.0\n'
+        key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
+        bad_entry = {key: {'original_sha256': hashlib.sha256(duplicated).hexdigest(),
+                            'overrides': {'probe.tag': {'value': 'v3.0.0', 'purpose': 'x', 'security_impact': 'x'}}}}
+        files = {'Chart.yaml': self.files['Chart.yaml'], 'values.yaml': duplicated}
+        with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Invalid values.yaml content'):
+                chart_adapters.apply_values_overrides(files, self.manifest, self.evidence)
+
+    def test_override_target_not_scalar_in_original_rejected(self):
+        """The EXISTING value at the override path is a list, not a
+        scalar -- rejected, never silently overwritten."""
+        original = b'probe:\n  tag:\n    - v1.0.0\n    - v2.0.0\n'
+        key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
+        bad_entry = {key: {'original_sha256': hashlib.sha256(original).hexdigest(),
+                            'overrides': {'probe.tag': {'value': 'v3.0.0', 'purpose': 'x', 'security_impact': 'x'}}}}
+        files = {'Chart.yaml': self.files['Chart.yaml'], 'values.yaml': original}
+        with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'is not a scalar in original values.yaml'):
+                chart_adapters.apply_values_overrides(files, self.manifest, self.evidence)
+
+    def test_ambiguous_dotted_key_path_rejected(self):
+        """A sibling key in the original values.yaml literally contains a
+        '.' -- the dotted-path addressing scheme could be confused with
+        that literal key, so the whole override is rejected rather than
+        guessing which interpretation is correct."""
+        original = b'probe:\n  tag: v1.0.0\n  "extra.key": true\n'
+        key = ('multi-nf', '0.1.0', self.OVERRIDE_COMMIT)
+        bad_entry = {key: {'original_sha256': hashlib.sha256(original).hexdigest(),
+                            'overrides': {'probe.tag': {'value': 'v3.0.0', 'purpose': 'x', 'security_impact': 'x'}}}}
+        files = {'Chart.yaml': self.files['Chart.yaml'], 'values.yaml': original}
+        with mock.patch.dict(chart_adapters.VALUES_OVERRIDES, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Ambiguous dotted-key path'):
+                chart_adapters.apply_values_overrides(files, self.manifest, self.evidence)
+
+
+class ChartAdapterDependencyRemovalTests(unittest.TestCase):
+    """PHASE 2b: narrow, source-verified Chart.yaml dependency-removal
+    contract -- drops ONE named (name, version) entry from
+    `dependencies:`, preserving every other field/dependency."""
+
+    DEP_REMOVAL_COMMIT = '9' * 40
+
+    def setUp(self):
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': self.DEP_REMOVAL_COMMIT}
+        self.manifest = validate(manifest)
+        self.evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': self.DEP_REMOVAL_COMMIT}
+        self.files = {'Chart.yaml': PARENT_CHART_WITH_DEPENDENCY}
+
+    def test_correct_removal_applied_with_full_provenance(self):
+        updated, provenance = chart_adapters.apply_dependency_removals(self.files, self.manifest, self.evidence)
+        parsed = yaml.safe_load(updated['Chart.yaml'])
+        self.assertEqual(parsed['dependencies'], [])
+        self.assertEqual(parsed['name'], 'multi-nf')    # unrelated metadata preserved
+        self.assertEqual(parsed['version'], '0.1.0')
+        registered = chart_adapters.DEPENDENCY_REMOVALS[('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)]['removals'][0]
+        self.assertEqual(provenance, [{'name': 'redis-cache', 'version': '1.0.0', 'reason': registered['reason']}])
+
+    def test_original_files_dict_never_mutated(self):
+        original = dict(self.files)
+        chart_adapters.apply_dependency_removals(self.files, self.manifest, self.evidence)
+        self.assertEqual(self.files, original)
+
+    def test_wrong_source_commit_no_removal_applied(self):
+        manifest = copy.deepcopy(dict(self.manifest))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '6' * 40}
+        updated, provenance = chart_adapters.apply_dependency_removals(self.files, manifest, self.evidence)
+        self.assertEqual(updated, self.files)
+        self.assertEqual(provenance, [])
+
+    def test_wrong_acquisition_authority_rejected(self):
+        declared = {'authority': 'PROVIDER_DECLARED', 'commit': self.DEP_REMOVAL_COMMIT}
+        with self.assertRaisesRegex(ValueError, 'verified source acquisition evidence'):
+            chart_adapters.apply_dependency_removals(self.files, self.manifest, declared)
+
+    def test_source_content_drift_rejected(self):
+        drifted = {'Chart.yaml': PARENT_CHART_WITH_DEPENDENCY + b'# tampered\n'}
+        with self.assertRaisesRegex(ValueError, 'Chart.yaml review is stale'):
+            chart_adapters.apply_dependency_removals(drifted, self.manifest, self.evidence)
+
+    def test_dependency_identity_mismatch_rejected(self):
+        """Registered to remove a name that Chart.yaml's dependencies:
+        list does not actually declare -- raises, never a silent no-op."""
+        key = ('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)
+        bad_entry = {key: {'original_sha256': hashlib.sha256(PARENT_CHART_WITH_DEPENDENCY).hexdigest(),
+                            'removals': [{'name': 'other-cache', 'version': '1.0.0', 'reason': 'x'}]}}
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Dependency removal target not found'):
+                chart_adapters.apply_dependency_removals(self.files, self.manifest, self.evidence)
+
+    def test_dependency_version_mismatch_rejected(self):
+        """Right name, wrong version -- still not a match, still raises."""
+        key = ('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)
+        bad_entry = {key: {'original_sha256': hashlib.sha256(PARENT_CHART_WITH_DEPENDENCY).hexdigest(),
+                            'removals': [{'name': 'redis-cache', 'version': '9.9.9', 'reason': 'x'}]}}
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Dependency removal target not found'):
+                chart_adapters.apply_dependency_removals(self.files, self.manifest, self.evidence)
+
+    def test_removal_result_is_deterministic(self):
+        updated1, _ = chart_adapters.apply_dependency_removals(self.files, self.manifest, self.evidence)
+        updated2, _ = chart_adapters.apply_dependency_removals(self.files, self.manifest, self.evidence)
+        self.assertEqual(updated1['Chart.yaml'], updated2['Chart.yaml'])
+
+    def test_duplicate_yaml_key_in_chart_yaml_fails_closed(self):
+        duplicated = (b'apiVersion: v2\nname: multi-nf\nversion: 0.1.0\n'
+                      b'dependencies:\n  - name: redis-cache\n    version: 1.0.0\n'
+                      b'dependencies:\n  - name: other\n    version: 2.0.0\n')
+        key = ('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)
+        bad_entry = {key: {'original_sha256': hashlib.sha256(duplicated).hexdigest(),
+                            'removals': [{'name': 'redis-cache', 'version': '1.0.0', 'reason': 'x'}]}}
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Invalid Chart.yaml content'):
+                chart_adapters.apply_dependency_removals({'Chart.yaml': duplicated}, self.manifest, self.evidence)
+
+    def test_malformed_dependency_entry_rejected(self):
+        """A `dependencies:` list entry that is not a mapping at all (e.g.
+        a bare string) is rejected cleanly, never a crash."""
+        malformed = (b'apiVersion: v2\nname: multi-nf\nversion: 0.1.0\n'
+                     b'dependencies:\n  - "just-a-string"\n')
+        key = ('multi-nf', '0.1.0', self.DEP_REMOVAL_COMMIT)
+        bad_entry = {key: {'original_sha256': hashlib.sha256(malformed).hexdigest(),
+                            'removals': [{'name': 'redis-cache', 'version': '1.0.0', 'reason': 'x'}]}}
+        with mock.patch.dict(chart_adapters.DEPENDENCY_REMOVALS, bad_entry, clear=True):
+            with self.assertRaisesRegex(ValueError, 'Invalid Chart.yaml dependency entry'):
+                chart_adapters.apply_dependency_removals({'Chart.yaml': malformed}, self.manifest, self.evidence)
+
+
+class UnifiedAdaptationProvenanceTests(unittest.TestCase):
+    """PHASE 3: package.prepare()'s unified adaptation_provenance record.
+    Reuses the hook-adapter identity ('multi-nf', '0.1.0', '0'*40) from
+    ChartAdapterTests, since it is the one chart identity in this file
+    with a REAL end-to-end adapted-and-packaged positive path."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name)
+        shutil.copytree(CHART, self.workspace / 'chart')
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '0' * 40}
+        manifest['images'] = manifest['images'] + [BUSYBOX_IMAGE_ENTRY]
+        self.manifest = validate(manifest)
+        self.evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': '0' * 40}
+        (self.workspace / 'chart/templates/test-hook.yaml').write_bytes(HOOK_ORIGINAL)
+
+    def test_provenance_present_and_complete_for_v2(self):
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+        provenance = result['adaptation_provenance']
+        self.assertEqual(provenance['source_commit'], '0' * 40)
+        self.assertEqual(provenance['chart_name'], 'multi-nf')
+        self.assertEqual(provenance['chart_version'], '0.1.0')
+        self.assertEqual(provenance['adapter_registry_key'], ('multi-nf', '0.1.0', '0' * 40))
+        self.assertIsNone(provenance['values_override_registry_key'])
+        self.assertIsNone(provenance['dependency_removal_registry_key'])
+        self.assertIsNone(provenance['dependency_inventory_registry_key'])
+        self.assertEqual([m['path'] for m in provenance['modified_files']], ['templates/test-hook.yaml'])
+        self.assertEqual(provenance['removed_files'], [])
+        self.assertEqual(provenance['values_overrides_applied'], [])
+        self.assertEqual(provenance['dependency_declarations_removed'], [])
+        self.assertEqual(provenance['chart_digest'], result['chart_digest'])
+        self.assertEqual(provenance['chart_profile'], 'default')
+        self.assertEqual(provenance['validation_results'],
+                          {'safe_chart_inputs': 'PASS', 'subcharts_validate': 'PASS', 'multi_image_verify': 'PASS'})
+
+    def test_provenance_reflects_caller_supplied_only_dependency_path(self):
+        """When a trusted registry entry is NOT used (the lower-trust,
+        caller-supplied-consistency-only path from an earlier milestone),
+        provenance honestly records that with None, not a fabricated key."""
+        sub = self.workspace / 'chart/charts/redis-cache/templates'
+        sub.mkdir(parents=True)
+        (self.workspace / 'chart/charts/redis-cache/Chart.yaml').write_bytes(SUBCHART_META)
+        (self.workspace / 'chart/charts/redis-cache/templates/deployment.yaml').write_bytes(SUBCHART_DEPLOYMENT)
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '0' * 40}
+        manifest['images'] = manifest['images'] + [BUSYBOX_IMAGE_ENTRY, REDIS_IMAGE_ENTRY]
+        (self.workspace / 'chart/Chart.yaml').write_bytes(
+            b'apiVersion: v2\nname: multi-nf\n'
+            b'description: Synthetic multi-NF fixture chart for schema_version=2 verification tests\n'
+            b'version: 0.1.0\nappVersion: "1.0"\ndependencies:\n  - name: redis-cache\n    version: 1.0.0\n')
+        manifest = validate(manifest)
+        digests = {'charts/redis-cache/Chart.yaml': hashlib.sha256(SUBCHART_META).hexdigest(),
+                   'charts/redis-cache/templates/deployment.yaml': hashlib.sha256(SUBCHART_DEPLOYMENT).hexdigest()}
+        result = prepare(self.workspace, 'chart', manifest, helm='helm', source_evidence=self.evidence,
+                          vendored_dependencies=digests)
+        self.assertIsNone(result['adaptation_provenance']['dependency_inventory_registry_key'])
+
+    def test_provenance_absent_adaptation_for_unregistered_identity(self):
+        """A chart identity with no registered adapter at all still gets a
+        complete, honestly-empty provenance record -- never omitted."""
+        manifest = copy.deepcopy(dict(self.manifest))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '7' * 40}
+        shutil.rmtree(self.workspace / 'chart/templates/test-hook.yaml', ignore_errors=True)
+        (self.workspace / 'chart/templates/test-hook.yaml').unlink()
+        result = prepare(self.workspace, 'chart', manifest, helm='helm')
+        provenance = result['adaptation_provenance']
+        self.assertIsNone(provenance['adapter_registry_key'])
+        self.assertEqual(provenance['modified_files'], [])
+        self.assertEqual(provenance['removed_files'], [])
+
+    def test_package_digest_changes_after_adaptation(self):
+        """The SAME upstream content, with vs. without the hook adapter
+        matching (different commit => no match), produces a DIFFERENT
+        chart_digest -- the adapted artifact is provably distinct from
+        the raw upstream tree."""
+        unadapted_manifest = copy.deepcopy(dict(self.manifest))
+        unadapted_manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '7' * 40}
+        (self.workspace / 'chart/templates/test-hook.yaml').unlink()
+        unadapted_manifest['images'] = [e for e in unadapted_manifest['images'] if e['identity'] != 'busybox-test']
+        unadapted = prepare(self.workspace, 'chart', unadapted_manifest, helm='helm')
+
+        self.setUp()  # fresh workspace with the hook present again
+        adapted = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+        self.assertNotEqual(unadapted['chart_digest'], adapted['chart_digest'])
+
+    def test_provenance_deterministic_across_repeated_preparation(self):
+        result1 = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+        result2 = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+        self.assertEqual(result1['adaptation_provenance'], result2['adaptation_provenance'])
+
+    def test_v1_return_shape_still_includes_empty_provenance(self):
+        """Schema v1's return dict is unaffected: adaptation_provenance is
+        present (uniform shape, like adapted_files already was) but every
+        field correctly reflects that nothing v2-specific ran."""
+        v1 = validate(json.loads((ROOT / 'examples/telecom/ran.json').read_text()))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        workspace = Path(tmp.name)
+        shutil.copytree(ROOT / 'examples/telecom/ran-chart', workspace / 'chart')
+        result = prepare(workspace, 'chart', v1, helm='helm')
+        provenance = result['adaptation_provenance']
+        self.assertIsNone(provenance['adapter_registry_key'])
+        self.assertIsNone(provenance['dependency_inventory_registry_key'])
+        self.assertEqual(provenance['modified_files'], [])
+        self.assertEqual(provenance['removed_files'], [])
+        self.assertEqual(provenance['validation_results']['subcharts_validate'], 'NOT_APPLICABLE')
 
 
 if __name__ == '__main__':

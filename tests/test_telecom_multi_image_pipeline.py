@@ -182,6 +182,7 @@ class MultiImagePipelineTests(unittest.TestCase):
         self.assertEqual(result['state'], 'COMPLETED', result)
         release = self.service.journal.get(self.principal, 'releases', result['release_id'])
         self.assertEqual(release['package']['adapted_files'], [{
+            'action': 'substitute',
             'path': 'templates/test-hook.yaml',
             'original_sha256': base_entry['templates/test-hook.yaml']['original_sha256'],
             'replacement_sha256': hashlib.sha256(base_entry['templates/test-hook.yaml']['replacement']).hexdigest(),

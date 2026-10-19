@@ -1,4 +1,4 @@
-"""Reviewed, offline adaptation of specific upstream Helm template files.
+"""Reviewed, offline adaptation of specific upstream Helm chart files.
 
 External RAN/Core charts (e.g. free5GC) sometimes hardcode a container image
 or omit required pod-security settings in a Helm test/lifecycle hook
@@ -6,52 +6,75 @@ template, bypassing the chart's own `values.yaml`-driven image contract
 entirely (a literal `image: busybox` line cannot be fixed by `--set` or a
 values overlay, since the template never references `.Values` for it at
 all). This module is NOT a general template engine and does not parse or
-understand Helm templating -- it performs a small number of byte-exact,
-individually reviewed whole-file substitutions, each one scoped to an EXACT
-(chart name, chart version, source commit) and an EXACT expected upstream
-file digest.
+understand Helm templating -- every mechanism below performs a small number
+of byte-exact, individually reviewed, source-controlled operations, each
+scoped to an EXACT (chart name, chart version, source commit).
 
-Fail-closed properties:
-  * Adaptation is opt-in per chart identity. A chart whose (name, version,
-    commit) has no registered entry is returned byte-for-byte unchanged --
-    this pipeline never assumes an arbitrary third-party chart can be
-    adapted automatically (see pipeline REPORT "free5GC-specific
-    limitations").
-  * A registered patch only ever replaces a file whose CURRENT content
+Three mechanisms, all sharing the same fail-closed discipline:
+  1. `adapt()` -- whole-file TEMPLATE SUBSTITUTION (`templates/*` only,
+     unchanged from before) and whole-file REMOVAL (`templates/*` or
+     `charts/*`, e.g. a redundant packaged dependency archive; never
+     `Chart.yaml`/`values.yaml`/`values.schema.json`). Registries: ADAPTERS
+     (substitute), REMOVALS (remove).
+  2. `apply_values_overrides()` -- a NARROW values.yaml contract: flips a
+     FIXED SET of already-existing, enumerated key paths to fixed, reviewed
+     scalar values. Never introduces a new key, never accepts a
+     dict/list value, never rewrites the file freely. Registry:
+     VALUES_OVERRIDES.
+  3. `apply_dependency_removals()` -- a NARROW Chart.yaml contract: drops
+     ONE OR MORE named (name, version) entries from `dependencies:`,
+     leaving every other field and every other dependency byte-for-byte
+     represented (modulo YAML re-serialization). Registry:
+     DEPENDENCY_REMOVALS.
+
+Mechanisms 2 and 3 parse and ACT on YAML structure (1 does not -- it never
+inspects content, only digests). Plain `yaml.safe_load()` silently resolves
+a duplicate mapping key to whichever occurrence comes last, with no error;
+a Go-based renderer (e.g. the real `helm template`) could legitimately
+disagree about which one wins. Rather than act on an ambiguity neither this
+module nor the reviewer can correctly resolve, both functions use a
+duplicate-key-detecting loader (`_strict_yaml_load`) and refuse an override
+whose dotted key path could be confused with a literal, dotted key at the
+same level (`_dotted_lookup`) -- see their docstrings.
+
+Fail-closed properties shared by all three:
+  * Opt-in per chart identity. A chart whose (name, version, commit) has no
+    matching registry entry is returned byte-for-byte unchanged by every
+    function here -- this pipeline never assumes an arbitrary third-party
+    chart can be adapted automatically.
+  * A registered operation only ever acts on a file whose CURRENT content
     matches the EXACT digest it was reviewed against. If the upstream file
-    is missing, moved, or has changed at all, adaptation raises rather than
-    silently applying a stale review to different content.
-  * A patch may only target a path under `templates/`; it can never touch
-    Chart.yaml, values.yaml, or add/remove files.
-  * The replacement content is literal, final, reviewed bytes checked into
-    this module -- never fetched, generated, or templated -- and it is NOT
-    exempt from anything downstream: the adapted file set still passes
-    through the exact same, unweakened `safe_chart_inputs()` extension/path
-    allowlist and `multi_image.verify()` security checks as any organically
-    authored template (see package.prepare()). Adaptation never bypasses
-    safe_chart_inputs(); it only changes what the SAME checks see.
-  * Because a replacement is a literal edit (not routed through
-    `.Values`), a patched hook's image reference can legitimately be an
-    immutable `repository@sha256` digest -- unlike this chart family's
-    `.Values`-templated NF containers, which remain tag-based (see
-    multi_image.py docstring) -- so an adapted hook can genuinely achieve
-    digest-pinned execution for that one identity.
-  * A chart/version/commit match alone is NOT sufficient: adaptation also
-    requires `source_evidence` (threaded from pipeline.run(), which got it
-    from execution.acquire()/helm_source() for THIS job) to show one of the
-    VERIFIED_ACQUISITION_AUTHORITIES and the exact matching commit --
-    declaration-only evidence, or none at all, is rejected (see adapt()'s
-    docstring for the one honestly-disclosed residual limitation this does
-    NOT close).
+    is missing, moved, or has changed at all, the operation raises rather
+    than silently applying a stale review to different content.
+  * The content involved (replacement bytes, override values, removal
+    targets, dependency identities) is literal, final, and reviewed --
+    checked into this module, never fetched, generated, derived from
+    caller input, or templated.
+  * NONE of this is exempt from anything downstream: the resulting file set
+    still passes through the exact same, unweakened `safe_chart_inputs()`
+    extension/path allowlist, `subcharts.validate()`, and
+    `multi_image.verify()` security checks as any organically authored
+    chart (see package.prepare()). Nothing here bypasses those checks; it
+    only changes what the SAME checks see.
+  * A chart/version/commit match alone is NEVER sufficient: every operation
+    also requires `source_evidence` (threaded from pipeline.run(), which
+    got it from execution.acquire()/helm_source() for THIS job) to show one
+    of VERIFIED_ACQUISITION_AUTHORITIES and the exact matching commit --
+    declaration-only evidence, or none at all, is rejected outright, even
+    if a registry entry's (name, version, commit) key otherwise matches.
+    There is NO caller-supplied removal list, override list, or dependency
+    list anywhere in this module -- every one of those lives only in the
+    in-repo registries below, reviewed through the normal code-review
+    process (see adapt()'s docstring for the one honestly-disclosed
+    residual limitation this does NOT close).
 
-NOTE: no real free5GC adapter entry ships in this change. The actual
-upstream free5GC checkout exists only on the Dell workstation and was never
-fetched, cloned, or inspected from this (HP) environment. The ADAPTERS
-registry below contains exactly one SYNTHETIC demonstration entry, matching
-this repository's own offline test fixture (see
-examples/telecom/multi-nf-chart/templates/unsafe.yaml and
-tests/test_telecom_multi_image.py) -- it is not a validated patch for any
-real upstream chart and must not be read as one.
+NOTE: no real free5GC entries ship in this change. The actual upstream
+free5GC checkout exists only on the Dell workstation and was never fetched,
+cloned, or inspected from this (HP) environment. Every registry below
+contains only SYNTHETIC demonstration entries matching this repository's
+own offline test fixtures (see tests/test_telecom_multi_image.py) -- none
+of them are validated patches for any real upstream chart and none must be
+read as one.
 """
 
 import hashlib
@@ -100,6 +123,88 @@ ADAPTERS = {
     },
 }
 
+# {(chart_name, chart_version, source_commit): {relative_path: {
+#     'original_sha256': <exact upstream content this removal was reviewed against>,
+#     'reason': <human-readable, auditable justification -- required, non-empty>,
+# }}}
+# PHASE 1: operator-controlled file removal. Scoped to templates/ and
+# charts/ (never Chart.yaml/values.yaml/values.schema.json -- those get
+# the separate, narrower contracts below). There is deliberately no
+# "action" field inside ADAPTERS entries: substitution and removal are
+# kept in separate registries with separate, non-overlapping shapes so
+# neither can be mistaken for the other at review time.
+REMOVALS = {
+    ('multi-nf', '0.1.0', '5' * 40): {
+        # Synthetic reproduction of a redundant, packaged dependency
+        # archive (free5GC vendors MongoDB this way -- see the pipeline
+        # design report "MongoDB dependencies"). Used only by
+        # tests/test_telecom_multi_image.py: ChartAdapterRemovalTests.
+        'charts/legacy-mongodb-4.2.1.tgz': {
+            'original_sha256': 'f1bef5285e09e5c1a5531ad563e32b07cdb77771e05551b99a1910508add7f53',
+            'reason': 'Redundant packaged MongoDB dependency archive; superseded by an '
+                      'independently provisioned MongoDB instance (see pipeline design report, '
+                      '"MongoDB dependencies"). Packaged archives are never inspected by this '
+                      'pipeline (see subcharts.py Option B) -- removal, not extraction, is the '
+                      'only supported path for one that is no longer needed.',
+        },
+    },
+}
+
+# Paths a removal may never target, regardless of registry content -- a
+# chart must always keep real Chart.yaml/values.yaml; those get the
+# narrower, dedicated contracts below instead of whole-file removal.
+_REMOVAL_FORBIDDEN_TARGETS = {'Chart.yaml', 'values.yaml', 'values.schema.json'}
+
+# {(chart_name, chart_version, source_commit): {
+#     'original_sha256': <digest of the ENTIRE original values.yaml>,
+#     'overrides': {'dotted.key.path': {
+#         'value': <fixed, reviewed, scalar value>,
+#         'purpose': <required, non-empty>,
+#         'security_impact': <required, non-empty>,
+#     }},
+# }}
+# PHASE 2a: a FIXED set of already-existing key paths, flipped to a FIXED,
+# reviewed scalar value. Never introduces a new key (the path must already
+# resolve in the parsed original file); never accepts a non-scalar value
+# (no smuggling structured content through a single "override"); the
+# ENTIRE original file is digest-pinned, not just the touched keys.
+VALUES_OVERRIDES = {
+    ('multi-nf', '0.1.0', '8' * 40): {
+        'original_sha256': '7ccceec13e02e4f673c961cff66240f9694a9138dfe791b1f8e45c10299db2ea',
+        'overrides': {
+            'probe.tag': {
+                'value': 'v1.0.1',
+                'purpose': 'Synthetic demonstration of the values-override contract itself '
+                           '(tests/test_telecom_multi_image.py: ChartAdapterValuesOverrideTests) '
+                           '-- pins the probe utility image to a newer reviewed tag.',
+                'security_impact': 'No security-relevant change: a tag-reference string only, '
+                                    'still subject to the full existing image-declaration and '
+                                    'live registry verification downstream.',
+            },
+        },
+    },
+}
+
+# {(chart_name, chart_version, source_commit): {
+#     'original_sha256': <digest of the ENTIRE original Chart.yaml>,
+#     'removals': [{'name': ..., 'version': ..., 'reason': <required, non-empty>}],
+# }}
+# PHASE 2b: drop ONE OR MORE named (name, version) dependency entries from
+# Chart.yaml's `dependencies:` list. Every other field and every other
+# dependency is preserved (re-serialized, not hand-edited). Raises if a
+# named (name, version) pair is not actually present -- never silently a
+# no-op for a stale or mistaken registry entry.
+DEPENDENCY_REMOVALS = {
+    ('multi-nf', '0.1.0', '9' * 40): {
+        'original_sha256': 'e55e2f02b5b1f7d5b6cc9041bb4ace3e2a241052113a4638d6962e7775109dc4',
+        'removals': [
+            {'name': 'redis-cache', 'version': '1.0.0',
+             'reason': 'Synthetic demonstration of the dependency-removal contract itself '
+                       '(tests/test_telecom_multi_image.py: ChartAdapterDependencyRemovalTests).'},
+        ],
+    },
+}
+
 
 # Acquisition authorities that mean "this exact commit's tree was
 # independently extracted and verified via git's own content-addressing"
@@ -109,23 +214,106 @@ ADAPTERS = {
 VERIFIED_ACQUISITION_AUTHORITIES = {'LOCAL_OBJECTS_VERIFIED', 'GITHUB_FETCH_VERIFIED'}
 
 
+def _require_verified_evidence(commit, source_evidence):
+    if (not commit or not isinstance(source_evidence, dict) or
+            source_evidence.get('authority') not in VERIFIED_ACQUISITION_AUTHORITIES or
+            source_evidence.get('commit') != commit):
+        raise ValueError('Adaptation requires independently verified source acquisition evidence')
+
+
+class _NoDuplicateKeysLoader(yaml.SafeLoader):
+    """A plain yaml.safe_load() silently resolves a duplicate mapping key to
+    whichever occurrence it sees last -- PyYAML never raises for this. If
+    the upstream file actually has a duplicate key, OUR parse and Helm's own
+    (Go-based) renderer could legitimately disagree about which value wins,
+    so acting on our own resolution here would be acting on an ambiguity we
+    cannot actually resolve correctly. Used ONLY by apply_values_overrides()/
+    apply_dependency_removals(), which ACT on the parsed structure (unlike
+    _chart_identity_key(), which only reads two scalar fields and already
+    fails safe -- a no-op, not a modification -- on any parse problem)."""
+
+
+def _no_duplicate_keys(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise ValueError('Duplicate YAML key: ' + str(key))
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_NoDuplicateKeysLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys)
+
+
+def _strict_yaml_load(data, invalid_message):
+    """Parse YAML, failing closed (not just on syntax errors, but also on
+    the duplicate-key ambiguity safe_load() silently tolerates)."""
+    try:
+        return yaml.load(data, Loader=_NoDuplicateKeysLoader)
+    except Exception as error:
+        raise ValueError(invalid_message + ': ' + str(error)) from None
+
+
+def _dotted_lookup(parsed, key_path):
+    """Resolve a dotted key path in an already-parsed mapping, requiring
+    EVERY level to already exist and EVERY level's siblings to be
+    unambiguous (no literal key containing '.' -- which could otherwise be
+    confused with a path separator). Returns (parent_dict, final_segment,
+    existing_value); raises ValueError on any violation."""
+    segments = key_path.split('.')
+    cursor = parsed
+    for segment in segments[:-1]:
+        if not isinstance(cursor, dict) or segment not in cursor:
+            raise ValueError('Values override key does not exist in original values.yaml: ' + key_path)
+        if any('.' in existing_key for existing_key in cursor if isinstance(existing_key, str)):
+            raise ValueError('Ambiguous dotted-key path in original values.yaml: ' + key_path)
+        cursor = cursor[segment]
+    if not isinstance(cursor, dict) or segments[-1] not in cursor:
+        raise ValueError('Values override key does not exist in original values.yaml: ' + key_path)
+    if any('.' in existing_key for existing_key in cursor if isinstance(existing_key, str)):
+        raise ValueError('Ambiguous dotted-key path in original values.yaml: ' + key_path)
+    return cursor, segments[-1], cursor[segments[-1]]
+
+
+def _chart_identity_key(files, manifest):
+    """Return (chart_name, chart_version, commit), or None if Chart.yaml is
+    absent/unparseable -- callers then treat this as "no registry entry
+    can possibly match" rather than raising, consistent with adapt()'s
+    long-standing behavior of silently no-op'ing for an unrecognized or
+    malformed chart rather than failing the whole pipeline on it (that job
+    belongs to safe_chart_inputs()/multi_image.verify(), which still run
+    unconditionally afterward)."""
+    try:
+        chart_meta = yaml.safe_load(files.get('Chart.yaml', b'')) or {}
+    except Exception:
+        return None
+    if not isinstance(chart_meta, dict):
+        return None
+    commit = (manifest.get('source') or {}).get('commit')
+    return (chart_meta.get('name'), chart_meta.get('version'), commit)
+
+
 def adapt(files, manifest, source_evidence=None):
     """Return (adapted_files, provenance); `files` itself is never mutated.
 
     `adapted_files` is a NEW dict (a shallow copy of `files` with any
-    matched patch targets replaced). `provenance` is a list of
-    {'path', 'original_sha256', 'replacement_sha256'} records, one per file
-    actually patched -- empty when no adapter matched this chart identity.
+    matched ADAPTERS substitution applied, and any matched REMOVALS target
+    deleted). `provenance` is a list of per-operation records, each tagged
+    `'action': 'substitute'` ({'action','path','original_sha256',
+    'replacement_sha256'}) or `'action': 'remove'` ({'action','path',
+    'original_sha256','reason'}) -- empty when neither registry has an
+    entry for this chart identity.
 
     `source_evidence` must be the evidence value `execution.acquire()` (or
     `execution.helm_source()`) itself produced for THIS job -- the caller
     (package.prepare(), threaded from pipeline.run()) is expected to pass
     through the same object it already computed from a real acquisition,
-    never to construct one ad hoc. Adaptation only proceeds when its
+    never to construct one ad hoc. Every operation only proceeds when its
     'authority' is one of VERIFIED_ACQUISITION_AUTHORITIES and its 'commit'
     equals the manifest's declared source commit -- a declaration-only
     authority, or a missing/mismatched one, is rejected outright, even if a
-    registered adapter's (name, version, commit) key otherwise matches.
+    registry entry's (name, version, commit) key otherwise matches.
 
     LIMITATION (deliberately not papered over): within a single Python
     process there is no cryptographic separation between "a value
@@ -137,32 +325,29 @@ def adapt(files, manifest, source_evidence=None):
     type only constructible inside execution.py (or an actual process/
     privilege boundary between orchestration and packaging), which is a
     larger refactor than this change makes. What DOES remain unconditionally
-    enforced regardless of how trustworthy `source_evidence` is: adaptation
-    can only ever substitute the fixed, literal, pre-reviewed `replacement`
-    bytes checked into this module for a file whose CURRENT content matches
-    `original_sha256` exactly -- fabricated evidence alone, without that
-    exact byte match, achieves nothing.
+    enforced regardless of how trustworthy `source_evidence` is: every
+    operation can only ever act on a file whose CURRENT content matches the
+    exact reviewed digest -- fabricated evidence alone, without that exact
+    byte match, achieves nothing.
     """
     if manifest.get('schema_version') != 2:
         return files, []
-    try:
-        chart_meta = yaml.safe_load(files.get('Chart.yaml', b'')) or {}
-    except Exception:
+    key = _chart_identity_key(files, manifest)
+    if key is None:
         return files, []
-    if not isinstance(chart_meta, dict):
+    substitutions = ADAPTERS.get(key)
+    removals = REMOVALS.get(key)
+    if substitutions is None and removals is None:
         return files, []
-    commit = (manifest.get('source') or {}).get('commit')
-    key = (chart_meta.get('name'), chart_meta.get('version'), commit)
-    entry = ADAPTERS.get(key)
-    if entry is None:
-        return files, []
-    if (not commit or not isinstance(source_evidence, dict) or
-            source_evidence.get('authority') not in VERIFIED_ACQUISITION_AUTHORITIES or
-            source_evidence.get('commit') != commit):
-        raise ValueError('Adaptation requires independently verified source acquisition evidence')
+    overlap = set(substitutions or {}) & set(removals or {})
+    if overlap:
+        raise ValueError('Adapter registry error: path registered for both substitution and removal: ' +
+                          ', '.join(sorted(overlap)))
+    commit = key[2]
+    _require_verified_evidence(commit, source_evidence)
     adapted = dict(files)
     provenance = []
-    for target, patch in entry.items():
+    for target, patch in (substitutions or {}).items():
         if not target.startswith('templates/'):
             raise ValueError('Adapter may only patch templates/: ' + target)
         if target not in files:
@@ -170,6 +355,135 @@ def adapt(files, manifest, source_evidence=None):
         if hashlib.sha256(files[target]).hexdigest() != patch['original_sha256']:
             raise ValueError('Adapter review is stale: upstream content changed for ' + target)
         adapted[target] = patch['replacement']
-        provenance.append({'path': target, 'original_sha256': patch['original_sha256'],
+        provenance.append({'action': 'substitute', 'path': target, 'original_sha256': patch['original_sha256'],
                             'replacement_sha256': hashlib.sha256(patch['replacement']).hexdigest()})
+    for target, removal in (removals or {}).items():
+        if target in _REMOVAL_FORBIDDEN_TARGETS:
+            raise ValueError('Removal may not target chart metadata/values: ' + target)
+        if not (target.startswith('templates/') or target.startswith('charts/')):
+            raise ValueError('Removal may only target templates/ or charts/: ' + target)
+        if target not in files:
+            raise ValueError('Removal target file missing from chart: ' + target)
+        if hashlib.sha256(files[target]).hexdigest() != removal['original_sha256']:
+            raise ValueError('Removal review is stale: upstream content changed for ' + target)
+        if not isinstance(removal.get('reason'), str) or not removal['reason']:
+            raise ValueError('Removal reason must be documented: ' + target)
+        del adapted[target]
+        provenance.append({'action': 'remove', 'path': target, 'original_sha256': removal['original_sha256'],
+                            'reason': removal['reason']})
     return adapted, provenance
+
+
+def apply_values_overrides(files, manifest, source_evidence=None):
+    """Return (updated_files, provenance); `files` itself is never mutated.
+
+    Applies ONLY the VALUES_OVERRIDES registry entry (if any) matching this
+    exact chart identity + commit + independently verified source_evidence.
+    No-ops (returns `files` unchanged, []) for schema_version != 2, an
+    unparseable Chart.yaml, or no matching registry entry.
+
+    Every override key path MUST already resolve to an existing value in
+    the ORIGINAL (pre-override) parsed values.yaml -- this never introduces
+    a new, unreviewed configuration surface, only flips an existing,
+    reviewed toggle to a fixed, reviewed scalar value. A non-scalar
+    override value is rejected (no smuggling structured content through a
+    single "override"). The entire original values.yaml is digest-pinned;
+    upstream drift in ANY part of the file (not just the touched keys)
+    fails closed.
+
+    `provenance` is a list of {'key_path', 'value', 'purpose',
+    'security_impact'} records, one per override actually applied.
+    """
+    if manifest.get('schema_version') != 2:
+        return files, []
+    key = _chart_identity_key(files, manifest)
+    if key is None:
+        return files, []
+    entry = VALUES_OVERRIDES.get(key)
+    if entry is None:
+        return files, []
+    _require_verified_evidence(key[2], source_evidence)
+    if 'values.yaml' not in files:
+        raise ValueError('Chart metadata/values required for a values override')
+    if hashlib.sha256(files['values.yaml']).hexdigest() != entry['original_sha256']:
+        raise ValueError('values.yaml review is stale: upstream content changed')
+    parsed = _strict_yaml_load(files['values.yaml'], 'Invalid values.yaml content')
+    if not isinstance(parsed, dict):
+        raise ValueError('Invalid values.yaml content')
+    provenance = []
+    for key_path, override in entry['overrides'].items():
+        value = override['value']
+        if value is not None and not isinstance(value, (bool, int, float, str)):
+            raise ValueError('Values override value must be a scalar: ' + key_path)
+        if not isinstance(override.get('purpose'), str) or not override['purpose']:
+            raise ValueError('Values override purpose must be documented: ' + key_path)
+        if not isinstance(override.get('security_impact'), str) or not override['security_impact']:
+            raise ValueError('Values override security impact must be documented: ' + key_path)
+        parent, final_segment, existing_value = _dotted_lookup(parsed, key_path)
+        if existing_value is not None and not isinstance(existing_value, (bool, int, float, str)):
+            raise ValueError('Values override target is not a scalar in original values.yaml: ' + key_path)
+        parent[final_segment] = value
+        provenance.append({'key_path': key_path, 'value': value,
+                            'purpose': override['purpose'], 'security_impact': override['security_impact']})
+    updated = dict(files)
+    updated['values.yaml'] = yaml.safe_dump(parsed, sort_keys=True).encode()
+    return updated, provenance
+
+
+def apply_dependency_removals(files, manifest, source_evidence=None):
+    """Return (updated_files, provenance); `files` itself is never mutated.
+
+    Applies ONLY the DEPENDENCY_REMOVALS registry entry (if any) matching
+    this exact chart identity + commit + independently verified
+    source_evidence. No-ops for schema_version != 2, an unparseable
+    Chart.yaml, or no matching registry entry.
+
+    Drops each registered (name, version) pair from Chart.yaml's
+    `dependencies:` list; every other field and every other dependency
+    entry is preserved (re-serialized from the parsed structure, not
+    hand-edited). Raises if a registered (name, version) pair is not
+    actually present in the current `dependencies:` list -- a stale or
+    mistaken registry entry is a loud failure, never a silent no-op.
+
+    `provenance` is a list of {'name', 'version', 'reason'} records, one
+    per dependency actually removed.
+    """
+    if manifest.get('schema_version') != 2:
+        return files, []
+    key = _chart_identity_key(files, manifest)
+    if key is None:
+        return files, []
+    entry = DEPENDENCY_REMOVALS.get(key)
+    if entry is None:
+        return files, []
+    _require_verified_evidence(key[2], source_evidence)
+    if 'Chart.yaml' not in files:
+        raise ValueError('Chart metadata required for a dependency removal')
+    if hashlib.sha256(files['Chart.yaml']).hexdigest() != entry['original_sha256']:
+        raise ValueError('Chart.yaml review is stale: upstream content changed')
+    parsed = _strict_yaml_load(files['Chart.yaml'], 'Invalid Chart.yaml content')
+    if not isinstance(parsed, dict) or not isinstance(parsed.get('dependencies'), list):
+        raise ValueError('Chart.yaml dependencies declaration missing or invalid')
+    pending = {}
+    for removal in entry['removals']:
+        if not isinstance(removal.get('reason'), str) or not removal['reason']:
+            raise ValueError('Dependency removal reason must be documented: ' + str(removal.get('name')))
+        pending[(removal['name'], removal['version'])] = removal['reason']
+    remaining = []
+    provenance = []
+    for dep in parsed['dependencies']:
+        if not isinstance(dep, dict):
+            raise ValueError('Invalid Chart.yaml dependency entry')
+        dep_key = (dep.get('name'), dep.get('version'))
+        if dep_key in pending:
+            provenance.append({'name': dep_key[0], 'version': dep_key[1], 'reason': pending[dep_key]})
+            continue
+        remaining.append(dep)
+    missing = set(pending) - {(p['name'], p['version']) for p in provenance}
+    if missing:
+        raise ValueError('Dependency removal target not found in Chart.yaml: ' +
+                          ', '.join(sorted(name for name, version in missing)))
+    parsed['dependencies'] = remaining
+    updated = dict(files)
+    updated['Chart.yaml'] = yaml.safe_dump(parsed, sort_keys=True).encode()
+    return updated, provenance

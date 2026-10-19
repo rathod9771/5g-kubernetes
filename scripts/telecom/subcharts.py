@@ -183,12 +183,21 @@ def _relative_sensitive_or_unapproved(relative):
 
 def validate(files, parent_chart_meta, reviewed_dependencies, *, commit=None, source_evidence=None):
     """Validate every `charts/...` entry in the already-captured `files`
-    dict (see package.prepare()). Returns nothing on success; raises
-    ValueError on any violation. A chart with no `charts/` entries AND no
-    declared `dependencies:` at all is a complete no-op -- existing
-    single-chart behavior is unaffected. A declared dependency with
-    nothing vendored for it at all (zero charts/ files) is still caught
-    below, not silently treated as "nothing to check."
+    dict (see package.prepare()). Returns `dependency_registry_key` --
+    the exact (chart_name, chart_version, commit) key of the
+    TRUSTED_DEPENDENCIES entry that was actually used, or `None` if the
+    chart had nothing to validate, or if only the lower-trust,
+    caller-supplied-consistency-only path was used. `None` here is a
+    meaningful, honest fact for provenance purposes (see
+    package.prepare()'s `adaptation_provenance`): it means no
+    operator-reviewed registry backs this package's dependency content --
+    never conflate it with "nothing was approved," since a chart with zero
+    `charts/` entries needs no approval at all. Raises ValueError on any
+    violation. A chart with no `charts/` entries AND no declared
+    `dependencies:` at all is a complete no-op -- existing single-chart
+    behavior is unaffected. A declared dependency with nothing vendored
+    for it at all (zero charts/ files) is still caught below, not silently
+    treated as "nothing to check."
 
     If this exact (chart name, chart version, `commit`) has an entry in
     TRUSTED_DEPENDENCIES, that in-repo, code-reviewed inventory is
@@ -204,7 +213,7 @@ def validate(files, parent_chart_meta, reviewed_dependencies, *, commit=None, so
     vendored = {name: data for name, data in files.items() if name.startswith('charts/')}
     declared_top = _dependencies(parent_chart_meta)
     if not vendored and not declared_top:
-        return
+        return None
     for name in vendored:
         if any(name.lower().endswith(suffix) for suffix in _ARCHIVE_SUFFIXES):
             raise ValueError('Packaged Helm dependency archives (.tgz/.tar/.zip) are not supported; '
@@ -278,6 +287,8 @@ def validate(files, parent_chart_meta, reviewed_dependencies, *, commit=None, so
             raise ValueError('Unexpected vendored dependency input requires review: ' + name)
         if _VALUES_RE.fullmatch(relative):
             reject_inline_credentials(yaml.safe_load(vendored[name]))
+
+    return (chart_name, chart_version, commit) if trusted is not None else None
 
 
 def _dependencies(chart_meta):

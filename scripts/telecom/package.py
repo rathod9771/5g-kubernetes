@@ -117,8 +117,17 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
     # acquisition -- see chart_adapters.adapt()) runs BEFORE
     # safe_chart_inputs/multi_image.verify, not instead of them: the adapted
     # file set still passes through the exact same, unweakened checks below
-    # as any organically authored template.
+    # as any organically authored template. adapt() now also performs any
+    # registered, source-verified file REMOVAL (e.g. a redundant packaged
+    # dependency archive) using the exact same gating.
     files, adapted_files = chart_adapters.adapt(files, manifest, source_evidence)
+    # Narrow, source-verified values.yaml / Chart.yaml contracts (see
+    # chart_adapters.py) -- run BEFORE subcharts.validate() so a
+    # dependency-declaration removal and the corresponding vendored-file
+    # removal above are both already reflected when subcharts.py checks
+    # Chart.yaml's dependencies: against what is actually vendored.
+    files, values_overrides_applied = chart_adapters.apply_values_overrides(files, manifest, source_evidence)
+    files, dependency_declarations_removed = chart_adapters.apply_dependency_removals(files, manifest, source_evidence)
     # Vendored Helm subchart entries (charts/<name>/...) are validated
     # separately (exact per-file digest pin + dependency-relationship
     # checks + the identical structural/content policy a top-level template
@@ -129,6 +138,7 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
     # other caller -- a v1 chart's charts/ entries (if any) are NEVER
     # exempted and still hit safe_chart_inputs()'s existing rejection,
     # exactly as before this feature existed.
+    dependency_registry_key = None
     if manifest.get('schema_version') == 2:
         # subcharts.validate() always runs here (not only when charts/
         # entries are already present): a Chart.yaml that DECLARES a
@@ -138,8 +148,9 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
             parent_meta = yaml.safe_load(files.get('Chart.yaml', b''))
         except Exception:
             parent_meta = None
-        subcharts.validate(files, parent_meta if isinstance(parent_meta, dict) else {}, vendored_dependencies,
-                            commit=(manifest.get('source') or {}).get('commit'), source_evidence=source_evidence)
+        dependency_registry_key = subcharts.validate(
+            files, parent_meta if isinstance(parent_meta, dict) else {}, vendored_dependencies,
+            commit=(manifest.get('source') or {}).get('commit'), source_evidence=source_evidence)
         files_for_safe_chart_inputs = {n: v for n, v in files.items() if not n.startswith('charts/')}
     else:
         files_for_safe_chart_inputs = files
@@ -231,8 +242,45 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
     inputs.update({f"{scenario['knf_package']}/helm-chart-v3s/nf/{n}":v for n,v in files.items()})
     validate_references(scenario, inputs)
     artifacts = {scenario[k]+'.tar.gz':archive_bytes(scenario[k], {n:v for n,v in inputs.items() if n.startswith(scenario[k]+'/')}) for k in ('knf_package','nsd_package')}
+    # Unified adaptation provenance: every field below represents a VERIFIED
+    # fact established above (a registry key only appears here if it was
+    # actually matched AND passed its source_evidence/digest gates; a
+    # None here is an honest "no operator-reviewed registry backs this,"
+    # never a caller-supplied approval claim -- see chart_adapters.py and
+    # subcharts.py's own "TRUST MODEL" documentation). Identity is
+    # recomputed fresh from the final Chart.yaml -- safe, since no
+    # mechanism above ever touches its name/version fields.
+    try:
+        final_meta = yaml.safe_load(files.get('Chart.yaml', b'')) or {}
+    except Exception:
+        final_meta = {}
+    if not isinstance(final_meta, dict):
+        final_meta = {}
+    chart_identity_key = (final_meta.get('name'), final_meta.get('version'), (manifest.get('source') or {}).get('commit'))
+    adaptation_provenance = {
+        'source_commit': chart_identity_key[2],
+        'chart_name': chart_identity_key[0],
+        'chart_version': chart_identity_key[1],
+        'adapter_registry_key': chart_identity_key if (
+            chart_identity_key in chart_adapters.ADAPTERS or chart_identity_key in chart_adapters.REMOVALS) else None,
+        'values_override_registry_key': chart_identity_key if chart_identity_key in chart_adapters.VALUES_OVERRIDES else None,
+        'dependency_removal_registry_key': chart_identity_key if chart_identity_key in chart_adapters.DEPENDENCY_REMOVALS else None,
+        'dependency_inventory_registry_key': dependency_registry_key,
+        'modified_files': [p for p in adapted_files if p.get('action') == 'substitute'],
+        'removed_files': [p for p in adapted_files if p.get('action') == 'remove'],
+        'values_overrides_applied': values_overrides_applied,
+        'dependency_declarations_removed': dependency_declarations_removed,
+        'chart_digest': 'sha256:' + content_hash,
+        'chart_profile': chart_profile,
+        'validation_results': {
+            'safe_chart_inputs': 'PASS',
+            'subcharts_validate': 'PASS' if manifest.get('schema_version') == 2 else 'NOT_APPLICABLE',
+            'multi_image_verify': 'PASS' if manifest.get('schema_version') == 2 else 'NOT_APPLICABLE',
+        },
+    }
     return {'namespace_portable':namespace_portable,'scenario':scenario, 'chart_digest':'sha256:'+content_hash,
             'image_discovery':image_discovery, 'adapted_files':adapted_files,
+            'adaptation_provenance':adaptation_provenance,
             'package_digests':{k:'sha256:'+__import__('hashlib').sha256(v).hexdigest() for k,v in artifacts.items()},
             'helm_validation':{'outcome':'PASS','authority':'PLATFORM_OFFLINE_VERIFIED','deployed':False},
             'artifacts':{k:v.hex() for k,v in artifacts.items()}}
