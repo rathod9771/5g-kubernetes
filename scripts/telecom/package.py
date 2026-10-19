@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import tempfile
+import time
 from pathlib import Path
 import yaml
 from osm_packages import safe_chart_inputs, descriptors, validate_references, archive_bytes, json_bytes
@@ -13,6 +14,34 @@ from .contract import confined, digest, identity
 ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location('_telecom_bounded_read', ROOT/'ran-selector/monitoring.py')
 _bounded = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_bounded)
+
+# Two capture profiles. 'default' is unchanged from before this milestone --
+# every existing caller keeps today's exact behavior. 'large' exists for
+# charts that are legitimately bigger than a synthetic single-NF fixture
+# (e.g. a real vendored-dependency chart) but is NEVER selected
+# automatically: a caller must explicitly pass chart_profile='large' to
+# prepare(). TRUST NOTE (same honesty as chart_adapters.py/subcharts.py's
+# documented limitations): passing 'large' is a bare caller-supplied flag
+# today, not an independently verified operator authorization -- there is
+# no live caller that can reach this parameter (see pipeline REPORT), and a
+# future wiring should gate it the same way a trusted dependency inventory
+# is gated (see subcharts.TRUSTED_DEPENDENCIES), not merely accept whatever
+# a packaging-time caller asserts. Every number below is still a genuine,
+# finite bound -- not "unlimited" -- so even a caller that can set this
+# flag cannot exceed it.
+CAPTURE_PROFILES = {
+    'default': {'max_depth': 8, 'max_entries': 256, 'max_files': 128,
+                'max_file_bytes': 1024 * 1024, 'max_total_bytes': 4 * 1024 * 1024},
+    'large': {'max_depth': 8, 'max_entries': 768, 'max_files': 512,
+              'max_file_bytes': 1024 * 1024, 'max_total_bytes': 8 * 1024 * 1024},
+}
+# Wall-clock bound on the whole capture() walk, independent of file-count/
+# size budgets -- guards against pathological I/O (e.g. a slow filesystem,
+# many tiny files) regardless of profile. The expensive part of prepare()
+# (helm lint/template) already has its own timeout+RSS bound via
+# read_command()/_bounded.run(); this is the equivalent bound for the
+# pure-Python directory walk and hashing work, which that call doesn't cover.
+CAPTURE_WALLTIME_BUDGET_SECONDS = 20
 
 
 def read_command(argv):
@@ -41,7 +70,7 @@ def source_evidence(source, workspace):
 
 
 def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None, reviewed_inputs=None,
-            source_evidence=None, vendored_dependencies=None):
+            source_evidence=None, vendored_dependencies=None, chart_profile='default'):
     chart = confined(workspace, chart_path)
     if not chart.is_dir():
         raise ValueError('Local chart directory required for offline packaging')
@@ -49,14 +78,22 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
         raise ValueError('Reviewed vendored chart inventory is only accepted for multi-image manifests')
     if vendored_dependencies is not None and manifest.get('schema_version') != 2:
         raise ValueError('Reviewed vendored dependency inventory is only accepted for multi-image manifests')
+    if chart_profile not in CAPTURE_PROFILES:
+        raise ValueError('Unknown chart capture profile')
+    if chart_profile != 'default' and manifest.get('schema_version') != 2:
+        raise ValueError('The large chart capture profile is only accepted for multi-image manifests')
+    profile = CAPTURE_PROFILES[chart_profile]
+    capture_started = time.monotonic()
     files = {}; total = 0; entries = 0
     def capture(fd, prefix='', depth=0):
         nonlocal total, entries
-        if depth>8: raise ValueError('Chart depth budget exceeded')
+        if time.monotonic() - capture_started > CAPTURE_WALLTIME_BUDGET_SECONDS:
+            raise ValueError('Chart capture time budget exceeded')
+        if depth>profile['max_depth']: raise ValueError('Chart depth budget exceeded')
         with os.scandir(fd) as listing:
             for item in listing:
                 entries+=1
-                if entries>256: raise ValueError('Chart traversal budget exceeded')
+                if entries>profile['max_entries']: raise ValueError('Chart traversal budget exceeded')
                 name=prefix+item.name
                 info=item.stat(follow_symlinks=False)
                 if stat.S_ISDIR(info.st_mode):
@@ -66,9 +103,9 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
                 elif stat.S_ISREG(info.st_mode):
                     child=os.open(item.name,os.O_RDONLY|os.O_NOFOLLOW,dir_fd=fd)
                     with os.fdopen(child,'rb') as stream:
-                        data=stream.read(1024*1024+1)
+                        data=stream.read(profile['max_file_bytes']+1)
                     total+=len(data)
-                    if len(data)>1024*1024 or total>4*1024*1024 or len(files)>=128:
+                    if len(data)>profile['max_file_bytes'] or total>profile['max_total_bytes'] or len(files)>=profile['max_files']:
                         raise ValueError('Chart input budget exceeded')
                     files[name]=data
                 else: raise ValueError('Only regular chart files/directories are accepted')
@@ -101,7 +138,8 @@ def prepare(workspace, chart_path, manifest, helm='helm', *, verified_image=None
             parent_meta = yaml.safe_load(files.get('Chart.yaml', b''))
         except Exception:
             parent_meta = None
-        subcharts.validate(files, parent_meta if isinstance(parent_meta, dict) else {}, vendored_dependencies)
+        subcharts.validate(files, parent_meta if isinstance(parent_meta, dict) else {}, vendored_dependencies,
+                            commit=(manifest.get('source') or {}).get('commit'), source_evidence=source_evidence)
         files_for_safe_chart_inputs = {n: v for n, v in files.items() if not n.startswith('charts/')}
     else:
         files_for_safe_chart_inputs = files

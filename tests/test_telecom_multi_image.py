@@ -1145,6 +1145,167 @@ class VendoredSubchartTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             prepare(workspace, 'chart', v1, helm='helm')
 
+    def test_packaged_tgz_dependency_rejected(self):
+        """PHASE 2 (Option B): a packaged archive dependency -- how the real
+        free5GC chart vendors MongoDB -- is rejected outright, never
+        opened or inspected, with a clear, specific reason."""
+        (self.workspace / 'chart/charts').mkdir(parents=True)
+        (self.workspace / 'chart/charts/mongodb-1.0.0.tgz').write_bytes(b'not a real archive')
+        with self.assertRaisesRegex(ValueError, 'Packaged Helm dependency archives'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies={})
+
+    def test_nested_packaged_archive_rejected(self):
+        """The same rejection applies to an archive nested inside an
+        otherwise-legitimate vendored subchart directory, not just a
+        top-level charts/*.tgz."""
+        self.write_subchart()
+        (self.workspace / 'chart/charts/redis-cache/charts').mkdir(parents=True)
+        (self.workspace / 'chart/charts/redis-cache/charts/nested.tar.gz').write_bytes(b'not a real archive')
+        digests = self.digests({'charts/redis-cache/charts/nested.tar.gz': hashlib.sha256(b'not a real archive').hexdigest()})
+        with self.assertRaisesRegex(ValueError, 'Packaged Helm dependency archives'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', vendored_dependencies=digests)
+
+
+class TrustedDependencyRegistryTests(unittest.TestCase):
+    """PHASE 3: subcharts.TRUSTED_DEPENDENCIES is the operator-reviewed
+    registry (in-repo, code-reviewed, exactly like chart_adapters.ADAPTERS)
+    -- gated by source_evidence proving independently verified acquisition,
+    never by a caller merely asserting matching hashes. Keyed to a
+    synthetic commit ('3'*40) that cannot collide with any real git object
+    id; no real free5GC entry exists."""
+
+    TRUSTED_COMMIT = '3' * 40
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name)
+        shutil.copytree(CHART, self.workspace / 'chart')
+        (self.workspace / 'chart/Chart.yaml').write_bytes(PARENT_CHART_WITH_DEPENDENCY)
+        (self.workspace / 'chart/charts/redis-cache/templates').mkdir(parents=True)
+        (self.workspace / 'chart/charts/redis-cache/Chart.yaml').write_bytes(SUBCHART_META)
+        (self.workspace / 'chart/charts/redis-cache/templates/deployment.yaml').write_bytes(SUBCHART_DEPLOYMENT)
+        manifest = json.loads(json.dumps(MANIFEST))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': self.TRUSTED_COMMIT}
+        manifest['images'] = manifest['images'] + [REDIS_IMAGE_ENTRY]
+        self.manifest = validate(manifest)
+        self.evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': self.TRUSTED_COMMIT}
+
+    def test_trusted_registry_resolved_automatically_with_verified_evidence(self):
+        """No vendored_dependencies passed at all -- the trusted, in-repo
+        registry is resolved automatically once source_evidence proves this
+        exact commit was really acquired."""
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=self.evidence)
+        self.assertIn('redis-cache', result['image_discovery'])
+
+    def test_trusted_registry_requires_verified_evidence_not_just_a_commit_match(self):
+        """The chart identity + commit matches the registry, but no
+        source_evidence is supplied at all -- rejected, not silently
+        trusted just because the lookup key matched."""
+        with self.assertRaisesRegex(ValueError, 'requires independently verified source'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm')
+
+    def test_trusted_registry_rejects_declaration_only_evidence(self):
+        declared = {'authority': 'PROVIDER_DECLARED', 'commit': self.TRUSTED_COMMIT}
+        with self.assertRaisesRegex(ValueError, 'requires independently verified source'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=declared)
+
+    def test_trusted_registry_rejects_evidence_commit_mismatch(self):
+        mismatched = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': '9' * 40}
+        with self.assertRaisesRegex(ValueError, 'requires independently verified source'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', source_evidence=mismatched)
+
+    def test_caller_supplied_inventory_matching_trusted_registry_accepted(self):
+        matching = dict(subcharts.TRUSTED_DEPENDENCIES[('multi-nf', '0.1.0', self.TRUSTED_COMMIT)])
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm',
+                          source_evidence=self.evidence, vendored_dependencies=matching)
+        self.assertIn('redis-cache', result['image_discovery'])
+
+    def test_caller_supplied_inventory_conflicting_with_trusted_registry_rejected(self):
+        """A researcher-provided hash list is never accepted as operator
+        approval -- not even when it otherwise looks plausible and the
+        evidence is genuinely verified -- if it disagrees with the
+        trusted, reviewed registry for this exact chart identity."""
+        conflicting = dict(subcharts.TRUSTED_DEPENDENCIES[('multi-nf', '0.1.0', self.TRUSTED_COMMIT)])
+        conflicting['charts/redis-cache/Chart.yaml'] = 'f' * 64
+        with self.assertRaisesRegex(ValueError, 'conflicts with the trusted, reviewed registry'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm',
+                    source_evidence=self.evidence, vendored_dependencies=conflicting)
+
+    def test_unregistered_chart_identity_falls_back_to_consistency_only_path(self):
+        """A different commit has no trusted registry entry at all --
+        falls back to today's existing, lower-trust, caller-supplied-
+        inventory path (still requires an explicit, internally-consistent
+        dict; not silently approved just because evidence looks verified)."""
+        manifest = copy.deepcopy(dict(self.manifest))
+        manifest['source'] = {'kind': 'local-git', 'path': 'chart', 'commit': '4' * 40}
+        evidence = {'authority': 'LOCAL_OBJECTS_VERIFIED', 'commit': '4' * 40}
+        with self.assertRaisesRegex(ValueError, 'explicit reviewed inventory'):
+            prepare(self.workspace, 'chart', manifest, helm='helm', source_evidence=evidence)
+
+
+PAD_TEMPLATE = 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{{{ .Release.Name }}}}-pad-{index}\ndata:\n  x: "1"\n'
+
+
+class ChartProfileTests(unittest.TestCase):
+    """The large chart-capture profile is opt-in only: a caller must
+    explicitly request chart_profile='large'. Default-profile behavior
+    (today's exact budgets: 128 files/4MiB/256 entries/depth 8) is
+    unaffected for every caller that doesn't ask for the larger one."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.workspace = Path(self.tmp.name)
+        shutil.copytree(CHART, self.workspace / 'chart')
+        self.manifest = validate(json.loads(json.dumps(MANIFEST)))
+
+    def pad(self, count):
+        for i in range(count):
+            (self.workspace / f'chart/templates/pad-{i}.yaml').write_text(PAD_TEMPLATE.format(index=i))
+
+    def test_oversized_chart_rejected_under_default_profile(self):
+        """9 base files + 150 padding files (159 total) exceeds the default
+        128-file cap -- and the large profile was never requested."""
+        self.pad(150)
+        with self.assertRaisesRegex(ValueError, 'budget exceeded'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm')
+
+    def test_oversized_chart_accepted_under_large_profile(self):
+        """The identical chart succeeds once the large profile is
+        explicitly requested -- proving it is the SAME chart, not a
+        different, more lenient validation path."""
+        self.pad(150)
+        result = prepare(self.workspace, 'chart', self.manifest, helm='helm', chart_profile='large')
+        self.assertTrue(result['helm_validation']['outcome'], 'PASS')
+
+    def test_large_profile_still_enforces_its_own_file_count_cap(self):
+        """chart_profile='large' is a bound (512 files), not 'unlimited' --
+        600 padding files exceeds even the large cap."""
+        self.pad(600)
+        with self.assertRaisesRegex(ValueError, 'budget exceeded'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', chart_profile='large')
+
+    def test_large_profile_rejected_for_schema_v1(self):
+        v1 = validate(json.loads((ROOT / 'examples/telecom/ran.json').read_text()))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        workspace = Path(tmp.name)
+        shutil.copytree(ROOT / 'examples/telecom/ran-chart', workspace / 'chart')
+        with self.assertRaisesRegex(ValueError, 'only accepted for multi-image manifests'):
+            prepare(workspace, 'chart', v1, helm='helm', chart_profile='large')
+
+    def test_unknown_chart_profile_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'Unknown chart capture profile'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', chart_profile='gigantic')
+
+    def test_default_profile_is_the_implicit_default(self):
+        """Not passing chart_profile at all behaves identically to passing
+        'default' explicitly -- no silent change for any existing caller."""
+        self.pad(150)
+        with self.assertRaisesRegex(ValueError, 'budget exceeded'):
+            prepare(self.workspace, 'chart', self.manifest, helm='helm', chart_profile='default')
+
 
 if __name__ == '__main__':
     unittest.main()
