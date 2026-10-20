@@ -62,7 +62,9 @@ def main(argv=None):
             scenarios=[s for s in scenarios if not s.get('experimental')]
         cfg = load_config(network='auto', require=('osm',))
         with contextlib.ExitStack() as stack:
-            if args.require_unused:
+            # Uploads share the dashboard lock so no deploy runs between its catalog
+            # verification and instantiation while content changes.
+            if args.require_unused or not args.dry_run:
                 stack.enter_context(exclusive_lock(Path(cfg['ACTIVE_STATE_PATH']).parent/'.lifecycle.lock'))
             catalog = Catalog(cfg['OSM_HOST'])
             catalog.ca_file = cfg.get('OSM_CA_CERT_PATH') or None

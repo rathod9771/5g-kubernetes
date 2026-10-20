@@ -550,8 +550,10 @@ class Installer:
         scenarios = select_scenarios(self.registry, keys)
         prepare(ROOT, DEFAULT_OUTPUT, scenarios)
         artifacts = [validated_snapshot(ROOT, DEFAULT_OUTPUT, s) for s in scenarios]
-        onboard(self.catalog, scenarios, artifacts)
-        return [self.catalog.verify(s, a) for s, a in zip(scenarios, artifacts)]
+        # Same lock as the dashboard: no deploy between its catalog check and instantiate.
+        with exclusive_lock(self.directory / '.lifecycle.lock'):
+            onboard(self.catalog, scenarios, artifacts)
+            return [self.catalog.verify(s, a) for s, a in zip(scenarios, artifacts)]
 
     def ensure_core_instance(self, identities, namespace):
         path = '/nslcm/v1/ns_instances'

@@ -1053,6 +1053,8 @@ def _deploy_verified(key, registry, entries, scen, scenario, context, identities
         raise ValueError('Experimental recovery is in progress; competing deployments are blocked')
     if config["osm"].get("pending_instance"):
         raise RuntimeError("Pending instance requires reconciliation before another deployment")
+    if config["osm"].get("pending_update"):
+        raise RuntimeError("A CD update of the active RAN requires reconciliation before another deployment")
     if scenario.get('experimental') and (config['osm'].get('active_instance_id') or config.get('active', 'none') != 'none'):
         raise ValueError('Experimental deployment requires no active RAN instance; refusing teardown of the existing NS')
     if not scen.get("additive"):
