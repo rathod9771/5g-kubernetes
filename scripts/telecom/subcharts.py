@@ -127,6 +127,39 @@ TRUSTED_DEPENDENCIES = {
     },
 }
 
+# Operator-reviewed approvals for dependency declarations that omit
+# `version:` entirely (condition-only style). Keyed exactly like
+# TRUSTED_DEPENDENCIES; value maps the DECLARING chart's prefix ('' = the
+# parent Chart.yaml, 'charts/<a>/' = a vendored subchart's own) to
+# {dependency name: {'vendored_prefix', 'chart_name', 'chart_version'}}.
+# Honored only together with a TRUSTED_DEPENDENCIES inventory for the same
+# key (which already requires verified acquisition evidence); missing
+# versions are never accepted globally.
+VERSIONLESS_DEPENDENCIES = {
+    # REAL free5GC parent declarations, read directly from
+    # github.com/free5gc/free5gc-helm @ d22485f5a95fd6bb97ec1252f0933ef5da17f96d
+    # charts/free5gc/Chart.yaml and each vendored subchart's own Chart.yaml.
+    # The NRF/UDR/WebUI subcharts' own versionless `mongodb` declarations
+    # are not listed: chart_adapters.DEPENDENCY_REMOVALS removes them first.
+    # No TRUSTED_DEPENDENCIES inventory exists yet for this key, so these
+    # approvals cannot take effect until one is operator-reviewed.
+    ('free5gc', '1.1.7', 'd22485f5a95fd6bb97ec1252f0933ef5da17f96d'): {
+        '': {
+            'mongodb': {'vendored_prefix': 'charts/mongodb-15.6.0/',
+                        'chart_name': 'mongodb', 'chart_version': '15.6.0'},
+            **{name: {'vendored_prefix': 'charts/' + name + '/', 'chart_name': name, 'chart_version': version}
+               for name, version in (
+                   ('free5gc-amf', '0.2.7'), ('free5gc-ausf', '0.2.7'), ('free5gc-bsf', '0.1.0'),
+                   ('free5gc-chf', '0.1.0'), ('free5gc-n3iwf', '0.2.5'), ('free5gc-nef', '0.1.0'),
+                   ('free5gc-nrf', '0.2.7'), ('free5gc-nssf', '0.2.7'), ('free5gc-pcf', '0.2.7'),
+                   ('free5gc-smf', '0.2.7'), ('free5gc-scp', '0.1.0'), ('free5gc-udm', '0.2.7'),
+                   ('free5gc-udr', '0.2.7'), ('free5gc-upf', '0.2.6'), ('free5gc-webui', '0.1.5'),
+                   ('free5gc-dbpython', '0.1.0'))},
+        },
+    },
+}
+_VERSIONLESS_ALLOWED_KEYS = {'name', 'condition', 'tags'}
+
 _APPROVED_TOP_NAMES = {'Chart.yaml', 'Chart.lock', 'values.schema.json', '.helmignore', 'README.md', 'LICENSE'}
 _VALUES_RE = re.compile(r'values(?:-[a-zA-Z0-9_-]+)?\.ya?ml')
 _SENSITIVE_NAMES = {'.git', '__pycache__', '.aws', '.ssh', 'credentials', 'secrets'}
@@ -211,8 +244,8 @@ def validate(files, parent_chart_meta, reviewed_dependencies, *, commit=None, so
     than today's direct, offline test/package.prepare() usage.
     """
     vendored = {name: data for name, data in files.items() if name.startswith('charts/')}
-    declared_top = _dependencies(parent_chart_meta)
-    if not vendored and not declared_top:
+    raw_declared = parent_chart_meta.get('dependencies') if isinstance(parent_chart_meta, dict) else None
+    if not vendored and not raw_declared:
         return None
     for name in vendored:
         if any(name.lower().endswith(suffix) for suffix in _ARCHIVE_SUFFIXES):
@@ -221,12 +254,19 @@ def validate(files, parent_chart_meta, reviewed_dependencies, *, commit=None, so
     chart_name = parent_chart_meta.get('name') if isinstance(parent_chart_meta, dict) else None
     chart_version = parent_chart_meta.get('version') if isinstance(parent_chart_meta, dict) else None
     trusted = TRUSTED_DEPENDENCIES.get((chart_name, chart_version, commit))
-    if trusted is not None:
+    versionless = VERSIONLESS_DEPENDENCIES.get((chart_name, chart_version, commit))
+    if trusted is not None or versionless is not None:
         if (not commit or not isinstance(source_evidence, dict) or
                 source_evidence.get('authority') not in chart_adapters.VERIFIED_ACQUISITION_AUTHORITIES or
                 source_evidence.get('commit') != commit):
             raise ValueError('Trusted vendored dependency inventory requires independently verified source '
                               'acquisition evidence')
+    if versionless is not None and trusted is None:
+        raise ValueError('Versionless Helm dependency approval requires an operator-reviewed vendored '
+                          'dependency inventory (TRUSTED_DEPENDENCIES) for this exact chart and commit')
+    versionless = versionless or {}
+    declared_top = _dependencies(parent_chart_meta, versionless.get(''), '')
+    if trusted is not None:
         if reviewed_dependencies is not None and reviewed_dependencies != trusted:
             raise ValueError('Caller-supplied vendored dependency inventory conflicts with the trusted, '
                               'reviewed registry')
@@ -266,15 +306,31 @@ def validate(files, parent_chart_meta, reviewed_dependencies, *, commit=None, so
             raise ValueError('Invalid vendored subchart metadata: ' + prefix)
         segments = prefix.rstrip('/').split('/')  # e.g. ['charts','mongodb','charts','redis']
         directory_name = segments[-1]
-        if meta['name'] != directory_name:
-            raise ValueError('Vendored subchart directory name disagrees with Chart.yaml: ' + prefix)
         parent_segments = segments[:-2]  # drop this root's own trailing 'charts/<name>' pair
         parent_prefix = '/'.join(parent_segments) + '/' if parent_segments else ''
         declared = declared_by_prefix.get(parent_prefix)
-        if declared is None or (meta['name'], meta['version']) not in declared:
+        approval = _versionless_approval_for(versionless.get(parent_prefix), prefix)
+        if approval is not None:
+            dep_name, expected = approval
+            if meta['name'] != expected['chart_name'] or meta['version'] != expected['chart_version']:
+                raise ValueError('Vendored subchart Chart.yaml does not identify the reviewed chart: ' + prefix)
+            identity = (dep_name, None)
+        else:
+            if meta['name'] != directory_name:
+                raise ValueError('Vendored subchart directory name disagrees with Chart.yaml: ' + prefix)
+            identity = (meta['name'], meta['version'])
+        if declared is None or identity not in declared:
             raise ValueError('Vendored subchart is not declared as a dependency: ' + meta['name'])
-        declared_by_prefix[prefix] = _dependencies(meta)
-        seen_names_by_parent.setdefault(parent_prefix, set()).add((meta['name'], meta['version']))
+        seen = seen_names_by_parent.setdefault(parent_prefix, set())
+        if identity in seen:
+            raise ValueError('Dependency vendored more than once: ' + identity[0])
+        seen.add(identity)
+        declared_by_prefix[prefix] = _dependencies(meta, versionless.get(prefix), prefix)
+
+    unused_owners = set(versionless) - set(declared_by_prefix)
+    if unused_owners:
+        raise ValueError('Versionless dependency approval does not match the chart: ' +
+                          ', '.join(sorted(unused_owners)))
 
     for owner_prefix, declared in declared_by_prefix.items():
         seen = seen_names_by_parent.get(owner_prefix, set())
@@ -291,14 +347,50 @@ def validate(files, parent_chart_meta, reviewed_dependencies, *, commit=None, so
     return (chart_name, chart_version, commit) if trusted is not None else None
 
 
-def _dependencies(chart_meta):
+def _versionless_approval_for(approvals, vendored_prefix):
+    matches = [(name, entry) for name, entry in (approvals or {}).items()
+               if entry['vendored_prefix'] == vendored_prefix]
+    if len(matches) > 1:
+        raise ValueError('Ambiguous versionless dependency approval for: ' + vendored_prefix)
+    return matches[0] if matches else None
+
+
+def _dependencies(chart_meta, versionless_approvals=None, owner_prefix=''):
+    """Return the declared {(name, version)} set. A versionless entry yields
+    (name, None) and is accepted only when `versionless_approvals` (from
+    VERSIONLESS_DEPENDENCIES, already gated on verified evidence and a
+    trusted inventory by validate()) names it for this exact owner chart."""
     declared = (chart_meta or {}).get('dependencies') or []
     if not isinstance(declared, list):
         raise ValueError('Invalid Chart.yaml dependencies declaration')
+    approvals = versionless_approvals or {}
     result = set()
+    names = set()
     for dep in declared:
-        if (not isinstance(dep, dict) or not isinstance(dep.get('name'), str) or
-                not isinstance(dep.get('version'), str)):
+        if not isinstance(dep, dict) or not isinstance(dep.get('name'), str):
             raise ValueError('Invalid Chart.yaml dependency entry')
-        result.add((dep['name'], dep['version']))
+        name = dep['name']
+        if name in names:
+            raise ValueError('Duplicate Helm dependency name: ' + name)
+        names.add(name)
+        if 'version' not in dep:
+            approval = approvals.get(name)
+            if approval is None:
+                raise ValueError('Unreviewed versionless Helm dependency: ' + owner_prefix + name)
+            if not set(dep) <= _VERSIONLESS_ALLOWED_KEYS:
+                raise ValueError('Versionless Helm dependency has unreviewed fields: ' + owner_prefix + name)
+            vendored_prefix = approval['vendored_prefix']
+            child = vendored_prefix[len(owner_prefix + 'charts/'):-1]
+            if (not vendored_prefix.startswith(owner_prefix + 'charts/') or not vendored_prefix.endswith('/')
+                    or not child or '/' in child):
+                raise ValueError('Invalid versionless dependency approval path: ' + vendored_prefix)
+            result.add((name, None))
+            continue
+        if not isinstance(dep.get('version'), str):
+            raise ValueError('Invalid Chart.yaml dependency entry')
+        result.add((name, dep['version']))
+    stale = set(approvals) - {name for name, version in result if version is None}
+    if stale:
+        raise ValueError('Versionless dependency approval does not match the chart: ' +
+                          ', '.join(sorted(owner_prefix + name for name in stale)))
     return result

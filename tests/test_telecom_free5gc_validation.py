@@ -169,16 +169,16 @@ class Free5gcValidationWorkflowTests(unittest.TestCase):
     # ---- negative: the real, precise blocker --------------------------------
 
     def test_version_less_dependency_reproduces_the_real_blocker(self):
-        """Reproduces the EXACT real free5GC finding: a dependency entry
-        with no `version:` key fails closed inside subcharts.py's
-        _dependencies() parser, before 'missing reviewed inventory' is
-        ever reached -- package.prepare() must stop here, not silently
-        skip past it, and the report must say so precisely."""
+        """A dependency entry with no `version:` key and no
+        VERSIONLESS_DEPENDENCIES approval fails closed inside
+        subcharts.py's _dependencies() parser -- package.prepare() must
+        stop here, not silently skip past it, and the report must say so
+        precisely."""
         sha = self.build_blocked_chart(dependency_has_version=False)
         report = self.run_validate(sha)
         self.assertEqual(len(report['blocking_errors']), 1)
         self.assertEqual(report['blocking_errors'][0]['stage'], 'package.prepare')
-        self.assertIn('Invalid Chart.yaml dependency entry', report['blocking_errors'][0]['message'])
+        self.assertIn('Unreviewed versionless Helm dependency: sub', report['blocking_errors'][0]['message'])
         self.assertEqual(report['dependency_validation_results']['result'], 'FAILED')
         self.assertIs(report['deployment_eligible'], False)
 

@@ -1247,6 +1247,212 @@ class TrustedDependencyRegistryTests(unittest.TestCase):
             prepare(self.workspace, 'chart', manifest, helm='helm', source_evidence=evidence)
 
 
+class VersionlessDependencyTests(unittest.TestCase):
+    """subcharts.VERSIONLESS_DEPENDENCIES: condition-only dependency
+    declarations (no `version:` key, as used throughout the real free5GC
+    chart) are accepted only for an exact, operator-reviewed (chart, version,
+    commit) entry backed by a TRUSTED_DEPENDENCIES inventory and verified
+    acquisition evidence. Synthetic registry entries are patched in per test
+    under a commit ('c'*40) that cannot collide with a real git object id."""
+
+    COMMIT = 'c' * 40
+    KEY = ('versionless-parent', '1.0.0', COMMIT)
+    EVIDENCE = {'authority': 'GITHUB_FETCH_VERIFIED', 'commit': COMMIT}
+    TEMPLATE = b'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\ndata: {}\n'
+
+    def setUp(self):
+        self.parent = {'apiVersion': 'v2', 'name': 'versionless-parent', 'version': '1.0.0', 'dependencies': [
+            {'name': 'backend', 'condition': 'backend.enabled'},
+            {'name': 'frontend', 'condition': 'frontend.enabled', 'tags': ['ui']},
+            {'name': 'cache', 'version': '1.0.0'},
+        ]}
+        self.frontend_meta = {'apiVersion': 'v2', 'name': 'frontend', 'version': '0.1.0',
+                              'dependencies': [{'name': 'helper'}]}
+        self.files = {
+            'charts/backend-2.0.0/Chart.yaml': b'apiVersion: v2\nname: backend\nversion: 2.0.0\n',
+            'charts/backend-2.0.0/templates/cm.yaml': self.TEMPLATE,
+            'charts/frontend/Chart.yaml': yaml.safe_dump(self.frontend_meta).encode(),
+            'charts/frontend/charts/helper/Chart.yaml': b'apiVersion: v2\nname: helper\nversion: 0.0.1\n',
+            'charts/cache/Chart.yaml': b'apiVersion: v2\nname: cache\nversion: 1.0.0\n',
+        }
+        self.approvals = {
+            '': {
+                'backend': {'vendored_prefix': 'charts/backend-2.0.0/', 'chart_name': 'backend',
+                            'chart_version': '2.0.0'},
+                'frontend': {'vendored_prefix': 'charts/frontend/', 'chart_name': 'frontend',
+                             'chart_version': '0.1.0'},
+            },
+            'charts/frontend/': {
+                'helper': {'vendored_prefix': 'charts/frontend/charts/helper/', 'chart_name': 'helper',
+                           'chart_version': '0.0.1'},
+            },
+        }
+
+    def inventory(self):
+        return {name: hashlib.sha256(data).hexdigest() for name, data in self.files.items()}
+
+    def run_validate(self, *, inventory=None, approvals=None, commit=None, evidence='default', trusted=True):
+        trusted_patch = {self.KEY: inventory if inventory is not None else self.inventory()} if trusted else {}
+        with mock.patch.dict(subcharts.TRUSTED_DEPENDENCIES, trusted_patch), \
+                mock.patch.dict(subcharts.VERSIONLESS_DEPENDENCIES,
+                                {self.KEY: approvals if approvals is not None else self.approvals}):
+            return subcharts.validate(self.files, self.parent, None, commit=commit or self.COMMIT,
+                                      source_evidence=self.EVIDENCE if evidence == 'default' else evidence)
+
+    # ---- positive ----------------------------------------------------------
+
+    def test_reviewed_versionless_dependencies_accepted(self):
+        """Parent and nested-owner versionless entries, a vendored directory
+        whose name differs from the chart name (mongodb-15.6.0 shape), and an
+        ordinary versioned dependency all validate together."""
+        self.assertEqual(self.run_validate(), self.KEY)
+
+    def test_registry_patch_does_not_leak(self):
+        self.run_validate()
+        self.assertNotIn(self.KEY, subcharts.VERSIONLESS_DEPENDENCIES)
+        self.assertNotIn(self.KEY, subcharts.TRUSTED_DEPENDENCIES)
+
+    # ---- negative ----------------------------------------------------------
+
+    def test_versionless_without_any_registry_entry_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'Unreviewed versionless Helm dependency: backend'):
+            subcharts.validate(self.files, self.parent, self.inventory(), commit=self.COMMIT,
+                               source_evidence=self.EVIDENCE)
+
+    def test_unapproved_versionless_name_rejected(self):
+        approvals = copy.deepcopy(self.approvals)
+        del approvals['']['frontend']
+        with self.assertRaisesRegex(ValueError, 'Unreviewed versionless Helm dependency: frontend'):
+            self.run_validate(approvals=approvals)
+
+    def test_nested_versionless_requires_its_own_owner_approval(self):
+        approvals = copy.deepcopy(self.approvals)
+        approvals['charts/frontend/'] = {}
+        with self.assertRaisesRegex(ValueError, 'Unreviewed versionless Helm dependency: charts/frontend/helper'):
+            self.run_validate(approvals=approvals)
+
+    def test_versionless_approval_without_trusted_inventory_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'requires an operator-reviewed vendored dependency inventory'):
+            self.run_validate(trusted=False)
+
+    def test_caller_supplied_inventory_cannot_substitute_for_trusted_inventory(self):
+        with mock.patch.dict(subcharts.VERSIONLESS_DEPENDENCIES, {self.KEY: self.approvals}):
+            with self.assertRaisesRegex(ValueError, 'requires an operator-reviewed vendored dependency inventory'):
+                subcharts.validate(self.files, self.parent, self.inventory(), commit=self.COMMIT,
+                                   source_evidence=self.EVIDENCE)
+
+    def test_unverified_or_mismatched_evidence_rejected(self):
+        for evidence in (None, {'authority': 'PROVIDER_DECLARED', 'commit': self.COMMIT},
+                         {'authority': 'GITHUB_FETCH_VERIFIED', 'commit': 'd' * 40}):
+            with self.subTest(evidence=evidence):
+                with self.assertRaisesRegex(ValueError, 'requires independently verified source'):
+                    self.run_validate(evidence=evidence)
+
+    def test_incorrect_source_commit_gets_no_approval(self):
+        evidence = {'authority': 'GITHUB_FETCH_VERIFIED', 'commit': 'd' * 40}
+        with self.assertRaisesRegex(ValueError, 'Unreviewed versionless Helm dependency'):
+            self.run_validate(commit='d' * 40, evidence=evidence)
+
+    def test_parent_identity_mismatch_gets_no_approval(self):
+        self.parent['version'] = '1.0.1'
+        with self.assertRaisesRegex(ValueError, 'Unreviewed versionless Helm dependency'):
+            self.run_validate()
+
+    def test_missing_vendored_dependency_rejected(self):
+        del self.files['charts/backend-2.0.0/Chart.yaml']
+        del self.files['charts/backend-2.0.0/templates/cm.yaml']
+        with self.assertRaisesRegex(ValueError, 'not vendored locally: backend'):
+            self.run_validate()
+
+    def test_extra_vendored_dependency_rejected(self):
+        self.files['charts/extra/Chart.yaml'] = b'apiVersion: v2\nname: extra\nversion: 1.0.0\n'
+        with self.assertRaisesRegex(ValueError, 'not declared as a dependency: extra'):
+            self.run_validate()
+
+    def test_duplicate_dependency_names_rejected(self):
+        for duplicate in ({'name': 'backend'}, {'name': 'backend', 'version': '2.0.0'}):
+            with self.subTest(duplicate=duplicate):
+                self.parent['dependencies'] = self.parent['dependencies'][:3] + [duplicate]
+                with self.assertRaisesRegex(ValueError, 'Duplicate Helm dependency name: backend'):
+                    self.run_validate()
+
+    def test_vendored_chart_name_or_version_mismatch_rejected(self):
+        for meta in (b'apiVersion: v2\nname: impostor\nversion: 2.0.0\n',
+                     b'apiVersion: v2\nname: backend\nversion: 2.0.1\n'):
+            with self.subTest(meta=meta):
+                self.files['charts/backend-2.0.0/Chart.yaml'] = meta
+                with self.assertRaisesRegex(ValueError, 'does not identify the reviewed chart'):
+                    self.run_validate()
+
+    def test_approved_chart_vendored_at_another_directory_rejected(self):
+        for name in list(self.files):
+            if name.startswith('charts/backend-2.0.0/'):
+                self.files[name.replace('backend-2.0.0', 'backend')] = self.files.pop(name)
+        with self.assertRaisesRegex(ValueError, 'not declared as a dependency: backend'):
+            self.run_validate()
+
+    def test_modified_dependency_content_rejected(self):
+        inventory = self.inventory()
+        self.files['charts/backend-2.0.0/templates/cm.yaml'] = self.TEMPLATE + b'  extra: "1"\n'
+        with self.assertRaisesRegex(ValueError, 'Unreviewed vendored dependency content change'):
+            self.run_validate(inventory=inventory)
+
+    def test_explicit_null_version_is_not_versionless(self):
+        self.parent['dependencies'][0] = {'name': 'backend', 'version': None}
+        with self.assertRaisesRegex(ValueError, 'Invalid Chart.yaml dependency entry'):
+            self.run_validate()
+
+    # ---- adversarial -------------------------------------------------------
+
+    def test_versionless_entry_with_unreviewed_fields_rejected(self):
+        for field, value in (('repository', 'oci://registry.example.invalid/charts'), ('alias', 'db'),
+                             ('import-values', ['x'])):
+            with self.subTest(field=field):
+                self.parent['dependencies'][0] = {'name': 'backend', field: value}
+                with self.assertRaisesRegex(ValueError, 'unreviewed fields'):
+                    self.run_validate()
+
+    def test_stale_approval_for_undeclared_name_rejected(self):
+        approvals = copy.deepcopy(self.approvals)
+        approvals['']['ghost'] = {'vendored_prefix': 'charts/ghost/', 'chart_name': 'ghost',
+                                  'chart_version': '1.0.0'}
+        with self.assertRaisesRegex(ValueError, 'approval does not match the chart: ghost'):
+            self.run_validate(approvals=approvals)
+
+    def test_approval_for_unvendored_owner_rejected(self):
+        approvals = copy.deepcopy(self.approvals)
+        approvals['charts/absent/'] = {}
+        with self.assertRaisesRegex(ValueError, 'approval does not match the chart: charts/absent/'):
+            self.run_validate(approvals=approvals)
+
+    def test_approval_path_outside_owner_rejected(self):
+        approvals = copy.deepcopy(self.approvals)
+        approvals['']['backend']['vendored_prefix'] = 'charts/frontend/charts/helper/'
+        with self.assertRaisesRegex(ValueError, 'Invalid versionless dependency approval path'):
+            self.run_validate(approvals=approvals)
+
+    def test_packaged_archive_still_rejected_for_approved_dependency(self):
+        self.files['charts/backend-2.0.0.tgz'] = b'\x1f\x8b'
+        with self.assertRaisesRegex(ValueError, 'Packaged Helm dependency archives'):
+            self.run_validate()
+
+    def test_real_free5gc_versionless_entry_matches_upstream_declarations(self):
+        """The real entry lists exactly the 17 condition-only dependencies of
+        charts/free5gc/Chart.yaml at the pinned commit, and cannot take
+        effect: no operator-reviewed inventory exists for that key yet."""
+        key = ('free5gc', '1.1.7', 'd22485f5a95fd6bb97ec1252f0933ef5da17f96d')
+        approvals = subcharts.VERSIONLESS_DEPENDENCIES[key]
+        self.assertEqual(set(approvals), {''})
+        self.assertEqual(len(approvals['']), 17)
+        self.assertEqual(approvals['']['mongodb']['vendored_prefix'], 'charts/mongodb-15.6.0/')
+        self.assertNotIn(key, subcharts.TRUSTED_DEPENDENCIES)
+        parent = {'name': 'free5gc', 'version': '1.1.7',
+                  'dependencies': [{'name': name, 'condition': 'x'} for name in approvals['']]}
+        with self.assertRaisesRegex(ValueError, 'requires an operator-reviewed vendored dependency inventory'):
+            subcharts.validate({}, parent, None, commit=key[2],
+                               source_evidence={'authority': 'GITHUB_FETCH_VERIFIED', 'commit': key[2]})
+
+
 PAD_TEMPLATE = 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{{{ .Release.Name }}}}-pad-{index}\ndata:\n  x: "1"\n'
 
 
