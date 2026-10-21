@@ -89,17 +89,10 @@ attestation verifier that proves the manifest digest was attested by
 GitHub-hosted runner. `lifecycle_release()` refuses anything not VERIFIED and
 publication-eligible, and a verdict is bound to the SHA-256 of the manifest it verified.
 
-**Status:** attestations are generated in CI (Sigstore via GitHub). Verifying them
-on the target is **not implemented** in P2: this host's `gh` 2.45 has no
-`attestation` command and no Sigstore library is installed. Until P3 provides a
-verified verifier, every candidate is `UNVERIFIED` and ineligible.
-
-Manual verification once a newer `gh` (2.49+) is available:
-
-```
-gh attestation verify release-manifest.json --repo rathod9771/5g-kubernetes \
-  --signer-workflow rathod9771/5g-kubernetes/.github/workflows/release-candidate.yml
-```
+**Status:** attestations are generated in CI (Sigstore via GitHub). Target-side
+verification is P3: see [release-verification.md](release-verification.md)
+(`scripts/release_verify.py`, pinned `gh` 2.101.0). Until a candidate passes it,
+it is `UNVERIFIED` and ineligible.
 
 ## Images
 
