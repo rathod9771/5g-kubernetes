@@ -1,5 +1,5 @@
 """Offline bounded subprocess failures and sanitized diagnostics."""
-import contextlib,json,os,signal,sqlite3,sys,tempfile,threading,time,unittest
+import contextlib,errno,json,os,select,signal,sqlite3,sys,tempfile,threading,time,unittest
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
@@ -8,6 +8,20 @@ from assurance.diagnostics import diagnostic
 from assurance.periodic import Trial
 from assurance.store import Store
 from assurance.locking import exclusive
+
+def exited_by(pid, deadline):
+    """True if a killed non-child process exits (zombie or reaped) before deadline.
+
+    Its /proc state changes asynchronously (R while exiting, Z, X, then gone), so
+    wait on a pidfd instead of sampling /proc. Callers set the deadline well before
+    the process could exit on its own, so only cleanup can satisfy it."""
+    try:fd=os.pidfd_open(pid)
+    except OSError as error:
+        # ESRCH: reaped. EINVAL: the PID no longer has a process leader (being released).
+        if error.errno not in (errno.ESRCH,errno.EINVAL):raise
+        return time.monotonic()<deadline
+    try:return bool(select.select([fd],[],[],max(0,deadline-time.monotonic()))[0]) and time.monotonic()<deadline
+    finally:os.close(fd)
 
 class DiagnosticTests(unittest.TestCase):
     def run_failure(self,code=None,command=None,**kwargs):
@@ -52,11 +66,16 @@ class DiagnosticTests(unittest.TestCase):
         d=diagnostic(RuntimeError(secret),'collection',stderr=(secret*10000).encode());self.assertNotIn(secret,json.dumps(d));self.assertEqual(d['stderr_inspection_limit'],4096)
     def test_cleanup_descendant(self):
         with tempfile.TemporaryDirectory() as folder:
-            pidfile=Path(folder)/'pid'
-            code='import subprocess,sys,time,pathlib\np=subprocess.Popen([sys.executable,"-c","import time;time.sleep(30)"])\npathlib.Path('+repr(str(pidfile))+').write_text(str(p.pid))\ntime.sleep(30)'
-            self.run_failure(code,timeout=.3)
-            pid=int(pidfile.read_text());p=Path('/proc',str(pid),'stat')
-            if p.exists():self.assertEqual(p.read_text().rsplit(')',1)[1].split()[0],'Z')
+            pidfile=Path(folder)/'pid';partial=Path(folder)/'pid.tmp'
+            code='import os,subprocess,sys,time,pathlib\np=subprocess.Popen([sys.executable,"-c","import time;time.sleep(30)"])\npathlib.Path('+repr(str(partial))+').write_text(str(p.pid))\nos.replace('+repr(str(partial))+','+repr(str(pidfile))+')\ntime.sleep(30)'
+            # On a loaded host the 0.3 s timeout can expire before the descendant is
+            # recorded; that run proves nothing, so repeat (bounded) until one is conclusive.
+            for _ in range(3):
+                pidfile.unlink(missing_ok=True)
+                started=time.monotonic();self.run_failure(code,timeout=.3)
+                if pidfile.exists():break
+            else:self.fail('descendant never started before the reader timeout')
+            self.assertTrue(exited_by(int(pidfile.read_text()),started+15))  # sleeps 30 s unless killed
     def test_trial_error_record_and_lock_release(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);store=Store(root/'assurance.sqlite')

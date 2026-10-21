@@ -1,7 +1,10 @@
 """Offline real-subprocess boundaries and Kubernetes evidence contracts."""
+import errno
 import json
+import os
 from pathlib import Path
 import resource
+import select
 import sys
 import tempfile
 import time
@@ -10,6 +13,20 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from assurance.kubernetes import KubernetesReader, KubernetesReadError
 from assurance.adapters import Kubernetes, service_health
+
+def exited_by(pid, deadline):
+    """True if a killed non-child process exits (zombie or reaped) before deadline.
+
+    Its /proc state changes asynchronously (R while exiting, Z, X, then gone), so
+    wait on a pidfd instead of sampling /proc. Callers set the deadline well before
+    the process could exit on its own, so only cleanup can satisfy it."""
+    try:fd=os.pidfd_open(pid)
+    except OSError as error:
+        # ESRCH: reaped. EINVAL: the PID no longer has a process leader (being released).
+        if error.errno not in (errno.ESRCH,errno.EINVAL):raise
+        return time.monotonic()<deadline
+    try:return bool(select.select([fd],[],[],max(0,deadline-time.monotonic()))[0]) and time.monotonic()<deadline
+    finally:os.close(fd)
 
 class KubernetesRunnerTests(unittest.TestCase):
     def setUp(self):
@@ -70,12 +87,17 @@ class KubernetesRunnerTests(unittest.TestCase):
             self.assertEqual(json.loads((target/'result.json').read_text())['status'],'COMPLETED')
 
     def test_descendant_timeout_cleanup(self):
-        marker=Path(self.tmp.name)/'child'
-        code='import os,time\npid=os.fork()\nif pid==0:\n os.setsid()\n open('+repr(str(marker))+',"w").write(str(os.getpid()))\n time.sleep(10)\nelse: time.sleep(10)'
-        r=self.reader(code,timeout=.25)
-        with self.assertRaises(KubernetesReadError):self.call(r)
-        child=Path('/proc/'+marker.read_text()+'/stat')
-        self.assertTrue(not child.exists() or child.read_text().split()[2]=='Z')
+        marker=Path(self.tmp.name)/'child';partial=str(marker)+'.tmp'
+        code='import os,time\npid=os.fork()\nif pid==0:\n os.setsid()\n open('+repr(partial)+',"w").write(str(os.getpid()))\n os.replace('+repr(partial)+','+repr(str(marker))+')\n time.sleep(10)\nelse: time.sleep(10)'
+        # On a loaded host the 0.25 s timeout can expire before the descendant exists;
+        # that run proves nothing, so repeat (bounded) until one is conclusive.
+        for _ in range(3):
+            marker.unlink(missing_ok=True)
+            r=self.reader(code,timeout=.25);started=time.monotonic()
+            with self.assertRaises(KubernetesReadError):self.call(r)
+            if marker.exists():break
+        else:self.fail('descendant never started before the reader timeout')
+        self.assertTrue(exited_by(int(marker.read_text()),started+5))  # sleeps 10 s unless killed
 
 class KubernetesEvidenceTests(unittest.TestCase):
     def test_roles_restarts_and_labels(self):
