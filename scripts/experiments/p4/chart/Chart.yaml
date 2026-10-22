@@ -1,0 +1,9 @@
+apiVersion: v2
+# Source chart for the P4 KDU upgrade experiment. p4_packages.py writes one copy per
+# KDU (cu, du) and revision, setting name, version and values; it is never deployed
+# from here.
+name: p4kdu
+description: Dummy CU/DU workload for the isolated OSM v19 KDU upgrade experiment
+type: application
+version: 0.0.0
+appVersion: "p4"

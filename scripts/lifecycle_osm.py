@@ -70,16 +70,28 @@ class NbiLifecycle:
             raise CatalogError('Published catalog content differs: ' + name)
         return dict(after, sha256=digest, uploaded=True)
 
-    def kdu_action(self, ns_id, member_index, kdu_name, primitive, params):
+    def kdu_action(self, ns_id, member_index, kdu_name, primitive, params, timeout=None):
         # Callers bypassing the controller hit the same P4 gate before any request.
         import lifecycle
         lifecycle.require_p4_approval()
-        body =yaml.safe_dump({'member_vnf_index': member_index, 'kdu_name': kdu_name,
-                               'primitive': primitive, 'primitive_params': params}).encode()
+        request = {'member_vnf_index': member_index, 'kdu_name': kdu_name, 'primitive': primitive,
+                   'primitive_params': params}
+        if timeout is not None:
+            # OSM v19 ns_action schema: LCM passes it to helm upgrade/rollback --timeout.
+            if type(timeout) is not int or timeout < 1:
+                raise CatalogError('Invalid KDU action timeout')
+            request['timeout_ns_action'] = timeout
+        body = yaml.safe_dump(request).encode()
         response = parse_response(self.request('POST', '/nslcm/v1/ns_instances/' + identifier(ns_id) + '/action', body))
         if not isinstance(response, dict):
             raise CatalogError('Invalid OSM action response')
         return identifier(response.get('id'))
+
+    def ns_operations(self, ns_id):
+        """Every LCM operation OSM recorded for one NS (read-only)."""
+        ns_id = identifier(ns_id)
+        return [o for o in self._list('/nslcm/v1/ns_lcm_op_occs?nsInstanceId=' + ns_id)
+                if o.get('nsInstanceId') == ns_id]
 
     def operation_state(self, operation):
         value = self._get('/nslcm/v1/ns_lcm_op_occs/' + identifier(operation))

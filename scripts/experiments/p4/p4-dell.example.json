@@ -1,0 +1,24 @@
+{
+  "target_address": "172.30.0.20",
+  "osm_url": "https://nbi.172.30.0.20.nip.io:30843",
+  "osm_ca_file": "/home/USER/5g-kubernetes/.runtime/osm-ca.crt",
+  "osm_user": "admin",
+  "osm_password_file": "/home/USER/.config/p4/osm-password",
+  "osm_project": "admin",
+  "vim_account": "dummyvim",
+  "k8s_cluster": "lab-cluster",
+  "kubeconfig": "/home/USER/.kube/config",
+  "allowed_api_addresses": ["172.30.0.20"],
+  "allowed_node_addresses": ["172.30.0.20"],
+  "osm_namespace": "osm",
+  "kubectl": "/usr/bin/kubectl",
+  "helm": "/usr/local/bin/helm",
+  "work_dir": "/home/USER/p4-run",
+  "timeouts": {
+    "kdu_timeout": 150,
+    "op_timeout": 900,
+    "health_timeout": 300,
+    "poll": 5,
+    "clock_skew": 10
+  }
+}

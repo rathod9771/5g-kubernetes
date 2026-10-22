@@ -1,0 +1,991 @@
+"""P4 experiment: real OSM v19 in-place Helm KDU upgrades on an isolated target.
+
+Runs the P1-P3 lifecycle controller (scripts/lifecycle.py) against a disposable NS
+of dummy CU/DU KDUs and records evidence for: revision-pinned chart paths, NS
+identity preservation, multi-KDU sequencing, helm --atomic failure and automatic
+rollback, explicit rollback, lost-response reconciliation and LCM restart recovery.
+
+Safety model
+- Only the second Dell is a valid target. Before every step the runner checks the
+  OSM and Kubernetes endpoints, node names/addresses and OSM identities against the
+  configuration and an explicit denylist of the HP production system.
+- Every OSM mutation names the experiment NS (p4-kdu-upgrade-test) or the
+  experiment descriptors (p4kdu_knf, p4kdu_ns); every Kubernetes/Helm mutation is
+  limited to namespace p4-kdu-upgrade, except the opt-in LCM restart.
+- The committed P4 gate (lifecycle.P4_KDU_UPGRADE_APPROVAL) stays None. This process
+  opens it in memory only, around steps that act on the verified experiment NS.
+"""
+import argparse
+import contextlib
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import socket
+import stat
+import subprocess
+import sys
+import time
+import urllib.parse
+
+import yaml
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[2]
+sys.path[:0] = [str(ROOT / 'scripts'), str(HERE)]
+
+import lifecycle  # noqa: E402
+from lifecycle_osm import NbiLifecycle  # noqa: E402
+from osm_catalog import Catalog, CatalogError, identifier, parse_response  # noqa: E402
+import p4_packages  # noqa: E402
+
+NAMESPACE = 'p4-kdu-upgrade'
+VNFD, NSD = p4_packages.KNF, p4_packages.NSD
+NS_NAME = 'p4-kdu-upgrade-test'
+SCENARIO = 'p4kdu'
+RELEASES = {'cu': 'p4kdu-cu', 'du': 'p4kdu-du'}
+MEMBER_INDEX = p4_packages.VNF_PROFILE
+TERMINAL = lifecycle.TERMINAL
+EXPECTED_CHART = {1: '0.1.0', 2: '0.2.0', 3: '0.3.0'}
+# Production system that this runner must never reach (HP: original orchestrator).
+HP_ADDRESSES = frozenset({'172.30.18.32'})
+HP_NODE_NAMES = frozenset({'rclab-hp-406-g1-mt'})
+HP_OSM_IDS = frozenset({
+    'c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c',     # OSM project / KDU namespace
+    '84be33a2-4d00-4392-83f4-39407e92e6fc',     # OSM K8s cluster lab-cluster
+    'b0481f03-f5eb-47a2-9a20-bd72430b3b13',     # OSM VIM dummyvim
+    '1b1cb300-b571-43f2-a567-6540895d7d0f',     # core-persistent NS
+    '2c128db3-e27e-4dbe-8854-17751ba17680',     # ran-fran-oai NS
+})
+REGISTRY = {'schema_version': 1, 'aliases': {}, 'installer_components': [], 'scenarios': [{
+    'key': SCENARIO, 'additive': False, 'generation_status': 'ready', 'deployment_mechanism': 'osm',
+    'knf_package': VNFD, 'nsd_package': NSD, 'ns_name': NS_NAME,
+    'charts': [{'kdu': kdu} for kdu in p4_packages.KDUS]}]}
+RELEASE_BRANCH, RELEASE_TARGET = 'p4-experiment', 'p4-dell'
+
+
+class ExperimentError(RuntimeError):
+    pass
+
+
+class TargetError(ExperimentError):
+    """The configured endpoints are not provably the isolated experiment target."""
+
+
+# --- configuration -------------------------------------------------------------------------------
+def load_config(path):
+    config = json.loads(Path(path).read_text())
+    required = ('target_address', 'osm_url', 'osm_user', 'osm_password_file', 'osm_project', 'vim_account',
+                'k8s_cluster', 'kubeconfig', 'allowed_api_addresses', 'allowed_node_addresses', 'work_dir')
+    missing = [k for k in required if not config.get(k)]
+    if missing:
+        raise ExperimentError('Missing configuration: ' + ', '.join(missing))
+    config.setdefault('osm_namespace', 'osm')
+    config.setdefault('osm_ca_file', None)
+    config.setdefault('kubectl', '/usr/bin/kubectl')
+    config.setdefault('helm', '/usr/local/bin/helm')
+    config.setdefault('timeouts', {})
+    for key, default in (('kdu_timeout', 150), ('op_timeout', 900), ('health_timeout', 300), ('poll', 5),
+                         ('clock_skew', 10)):
+        config['timeouts'].setdefault(key, default)
+    for key in ('osm_password_file', 'kubeconfig', 'work_dir'):
+        config[key] = str(Path(config[key]).expanduser())
+    return config
+
+
+def read_secret(path):
+    info = os.stat(path)
+    if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.geteuid():
+        raise ExperimentError('Password file must be a private regular file owned by the caller')
+    return Path(path).read_text().strip()
+
+
+def resolve(host):
+    try:
+        return {a[4][0] for a in socket.getaddrinfo(host, None)}
+    except OSError:
+        raise TargetError('Cannot resolve ' + host) from None
+
+
+# --- OSM ---------------------------------------------------------------------------------------------
+class Osm:
+    """NBI calls for the experiment. Mutations are restricted to experiment identities."""
+    def __init__(self, request):
+        self.request = request
+        self.lifecycle = NbiLifecycle(request)
+
+    def _get(self, path):
+        return parse_response(self.request('GET', path))
+
+    def _list(self, path):
+        value = self._get(path)
+        if not isinstance(value, list):
+            raise CatalogError('Invalid OSM listing: ' + path)
+        return value
+
+    def projects(self):
+        return self._list('/admin/v1/projects')
+
+    def vims(self):
+        return self._list('/admin/v1/vim_accounts')
+
+    def k8sclusters(self):
+        return self._list('/admin/v1/k8sclusters')
+
+    def ns_instances(self):
+        return self.lifecycle.list_ns()
+
+    def experiment_ns(self):
+        matches = [n for n in self.ns_instances() if n.get('name', n.get('nsName')) == NS_NAME]
+        if len(matches) > 1:
+            raise ExperimentError('More than one experiment NS exists; resolve manually')
+        return matches[0] if matches else None
+
+    def operation(self, operation):
+        value = self._get('/nslcm/v1/ns_lcm_op_occs/' + identifier(operation))
+        if not isinstance(value, dict) or value.get('_id', value.get('id')) != operation:
+            raise CatalogError('OSM returned a different operation')
+        return value
+
+    def instantiate(self, nsd_id, vim_id):
+        body = {'nsdId': identifier(nsd_id), 'nsName': NS_NAME, 'vimAccountId': identifier(vim_id),
+                'nsDescription': 'P4 isolated KDU upgrade experiment (disposable)',
+                'additionalParamsForVnf': [{'member-vnf-index': MEMBER_INDEX, 'additionalParamsForKdu': [
+                    {'kdu_name': kdu, 'k8s-namespace': NAMESPACE, 'kdu-deployment-name': release}
+                    for kdu, release in RELEASES.items()]}]}
+        response = parse_response(self.request('POST', '/nslcm/v1/ns_instances_content', yaml.safe_dump(body).encode()))
+        if not isinstance(response, dict):
+            raise CatalogError('Invalid instantiate response')
+        return identifier(response.get('id')), identifier(response.get('nslcmop_id'))
+
+    def _experiment_ns_id(self, ns_id):
+        ns = self.lifecycle.get_ns(ns_id)
+        if ns.get('name', ns.get('nsName')) != NS_NAME:
+            raise ExperimentError('Refusing to act on a non-experiment NS')
+        return identifier(ns_id)
+
+    def terminate(self, ns_id):
+        ns_id = self._experiment_ns_id(ns_id)
+        response = parse_response(self.request('POST', '/nslcm/v1/ns_instances/' + ns_id + '/terminate', b''))
+        return identifier((response or {}).get('id'))
+
+    def delete_ns(self, ns_id):
+        ns_id = self._experiment_ns_id(ns_id)
+        self.request('DELETE', '/nslcm/v1/ns_instances/' + ns_id)
+
+    def delete_package(self, kind, name):
+        if name not in (VNFD, NSD):
+            raise ExperimentError('Refusing to delete a non-experiment descriptor')
+        package = self.lifecycle.package(kind, name)
+        if package:
+            base = '/vnfpkgm/v1/vnf_packages/' if kind == 'knf' else '/nsd/v1/ns_descriptors/'
+            self.request('DELETE', base + package['id'])
+        return package
+
+
+class TargetLockedOsm:
+    """What the P1 controller sees: KDU actions only on the verified experiment NS."""
+    def __init__(self, osm, ns_id):
+        self._osm, self._ns_id = osm, ns_id
+
+    def __getattr__(self, name):
+        return getattr(self._osm, name)
+
+    def kdu_action(self, ns_id, *args):
+        if ns_id != self._ns_id:
+            raise ExperimentError('Refusing a KDU action outside the experiment NS')
+        return self._osm.kdu_action(ns_id, *args)
+
+
+class InterruptedResponse:
+    """Request wrapper that loses one action exchange, before or after it reaches OSM."""
+    def __init__(self, request, when, primitive, kdu):
+        self.inner, self.when, self.primitive, self.kdu, self.fired = request, when, primitive, kdu, False
+
+    def __call__(self, method, path, data=None, content_type='application/yaml'):
+        if (not self.fired and method == 'POST' and path.endswith('/action') and data and
+                (yaml.safe_load(data) or {}).get('primitive') == self.primitive and
+                yaml.safe_load(data).get('kdu_name') == self.kdu):
+            self.fired = True
+            if self.when == 'before-send':
+                raise CatalogError('P4 simulated transport failure before the request was sent')
+            self.inner(method, path, data, content_type)
+            raise CatalogError('P4 simulated lost response after OSM accepted the request')
+        return self.inner(method, path, data, content_type)
+
+
+class RestartLcmWhileProcessing:
+    """Lifecycle adapter that restarts OSM LCM the first time an upgrade of `kdu` is PROCESSING."""
+    def __init__(self, osm, kdu, restart, record):
+        self._osm, self.kdu, self.restart, self.record = osm, kdu, restart, record
+        self.operations, self.fired = {}, False
+
+    def __getattr__(self, name):
+        return getattr(self._osm, name)
+
+    def kdu_action(self, ns_id, member_index, kdu_name, primitive, *rest):
+        operation = self._osm.kdu_action(ns_id, member_index, kdu_name, primitive, *rest)
+        self.operations[operation] = (primitive, kdu_name)
+        return operation
+
+    def operation_state(self, operation):
+        state = self._osm.operation_state(operation)
+        if not self.fired and state == 'PROCESSING' and self.operations.get(operation) == ('upgrade', self.kdu):
+            self.fired = True
+            self.record({'operation': operation, 'state_before_restart': state})
+            self.restart()
+        return state
+
+
+# --- Kubernetes / Helm ---------------------------------------------------------------------------------
+class ClusterError(ExperimentError):
+    pass
+
+
+class Cluster:
+    """kubectl/helm on the experiment target. Mutations are limited by _allowed()."""
+    def __init__(self, kubectl, helm, kubeconfig, osm_namespace, run=subprocess.run, timeout=180):
+        self.kubectl_bin, self.helm_bin, self.kubeconfig = kubectl, helm, kubeconfig
+        self.osm_namespace, self.run, self.timeout = osm_namespace, run, timeout
+        self.commands = []
+
+    def _allowed(self, argv):
+        tool, args = argv[0], argv[1:]
+        verb = args[0]
+        scoped = '-n' in args and args[args.index('-n') + 1]
+        if tool == self.kubectl_bin:
+            if verb in ('get', 'version'):
+                return True
+            if verb == 'delete':
+                return args[1:3] == ['namespace', NAMESPACE]
+            if verb == 'rollout':
+                return args[2] == 'deployment/lcm' and scoped == self.osm_namespace
+            return False
+        if verb in ('status', 'history', 'list', 'version', 'get'):
+            return verb == 'version' or scoped == NAMESPACE
+        if verb == 'rollback':
+            return args[1] in RELEASES.values() and scoped == NAMESPACE
+        return False
+
+    def _run(self, argv, timeout=None):
+        if not self._allowed(argv):
+            raise ClusterError('Command outside the experiment scope refused: ' + ' '.join(argv[:4]))
+        self.commands.append(list(argv))
+        env = {'KUBECONFIG': self.kubeconfig, 'PATH': '/usr/local/bin:/usr/bin:/bin',
+               'HOME': os.environ.get('HOME', '/tmp')}
+        result = self.run(argv, capture_output=True, env=env, timeout=timeout or self.timeout, check=False)
+        return result
+
+    def _json(self, argv, missing_ok=False):
+        result = self._run(argv)
+        if result.returncode:
+            stderr = result.stderr.decode('utf-8', 'replace') if isinstance(result.stderr, bytes) else str(result.stderr)
+            if missing_ok and ('NotFound' in stderr or 'not found' in stderr):
+                return None
+            raise ClusterError(' '.join(argv[1:3]) + ' failed: ' + stderr.strip()[:300])
+        return json.loads(result.stdout)
+
+    def kubectl(self, *args):
+        return [self.kubectl_bin, *args]
+
+    def helm(self, *args):
+        return [self.helm_bin, *args]
+
+    # read-only
+    def api_server(self):
+        config = yaml.safe_load(Path(self.kubeconfig).read_text())
+        return [c['cluster']['server'] for c in config.get('clusters', [])]
+
+    def nodes(self):
+        return self._json(self.kubectl('get', 'nodes', '-o', 'json'))['items']
+
+    def namespace(self, name=NAMESPACE):
+        return self._json(self.kubectl('get', 'namespace', name, '-o', 'json'), missing_ok=True)
+
+    def lcm_pods(self):
+        pods = self._json(self.kubectl('get', 'pods', '-n', self.osm_namespace, '-o', 'json'))['items']
+        return [p for p in pods if p['metadata']['name'].startswith('lcm-')]
+
+    def lcm_image_digest(self):
+        digests = {s.get('imageID', '').rpartition('@')[2] for p in self.lcm_pods()
+                   for s in p.get('status', {}).get('containerStatuses', [])}
+        if len(digests) != 1 or not re.fullmatch(r'sha256:[0-9a-f]{64}', next(iter(digests))):
+            raise ClusterError('OSM LCM image digest cannot be determined')
+        return next(iter(digests))
+
+    def release_status(self, release):
+        return self._json(self.helm('status', release, '-n', NAMESPACE, '-o', 'json'), missing_ok=True)
+
+    def release_history(self, release):
+        return self._json(self.helm('history', release, '-n', NAMESPACE, '-o', 'json'), missing_ok=True) or []
+
+    def releases(self):
+        return self._json(self.helm('list', '-n', NAMESPACE, '-a', '-o', 'json'))
+
+    def configmap_marker(self, release):
+        value = self._json(self.kubectl('get', 'configmap', release + '-release', '-n', NAMESPACE, '-o', 'json'),
+                           missing_ok=True)
+        return value and value.get('data', {}).get('release')
+
+    def deployment(self, release):
+        return self._json(self.kubectl('get', 'deployment', release, '-n', NAMESPACE, '-o', 'json'), missing_ok=True)
+
+    def inventory(self):
+        value = self._json(self.kubectl('get', 'deployments,replicasets,pods,services,configmaps,secrets',
+                                        '-n', NAMESPACE, '-o', 'json'))
+        return sorted((i['kind'], i['metadata']['name']) for i in value['items'])
+
+    # mutations (scope-checked)
+    def restart_lcm(self):
+        self._run(self.kubectl('rollout', 'restart', 'deployment/lcm', '-n', self.osm_namespace))
+        result = self._run(self.kubectl('rollout', 'status', 'deployment/lcm', '-n', self.osm_namespace,
+                                        '--timeout=600s'), timeout=660)
+        if result.returncode:
+            raise ClusterError('OSM LCM did not become ready after restart')
+
+    def helm_rollback(self, release):
+        result = self._run(self.helm('rollback', release, '-n', NAMESPACE, '--wait', '--timeout', '300s'), timeout=360)
+        if result.returncode:
+            raise ClusterError('helm rollback of ' + release + ' failed')
+
+    def delete_namespace(self):
+        result = self._run(self.kubectl('delete', 'namespace', NAMESPACE, '--wait=true', '--timeout=300s'), timeout=360)
+        if result.returncode:
+            raise ClusterError('Namespace deletion failed')
+
+
+def deployment_ready(deployment):
+    if not deployment:
+        return False, 'missing'
+    spec, status = deployment.get('spec', {}), deployment.get('status', {})
+    replicas = spec.get('replicas', 1)
+    ready = (status.get('observedGeneration', 0) >= deployment['metadata'].get('generation', 1) and
+             status.get('updatedReplicas', 0) == replicas and status.get('readyReplicas', 0) == replicas and
+             status.get('availableReplicas', 0) == replicas and status.get('replicas', 0) == replicas)
+    return ready, 'ready' if ready else 'not ready: ' + json.dumps(
+        {k: status.get(k) for k in ('replicas', 'updatedReplicas', 'readyReplicas', 'availableReplicas')})
+
+
+class Observer:
+    """Read-only health/revision view used by the P1 controller."""
+    def __init__(self, cluster):
+        self.cluster = cluster
+
+    def helm_revision(self, instance):
+        status = self.cluster.release_status(instance)
+        if not status:
+            raise ClusterError('Helm release missing: ' + instance)
+        return int(status['version'])
+
+    def health(self, entry, kdus, since):
+        details = []
+        for kdu in kdus:
+            release = RELEASES[kdu['name']]
+            status = self.cluster.release_status(release) or {}
+            if status.get('info', {}).get('status') != 'deployed':
+                details.append(release + ' helm ' + str(status.get('info', {}).get('status')))
+                continue
+            ready, detail = deployment_ready(self.cluster.deployment(release))
+            if not ready:
+                details.append(release + ' ' + detail)
+        return not details, '; '.join(details) or 'all KDUs deployed and ready'
+
+
+# --- evidence ------------------------------------------------------------------------------------------
+class Evidence:
+    def __init__(self, directory, clock=time):
+        self.directory, self.clock = Path(directory), clock
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.checks, self.steps = [], []
+
+    def record(self, step, name, value):
+        path = self.directory / step / (name + '.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, indent=2, sort_keys=True, default=str) + '\n')
+        return path
+
+    def check(self, step, name, passed, detail=None):
+        self.checks.append({'step': step, 'check': name, 'passed': bool(passed), 'detail': detail})
+        return bool(passed)
+
+    def observe(self, step, name, value):
+        """A recorded fact that the experiment documents rather than asserts."""
+        self.checks.append({'step': step, 'check': name, 'passed': None, 'observed': value})
+
+    def summary(self, extra=None):
+        files = {str(p.relative_to(self.directory)): hashlib.sha256(p.read_bytes()).hexdigest()
+                 for p in sorted(self.directory.rglob('*.json')) if p.name != 'summary.json'}
+        failed = [c for c in self.checks if c['passed'] is False]
+        summary = dict({'steps': self.steps, 'checks': self.checks, 'failed': len(failed),
+                        'passed': sum(1 for c in self.checks if c['passed'] is True),
+                        'observations': sum(1 for c in self.checks if c['passed'] is None),
+                        'evidence_sha256': files, 'generated_at': self.clock.time()}, **(extra or {}))
+        data = json.dumps(summary, indent=2, sort_keys=True, default=str) + '\n'
+        (self.directory / 'summary.json').write_text(data)
+        summary['summary_sha256'] = hashlib.sha256(data.encode()).hexdigest()
+        return summary
+
+
+# --- experiment ---------------------------------------------------------------------------------------------
+STEPS = ('preflight', 'onboard', 'instantiate', 'upgrade_rev2_lost_response', 'explicit_rollback',
+         'failed_upgrade_auto_rollback', 'partial_failure_operator_resolution', 'lost_before_send',
+         'lcm_restart_recovery')
+
+
+class Experiment:
+    def __init__(self, config, request, cluster, evidence, clock=time, commit=None, resolver=resolve):
+        self.config, self.request, self.cluster, self.evidence, self.clock = config, request, cluster, evidence, clock
+        self.osm = Osm(request)
+        self.observer = Observer(cluster)
+        self.resolver = resolver
+        self.work = Path(config['work_dir'])
+        self.state_path = self.work / 'state' / 'active-ran.yaml'
+        self.commit = commit or git_commit()
+        self.timeouts = config['timeouts']
+        self.packages = {revision: p4_packages.build(revision) for revision in p4_packages.REVISIONS}
+        self.ids, self.lcm_digest, self.context, self.ns_id, self.ns_count = {}, None, None, None, None
+
+    # -- target verification (runs before every step) --------------------------------------------------
+    def verify_target(self):
+        target = self.config['target_address']
+        if target in HP_ADDRESSES:
+            raise TargetError('The configured target is the HP production system')
+        osm_host = urllib.parse.urlsplit(self.config['osm_url']).hostname or ''
+        osm_addresses = self.resolver(osm_host)
+        if osm_addresses & HP_ADDRESSES or osm_addresses != {target}:
+            raise TargetError('OSM endpoint does not resolve only to the experiment target')
+        allowed_api = set(self.config['allowed_api_addresses'])
+        if allowed_api & HP_ADDRESSES:
+            raise TargetError('HP address listed as an allowed API server')
+        for server in self.cluster.api_server():
+            host = urllib.parse.urlsplit(server).hostname or ''
+            resolved = self.resolver(host)
+            if resolved & HP_ADDRESSES or not resolved <= allowed_api:
+                raise TargetError('Kubernetes API server is not an allowed experiment address')
+        nodes = self.cluster.nodes()
+        allowed_nodes = set(self.config['allowed_node_addresses'])
+        for node in nodes:
+            addresses = {a['address'] for a in node['status'].get('addresses', []) if a['type'] == 'InternalIP'}
+            if node['metadata']['name'] in HP_NODE_NAMES or addresses & HP_ADDRESSES or not addresses <= allowed_nodes:
+                raise TargetError('Kubernetes node is not an experiment node: ' + node['metadata']['name'])
+        seen = {str(x.get('_id')) for listing in (self.osm.projects(), self.osm.vims(), self.osm.k8sclusters(),
+                                                  self.osm.ns_instances()) for x in listing}
+        if seen & HP_OSM_IDS:
+            raise TargetError('OSM contains HP production identities; refusing')
+        return {'osm_addresses': sorted(osm_addresses), 'nodes': [n['metadata']['name'] for n in nodes]}
+
+    def discover(self):
+        projects = [p for p in self.osm.projects() if p.get('name') == self.config['osm_project']]
+        vims = [v for v in self.osm.vims() if v.get('name') == self.config['vim_account']]
+        clusters = [k for k in self.osm.k8sclusters() if k.get('name') == self.config['k8s_cluster']]
+        if len(projects) != 1 or len(vims) != 1 or len(clusters) != 1:
+            raise ExperimentError('OSM project, VIM or K8s cluster registration is missing or ambiguous')
+        cluster = clusters[0]
+        if cluster.get('vim_account') != vims[0]['_id'] or not (cluster.get('deployment_methods') or {}).get('helm-chart-v3'):
+            raise ExperimentError('OSM K8s cluster is not a helm-chart-v3 cluster of the configured VIM')
+        if (cluster.get('_admin') or {}).get('operationalState') not in ('ENABLED', None):
+            raise ExperimentError('OSM K8s cluster is not ENABLED')
+        self.ids = {'project': projects[0]['_id'], 'vim': vims[0]['_id'], 'k8scluster': cluster['_id']}
+        return self.ids
+
+    # -- helpers -----------------------------------------------------------------------------------------------
+    def policy(self, auto_rollback):
+        return {'branch': RELEASE_BRANCH, 'target': RELEASE_TARGET, 'upgrade_scenarios': {SCENARIO},
+                'auto_rollback': auto_rollback, 'lock_timeout': 60, 'op_timeout': self.timeouts['op_timeout'],
+                'health_timeout': self.timeouts['health_timeout'], 'health_interval': self.timeouts['poll'],
+                'kdu_timeout': self.timeouts['kdu_timeout'], 'clock_skew': self.timeouts['clock_skew']}
+
+    def release(self, revision):
+        blobs = self.packages[revision]
+        return ({'schema': 1, 'commit': self.commit, 'branch': RELEASE_BRANCH, 'target': RELEASE_TARGET,
+                 'ci_status': 'success', 'scenarios': {SCENARIO: {
+                     'artifacts': {n: hashlib.sha256(b).hexdigest() for n, b in blobs.items()}}}}, blobs)
+
+    def wait_operation(self, operation, timeout=None):
+        deadline = self.clock.monotonic() + (timeout or self.timeouts['op_timeout'])
+        while True:
+            state = self.osm.lifecycle.operation_state(operation)
+            if state in TERMINAL or self.clock.monotonic() >= deadline:
+                return state
+            self.clock.sleep(self.timeouts['poll'])
+
+    def experiment_ns(self):
+        ns = self.osm.experiment_ns()
+        if not ns:
+            raise ExperimentError('Experiment NS does not exist')
+        deployed = ns.get('_admin', {}).get('deployed', {}).get('K8s', [])
+        if sorted((k.get('kdu-name'), k.get('kdu-instance'), k.get('namespace')) for k in deployed) != sorted(
+                (kdu, release, NAMESPACE) for kdu, release in RELEASES.items()):
+            raise ExperimentError('Experiment NS KDUs are not the isolated p4kdu releases')
+        if self.ns_id and ns['_id'] != self.ns_id:
+            raise ExperimentError('Experiment NS identity changed')
+        return ns
+
+    @contextlib.contextmanager
+    def gate(self):
+        """Open the P4 gate in this process only, for the verified experiment NS."""
+        ns = self.experiment_ns()
+        if lifecycle.P4_KDU_UPGRADE_APPROVAL is not None:
+            raise ExperimentError('P4 gate is unexpectedly open in the committed code')
+        approval = {'p4_report_sha256': hashlib.sha256(('p4-experiment-in-progress:' + ns['_id']).encode()).hexdigest(),
+                    'osm_lcm_digest': self.lcm_digest, 'approved_commit': self.commit}
+        lifecycle.P4_KDU_UPGRADE_APPROVAL = approval
+        try:
+            lifecycle.require_p4_approval()
+            yield TargetLockedOsm(self.osm.lifecycle, ns['_id'])
+        finally:
+            lifecycle.P4_KDU_UPGRADE_APPROVAL = None
+
+    def snapshot(self, step, label):
+        ns = self.osm.experiment_ns()
+        value = {'ns': None, 'vnfr': None, 'operations': [], 'helm': {}, 'markers': {}, 'deployments': {},
+                 'ns_count': len(self.osm.ns_instances()), 'state': None}
+        if ns:
+            value['ns'] = {k: ns.get(k) for k in ('_id', 'name', 'nsState', 'currentOperation', 'nsd-id')}
+            value['ns']['kdus'] = [{k: d.get(k) for k in ('kdu-name', 'kdu-instance', 'namespace', 'kdu-model',
+                                                           'member-vnf-index')}
+                                   for d in ns.get('_admin', {}).get('deployed', {}).get('K8s', [])]
+            vnfrs = self.osm.lifecycle.vnf_instances(ns['_id'])
+            value['vnfr'] = [{k: v.get(k) for k in ('_id', 'vnfd-id', 'revision')} for v in vnfrs]
+            for operation in self.osm.lifecycle.ns_operations(ns['_id']):
+                params = operation.get('operationParams') or {}
+                value['operations'].append({
+                    'id': operation.get('_id'), 'type': operation.get('lcmOperationType'),
+                    'state': operation.get('operationState'), 'start': operation.get('startTime'),
+                    'entered': operation.get('statusEnteredTime'), 'detail': str(operation.get('detailed-status'))[:200],
+                    'primitive': params.get('primitive'), 'kdu': params.get('kdu_name'),
+                    'kdu_model': (params.get('primitive_params') or {}).get('kdu_model'),
+                    'timeout': params.get('timeout_ns_action')})
+        for kdu, release in RELEASES.items():
+            status = self.cluster.release_status(release)
+            value['helm'][kdu] = {'status': status and {'version': status.get('version'),
+                                                        'state': status.get('info', {}).get('status'),
+                                                        'chart': status.get('chart', {}).get('metadata', {}).get('version')},
+                                  'history': self.cluster.release_history(release)}
+            value['markers'][kdu] = self.cluster.configmap_marker(release)
+            value['deployments'][kdu] = deployment_ready(self.cluster.deployment(release))[1]
+        if self.state_path.exists():
+            value['state'] = yaml.safe_load(self.state_path.read_text())
+        self.evidence.record(step, label, value)
+        return value
+
+    def expect_release(self, step, snap, kdu, chart, marker, label):
+        helm = snap['helm'][kdu]['status'] or {}
+        ok = (helm.get('state') == 'deployed' and helm.get('chart') == chart and snap['markers'][kdu] == marker
+              and snap['deployments'][kdu] == 'ready')
+        return self.evidence.check(step, label + ': ' + kdu + ' serves ' + marker,
+                                   ok, {'helm': helm, 'marker': snap['markers'][kdu],
+                                        'deployment': snap['deployments'][kdu]})
+
+    def expect_identity(self, step, snap):
+        self.evidence.check(step, 'NS identity preserved', snap['ns'] and snap['ns']['_id'] == self.ns_id,
+                            snap['ns'] and snap['ns']['_id'])
+        self.evidence.check(step, 'NS count unchanged', snap['ns_count'] == self.ns_count, snap['ns_count'])
+        self.evidence.check(step, 'NS READY and idle', snap['ns'] and snap['ns']['nsState'] == 'READY' and
+                            snap['ns']['currentOperation'] in ('IDLE', None), snap['ns'])
+
+    def new_operations(self, before, after):
+        known = {o['id'] for o in before['operations']}
+        return [o for o in after['operations'] if o['id'] not in known]
+
+    def write_state(self, state):
+        self.state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        lifecycle.write_state(self.state_path, state, REGISTRY, self.context)
+
+    def read_state(self):
+        return lifecycle.read_state(self.state_path, REGISTRY, self.context)
+
+    def operator_discard_pending(self, step, reason):
+        """Operator decision after verifying OSM and Helm: drop the retained update record."""
+        with lifecycle.lifecycle_lock(self.state_path, 'p4-operator', timeout=60):
+            state = self.read_state()
+            record = state['osm'].pop('pending_update', None)
+            self.write_state(state)
+        self.evidence.record(step, 'operator-resolution', {'reason': reason, 'discarded': record})
+        return record
+
+    def reconcile_until_settled(self, step, policy):
+        results = []
+        deadline = self.clock.monotonic() + self.timeouts['op_timeout']
+        while True:
+            result = lifecycle.reconcile_update(self.osm.lifecycle, self.observer, REGISTRY, self.state_path,
+                                                self.context, policy, clock=self.clock)
+            results.append(result)
+            if result['action'] not in ('still-running', 'unhealthy') or self.clock.monotonic() >= deadline:
+                self.evidence.record(step, 'reconcile', results)
+                return result
+            self.clock.sleep(self.timeouts['poll'])
+
+    def run_release(self, step, revision, policy, osm):
+        release, blobs = self.release(revision)
+        try:
+            result = lifecycle.process_release(osm, self.observer, REGISTRY, release, blobs, self.state_path,
+                                               self.context, policy, clock=self.clock)
+            outcome = {'result': result}
+        except lifecycle.LifecycleError as error:
+            outcome = {'error': type(error).__name__, 'message': str(error)}
+        self.evidence.record(step, 'process-release', outcome)
+        return outcome
+
+    def restore_rev2(self, step, osm):
+        """Bring every KDU back to revision-2 content through OSM rollback actions (bounded)."""
+        for kdu, release in RELEASES.items():
+            for _ in range(3):
+                status = self.cluster.release_status(release) or {}
+                if status.get('chart', {}).get('metadata', {}).get('version') == EXPECTED_CHART[2] and \
+                        status.get('info', {}).get('status') == 'deployed':
+                    break
+                operation = osm.kdu_action(self.ns_id, MEMBER_INDEX, kdu, 'rollback', {}, self.timeouts['kdu_timeout'])
+                self.evidence.record(step, 'restore-' + kdu + '-' + operation[:8],
+                                     {'operation': operation, 'state': self.wait_operation(operation)})
+
+    # -- steps -----------------------------------------------------------------------------------------------
+    def preflight(self, step):
+        target = self.verify_target()
+        ids = self.discover()
+        self.lcm_digest = self.cluster.lcm_image_digest()
+        versions = {'kubectl': self.cluster._json(self.cluster.kubectl('version', '-o', 'json')),
+                    'helm': self.cluster._run(self.cluster.helm('version', '--short')).stdout}
+        self.evidence.record(step, 'target', dict(target, ids=ids, lcm_digest=self.lcm_digest, versions=versions,
+                                                  commit=self.commit, gate_committed=lifecycle.P4_KDU_UPGRADE_APPROVAL))
+        clean = (self.osm.experiment_ns() is None and self.osm.lifecycle.package('knf', VNFD) is None and
+                 self.osm.lifecycle.package('ns', NSD) is None and self.cluster.namespace() is None)
+        self.evidence.check(step, 'no leftovers from an earlier run', clean)
+        self.evidence.check(step, 'committed P4 gate is closed', lifecycle.P4_KDU_UPGRADE_APPROVAL is None)
+        if not clean:
+            raise ExperimentError('Experiment resources already exist; run teardown first')
+
+    def onboard(self, step):
+        _, blobs = self.release(1)
+        published = {kind: self.osm.lifecycle.publish(kind, name, blobs[name + '.tar.gz'])
+                     for kind, name in (('knf', VNFD), ('ns', NSD))}
+        self.evidence.record(step, 'published', published)
+        self.evidence.check(step, 'revision 1 onboarded', all(p['revision'] == 1 for p in published.values()), published)
+
+    def instantiate(self, step):
+        nsd = self.osm.lifecycle.package('ns', NSD)
+        self.ns_count = len(self.osm.ns_instances()) + 1
+        submitted = self.clock.time()
+        ns_id, operation = self.osm.instantiate(nsd['id'], self.ids['vim'])
+        state = self.wait_operation(operation)
+        self.ns_id = ns_id
+        self.evidence.check(step, 'instantiation COMPLETED', state == 'COMPLETED', state)
+        start = self.osm.operation(operation).get('startTime')
+        # Lost-request adoption compares OSM operation times with this runner's clock.
+        self.evidence.check(step, 'runner and OSM clocks agree within the adoption window',
+                            type(start) in (int, float) and abs(start - submitted) <= self.timeouts['clock_skew'],
+                            {'submitted': submitted, 'osm_start': start})
+        ns = self.experiment_ns()
+        self.evidence.check(step, 'KDUs deployed under member-vnf-index ' + MEMBER_INDEX, all(
+            d.get('member-vnf-index') == MEMBER_INDEX for d in ns['_admin']['deployed']['K8s']))
+        knf = self.osm.lifecycle.package('knf', VNFD)
+        models = {d['kdu-name']: d.get('kdu-model') for d in ns['_admin']['deployed']['K8s']}
+        self.evidence.check(step, 'KDU models are revision-pinned storage paths of revision 1', all(
+            (m := lifecycle.KDU_MODEL.fullmatch(str(models[k]))) and m['id'] == knf['id'] and m['rev'] == '1'
+            and m['package'] == VNFD and m['kdu'] == k for k in RELEASES), models)
+        namespace = self.cluster.namespace()
+        kube_system = self.cluster.namespace('kube-system')
+        self.context = {'project_id': self.ids['project'], 'vim_id': self.ids['vim'],
+                        'cluster_uid': kube_system['metadata']['uid'], 'namespace_uid': namespace['metadata']['uid'],
+                        'namespace': NAMESPACE, 'repo_root': str(ROOT), 'workload_kubeconfig': self.config['kubeconfig'],
+                        'deployment_profile': 'p4-experiment', 'osm_host': self.config['osm_url'],
+                        'k8s_cluster_id': self.ids['k8scluster']}
+        self.write_state({'active': SCENARIO, 'context': self.context,
+                          'osm': {'active_instance_id': ns_id, 'active_scenario': SCENARIO,
+                                  'active_operation_id': operation}})
+        deadline = self.clock.monotonic() + self.timeouts['health_timeout']
+        while not self.observer.health(REGISTRY['scenarios'][0], [{'name': k} for k in RELEASES], 0)[0] \
+                and self.clock.monotonic() < deadline:
+            self.clock.sleep(self.timeouts['poll'])
+        snap = self.snapshot(step, 'after')
+        for kdu in RELEASES:
+            self.expect_release(step, snap, kdu, EXPECTED_CHART[1], 'r1', 'baseline')
+            self.evidence.check(step, 'Helm release ' + RELEASES[kdu] + ' at revision 1',
+                                (snap['helm'][kdu]['status'] or {}).get('version') == 1)
+        self.expect_identity(step, snap)
+
+    def upgrade_rev2_lost_response(self, step):
+        """Revision 2 through P1: CU then DU; the DU response is lost after OSM accepted it."""
+        before = self.snapshot(step, 'before')
+        policy = self.policy(auto_rollback=False)
+        lossy = Osm(InterruptedResponse(self.request, 'after-send', 'upgrade', 'du'))
+        with self.gate():
+            outcome = self.run_release(step, 2, policy, TargetLockedOsm(lossy.lifecycle, self.ns_id))
+            self.evidence.check(step, 'lost DU response leaves the update uncertain',
+                                outcome.get('error') == 'UpdateUncertain', outcome)
+            pending = self.read_state()['osm'].get('pending_update') or {}
+            self.evidence.check(step, 'pending update names the DU without an operation',
+                                pending.get('current_kdu') == 'du' and 'du' not in pending.get('operations', {}), pending)
+            adopted = lifecycle.adopt_lost_request(self.osm.lifecycle, REGISTRY, self.state_path, self.context, policy)
+            self.evidence.record(step, 'adopt', adopted)
+            self.evidence.check(step, 'lost DU request adopted from OSM operations', adopted['action'] == 'adopted', adopted)
+            result = self.reconcile_until_settled(step, policy)
+        self.evidence.check(step, 'reconciliation confirms the upgrade', result['action'] == 'confirmed-upgraded', result)
+        after = self.snapshot(step, 'after')
+        knf = self.osm.lifecycle.package('knf', VNFD)
+        self.evidence.check(step, 'catalog revision 2 published under the same descriptor id',
+                            knf['revision'] == 2, knf)
+        for kdu in RELEASES:
+            self.expect_release(step, after, kdu, EXPECTED_CHART[2], 'r2', 'in-place upgrade')
+            history = after['helm'][kdu]['history']
+            self.evidence.check(step, kdu + ' upgraded in place (same release, next revision)',
+                                [h.get('revision') for h in history][-2:] == [1, 2], history)
+        self.expect_identity(step, after)
+        upgrades = [o for o in self.new_operations(before, after) if o['primitive'] == 'upgrade']
+        by_kdu = {o['kdu']: o for o in upgrades}
+        self.evidence.check(step, 'one upgrade operation per KDU, both COMPLETED',
+                            sorted(by_kdu) == ['cu', 'du'] and len(upgrades) == 2 and
+                            all(o['state'] == 'COMPLETED' for o in upgrades), upgrades)
+        self.evidence.check(step, 'revision-pinned kdu_model used for each KDU', all(
+            o['kdu_model'] == '/app/storage/{}:2/{}/helm-chart-v3s/{}'.format(knf['id'], VNFD, o['kdu'])
+            for o in upgrades), [o['kdu_model'] for o in upgrades])
+        if sorted(by_kdu) == ['cu', 'du']:
+            self.evidence.check(step, 'DU upgrade submitted only after the CU upgrade completed',
+                                by_kdu['du']['start'] is not None and by_kdu['cu']['entered'] is not None and
+                                by_kdu['du']['start'] >= by_kdu['cu']['entered'],
+                                {'cu_completed': by_kdu['cu']['entered'], 'du_started': by_kdu['du']['start']})
+        self.evidence.check(step, 'action timeout passed to OSM', all(o['timeout'] == self.timeouts['kdu_timeout']
+                                                                      for o in upgrades))
+        state = after['state']['osm']
+        self.evidence.check(step, 'P1 records revision 2 as the active release and keeps the previous one',
+                            'pending_update' not in state and state.get('active_release', {}).get('knf_revision') == 2
+                            and state.get('previous_release', {}).get('knf_revision') == 1, state)
+        self.evidence.observe(step, 'NSR kdu-model after upgrade (expected stale: written only at instantiation)',
+                              [k['kdu-model'] for k in after['ns']['kdus']])
+        self.evidence.observe(step, 'VNFR revision after upgrade (expected unchanged)', after['vnfr'])
+
+    def explicit_rollback(self, step):
+        with self.gate() as osm:
+            for expected_chart, marker in ((EXPECTED_CHART[1], 'r1'), (EXPECTED_CHART[2], 'r2')):
+                before = self.snapshot(step, 'before-' + marker)
+                operation = osm.kdu_action(self.ns_id, MEMBER_INDEX, 'du', 'rollback', {}, self.timeouts['kdu_timeout'])
+                state = self.wait_operation(operation)
+                after = self.snapshot(step, 'after-' + marker)
+                self.evidence.check(step, 'rollback action COMPLETED (' + marker + ')', state == 'COMPLETED', state)
+                self.expect_release(step, after, 'du', expected_chart, marker, 'explicit rollback')
+                old, new = before['helm']['du']['status'] or {}, after['helm']['du']['status'] or {}
+                self.evidence.check(step, 'rollback creates the next Helm revision (' + marker + ')',
+                                    new.get('version') == (old.get('version') or 0) + 1, [old, new])
+                self.expect_release(step, after, 'cu', EXPECTED_CHART[2], 'r2', 'CU untouched by DU rollback')
+                self.expect_identity(step, after)
+
+    def failed_upgrade_auto_rollback(self, step):
+        before = self.snapshot(step, 'before')
+        with self.gate() as osm:
+            outcome = self.run_release(step, 3, self.policy(auto_rollback=True), osm)
+        after = self.snapshot(step, 'after')
+        self.evidence.check(step, 'failed DU upgrade reported, earlier KDUs rolled back',
+                            outcome.get('error') == 'UpdateFailed' and 'rolled back' in outcome.get('message', ''), outcome)
+        operations = self.new_operations(before, after)
+        summary = [(o['primitive'], o['kdu'], o['state']) for o in operations]
+        self.evidence.check(step, 'OSM operations: CU upgrade COMPLETED, DU upgrade FAILED, CU rollback COMPLETED',
+                            summary == [('upgrade', 'cu', 'COMPLETED'), ('upgrade', 'du', 'FAILED'),
+                                        ('rollback', 'cu', 'COMPLETED')], summary)
+        du_history = after['helm']['du']['history']
+        self.evidence.check(step, 'helm --atomic recorded the failed DU revision and rolled it back', any(
+            h.get('status') == 'failed' and h.get('chart', '').endswith(EXPECTED_CHART[3]) for h in du_history) and
+            du_history and du_history[-1].get('status') == 'deployed' and
+            'Rollback' in str(du_history[-1].get('description')), du_history)
+        for kdu in RELEASES:
+            self.expect_release(step, after, kdu, EXPECTED_CHART[2], 'r2', 'previous release restored')
+        state = after['state']['osm']
+        self.evidence.check(step, 'P1 keeps revision 2 active and no pending update',
+                            'pending_update' not in state and state['active_release']['knf_revision'] == 2, state)
+        self.expect_identity(step, after)
+
+    def partial_failure_operator_resolution(self, step):
+        before = self.snapshot(step, 'before')
+        policy = self.policy(auto_rollback=False)
+        with self.gate() as osm:
+            outcome = self.run_release(step, 3, policy, osm)
+            mid = self.snapshot(step, 'after-failure')
+            pending = mid['state']['osm'].get('pending_update') or {}
+            self.evidence.check(step, 'partial failure retained as failed-partial',
+                                outcome.get('error') == 'UpdateFailed' and pending.get('stage') == 'failed-partial'
+                                and pending.get('upgraded') == ['cu'], {'outcome': outcome, 'pending': pending})
+            self.expect_release(step, mid, 'cu', EXPECTED_CHART[3], 'r3', 'mixed release')
+            self.expect_release(step, mid, 'du', EXPECTED_CHART[2], 'r2', 'mixed release')
+            result = self.reconcile_until_settled(step, policy)
+            self.evidence.check(step, 'reconciliation requires an operator decision',
+                                result['action'] == 'operator-decision-required', result)
+            operation = osm.kdu_action(self.ns_id, MEMBER_INDEX, 'cu', 'rollback', {}, self.timeouts['kdu_timeout'])
+            self.evidence.check(step, 'operator rollback of the CU COMPLETED', self.wait_operation(operation) == 'COMPLETED')
+        self.operator_discard_pending(step, 'CU rolled back to revision 2 content after a partial failure')
+        after = self.snapshot(step, 'after')
+        for kdu in RELEASES:
+            self.expect_release(step, after, kdu, EXPECTED_CHART[2], 'r2', 'resolved')
+        self.expect_identity(step, after)
+        self.evidence.check(step, 'no new upgrade of the DU succeeded', not any(
+            o['primitive'] == 'upgrade' and o['kdu'] == 'du' and o['state'] == 'COMPLETED'
+            for o in self.new_operations(before, after)))
+
+    def lost_before_send(self, step):
+        before = self.snapshot(step, 'before')
+        policy = self.policy(auto_rollback=False)
+        lossy = Osm(InterruptedResponse(self.request, 'before-send', 'upgrade', 'cu'))
+        with self.gate():
+            outcome = self.run_release(step, 3, policy, TargetLockedOsm(lossy.lifecycle, self.ns_id))
+            self.evidence.check(step, 'lost CU request leaves the update uncertain',
+                                outcome.get('error') == 'UpdateUncertain', outcome)
+            adopted = lifecycle.adopt_lost_request(self.osm.lifecycle, REGISTRY, self.state_path, self.context, policy)
+        self.evidence.record(step, 'adopt', adopted)
+        self.evidence.check(step, 'no OSM operation found: previous release confirmed',
+                            adopted['action'] == 'confirmed-previous-release', adopted)
+        after = self.snapshot(step, 'after')
+        self.evidence.check(step, 'OSM received no new action', not [
+            o for o in self.new_operations(before, after) if o['type'] == 'action'])
+        for kdu in RELEASES:
+            self.evidence.check(step, kdu + ' Helm revision unchanged', (after['helm'][kdu]['status'] or {}).get('version')
+                                == (before['helm'][kdu]['status'] or {}).get('version'))
+        self.evidence.check(step, 'no pending update remains', 'pending_update' not in after['state']['osm'])
+
+    def lcm_restart_recovery(self, step):
+        before = self.snapshot(step, 'before')
+        pods_before = [p['metadata']['name'] for p in self.cluster.lcm_pods()]
+        policy = self.policy(auto_rollback=False)
+        restarts = []
+        with self.gate() as osm:
+            restarting = RestartLcmWhileProcessing(osm, 'cu', self.cluster.restart_lcm, restarts.append)
+            outcome = self.run_release(step, 3, policy, restarting)
+            pods_after = [p['metadata']['name'] for p in self.cluster.lcm_pods()]
+            self.evidence.record(step, 'lcm', {'restarts': restarts, 'pods_before': pods_before, 'pods_after': pods_after})
+            self.evidence.check(step, 'LCM restarted while the CU upgrade was PROCESSING',
+                                bool(restarts) and set(pods_before) != set(pods_after), restarts)
+            cu_operations = [o for o, kind in restarting.operations.items() if kind == ('upgrade', 'cu')]
+            final = {o: self.wait_operation(o) for o in cu_operations}
+            mid = self.snapshot(step, 'after-restart')
+            self.evidence.observe(step, 'P1 outcome when LCM restarts mid-upgrade', outcome)
+            self.evidence.observe(step, 'OSM state of the interrupted CU operation', final)
+            self.evidence.observe(step, 'Helm state after the LCM restart',
+                                  {k: v['status'] for k, v in mid['helm'].items()})
+            recovery = []
+            pending = mid['state']['osm'].get('pending_update') or {}
+            if pending.get('current_kdu') and pending['current_kdu'] not in pending.get('operations', {}):
+                recovery.append(('adopt', lifecycle.adopt_lost_request(self.osm.lifecycle, REGISTRY, self.state_path,
+                                                                       self.context, policy)))
+            if self.read_state()['osm'].get('pending_update'):
+                with contextlib.suppress(lifecycle.LifecycleError):
+                    recovery.append(('reconcile', self.reconcile_until_settled(step, policy)))
+            for kdu, release in RELEASES.items():
+                status = self.cluster.release_status(release) or {}
+                if str(status.get('info', {}).get('status', '')).startswith('pending-'):
+                    self.cluster.helm_rollback(release)
+                    recovery.append(('helm-rollback', release))
+            self.restore_rev2(step, osm)
+        if self.read_state()['osm'].get('pending_update'):
+            recovery.append(('operator', self.operator_discard_pending(step, 'recovered after LCM restart')))
+        self.evidence.record(step, 'recovery', recovery)
+        after = self.snapshot(step, 'after')
+        for kdu in RELEASES:
+            self.expect_release(step, after, kdu, EXPECTED_CHART[2], 'r2', 'recovered after LCM restart')
+            self.evidence.check(step, kdu + ' Helm release not left pending', not str(
+                (after['helm'][kdu]['status'] or {}).get('state', '')).startswith('pending-'))
+        self.expect_identity(step, after)
+        self.evidence.check(step, 'no pending update remains', 'pending_update' not in after['state']['osm'])
+        self.evidence.check(step, 'LCM ready again', bool(self.cluster.lcm_pods()))
+        self.evidence.observe(step, 'new OSM operations during restart test',
+                              [(o['primitive'], o['kdu'], o['state']) for o in self.new_operations(before, after)])
+
+    # -- orchestration ---------------------------------------------------------------------------------------------
+    def run(self, steps=STEPS, allow_lcm_restart=False):
+        for name in steps:
+            if name == 'lcm_restart_recovery' and not allow_lcm_restart:
+                self.evidence.steps.append({'step': name, 'result': 'skipped (requires --allow-lcm-restart)'})
+                continue
+            started = self.clock.time()
+            try:
+                self.verify_target()
+                if name != 'preflight' and self.lcm_digest is None:
+                    raise ExperimentError('Preflight has not run')
+                getattr(self, name)(name)
+            except Exception as error:      # stop at the first broken step; evidence stays
+                self.evidence.check(name, 'step completed', False, type(error).__name__ + ': ' + str(error)[:500])
+                self.evidence.steps.append({'step': name, 'result': 'error', 'started': started, 'ended': self.clock.time()})
+                break
+            failed = [c for c in self.evidence.checks if c['step'] == name and c['passed'] is False]
+            self.evidence.steps.append({'step': name, 'result': 'failed' if failed else 'passed',
+                                        'started': started, 'ended': self.clock.time()})
+            if failed:
+                break
+        return self.evidence.summary({'commit': self.commit, 'ns_id': self.ns_id, 'lcm_digest': self.lcm_digest,
+                                      'target': self.config['target_address']})
+
+    def teardown(self):
+        """Remove only experiment resources: NS, descriptors, Helm releases, namespace."""
+        step = 'teardown'
+        self.verify_target()
+        ns = self.osm.experiment_ns()
+        if ns:
+            self.ns_id = ns['_id']
+            if ns.get('nsState') != 'NOT_INSTANTIATED':
+                state = self.wait_operation(self.osm.terminate(ns['_id']))
+                self.evidence.check(step, 'experiment NS terminated', state == 'COMPLETED', state)
+            self.osm.delete_ns(ns['_id'])
+        for kind, name in (('ns', NSD), ('knf', VNFD)):
+            self.evidence.record(step, 'deleted-' + name, self.osm.delete_package(kind, name))
+        deadline = self.clock.monotonic() + self.timeouts['health_timeout']
+        while self.cluster.namespace() and self.cluster.releases() and self.clock.monotonic() < deadline:
+            self.clock.sleep(self.timeouts['poll'])
+        if self.cluster.namespace():
+            releases = self.cluster.releases()
+            inventory = self.cluster.inventory()
+            self.evidence.record(step, 'namespace-before-delete', {'releases': releases, 'inventory': inventory})
+            foreign = [i for i in inventory if not (i[1].startswith(tuple(RELEASES.values())) or
+                                                     i[1] in ('kube-root-ca.crt', 'istio-ca-root-cert'))]
+            if releases or foreign:
+                raise ExperimentError('Namespace holds non-experiment resources; not deleting it: ' + str(foreign or releases))
+            self.cluster.delete_namespace()
+        clean = (self.osm.experiment_ns() is None and self.osm.lifecycle.package('knf', VNFD) is None and
+                 self.osm.lifecycle.package('ns', NSD) is None and self.cluster.namespace() is None)
+        self.evidence.check(step, 'experiment resources removed', clean)
+        return self.evidence.summary({'teardown': True})
+
+
+def git_commit():
+    try:
+        value = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], capture_output=True, text=True,
+                               timeout=10, check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        value = ''
+    if not re.fullmatch(r'[0-9a-f]{40}', value):
+        raise ExperimentError('Cannot determine the experiment source commit')
+    return value
+
+
+def connect(config):
+    catalog = Catalog(config['osm_url'], ca_file=config.get('osm_ca_file'))
+    catalog.authenticate(config['osm_user'], read_secret(config['osm_password_file']), config['osm_project'])
+    return catalog.request
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('command', choices=('build-packages', 'preflight', 'run', 'teardown'))
+    parser.add_argument('--config', type=Path)
+    parser.add_argument('--output', type=Path, help='build-packages: output directory')
+    parser.add_argument('--allow-lcm-restart', action='store_true',
+                        help='run the LCM restart test (restarts OSM LCM on the experiment target)')
+    args = parser.parse_args(argv)
+    if args.command == 'build-packages':
+        print(json.dumps(p4_packages.write_all(args.output), indent=2, sort_keys=True))
+        return 0
+    if not args.config:
+        parser.error('--config is required')
+    config = load_config(args.config)
+    stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+    evidence = Evidence(Path(config['work_dir']) / 'evidence' / (args.command + '-' + stamp))
+    cluster = Cluster(config['kubectl'], config['helm'], config['kubeconfig'], config['osm_namespace'])
+    experiment = Experiment(config, connect(config), cluster, evidence)
+    if args.command == 'teardown':
+        summary = experiment.teardown()
+    else:
+        summary = experiment.run(('preflight',) if args.command == 'preflight' else STEPS, args.allow_lcm_restart)
+    print(json.dumps({k: summary[k] for k in ('steps', 'passed', 'failed', 'observations', 'summary_sha256')
+                      if k in summary}, indent=2, default=str))
+    print('evidence: ' + str(evidence.directory))
+    return 0 if summary['failed'] == 0 else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
