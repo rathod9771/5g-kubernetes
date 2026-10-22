@@ -18,6 +18,7 @@ own process, only around steps acting on the verified experiment NS.
 | `scripts/experiments/p4/p4_packages.py` | deterministic KNF `p4kdu_knf` (KDUs `cu`, `du`) and NSD `p4kdu_ns`, revisions 1–3 |
 | `scripts/experiments/p4/p4_experiment.py` | guarded runner: preflight, steps, evidence, teardown |
 | `scripts/experiments/p4/p4-dell.example.json` | configuration template |
+| `scripts/experiments/p4/p4_archive.py` | evidence archive: copies, SHA256SUMS, re-verification, read-only; `verify` re-checks |
 | `tests/p4_sim.py`, `tests/test_p4_experiment.py` | offline OSM/Helm/kubectl target and tests |
 
 Revisions (descriptors are byte-identical, so OSM accepts each revision of the in-use KNF):
@@ -56,7 +57,9 @@ no host access, no cluster-scoped objects.
 | `lost_before_send` | CU request lost before reaching OSM → adoption finds nothing → previous release confirmed; no new OSM action, Helm revisions unchanged |
 | `lcm_restart_recovery` (opt-in) | OSM LCM restarted while the CU upgrade is PROCESSING; outcome, OSM operation state and Helm state recorded as observations; recovery (adopt, reconcile, `helm rollback` of a pending release in `p4-kdu-upgrade` only, OSM rollback actions) must end with both KDUs on `r2`, nothing pending, NS READY/idle |
 
-The run stops at the first failed or broken step; evidence collected so far is kept.
+The run stops at the first failed or broken step; evidence collected so far is kept. Each command writes a
+new timestamped evidence directory and refuses an existing one; a file recorded twice gets a
+numbered sibling, so evidence is never overwritten.
 
 ### Helm release observation
 
@@ -79,10 +82,10 @@ version is the marker (`r1`/`r2`/`r3`) and is checked alongside the ConfigMap.
 
 ### Namespace isolation
 
-`validate-baseline` and `teardown` list `p4-kdu-upgrade` (Deployments, ReplicaSets, Pods,
-Services, ConfigMaps, Secrets, StatefulSets, DaemonSets, Jobs, CronJobs, PVCs,
-ServiceAccounts, Roles, RoleBindings, NetworkPolicies, Ingresses, HPAs, PDBs, Endpoints,
-EndpointSlices, LimitRanges, ResourceQuotas, ReplicationControllers) and keep
+`validate-baseline`, `teardown-check` and `teardown` list every namespaced kind the API
+server serves (`kubectl api-resources --namespaced=true --verbs=list`, CRDs included; Events
+and the metrics API excluded) in `p4-kdu-upgrade`. A discovery error, or a missing built-in
+kind (Pods, Secrets, RBAC, NetworkPolicies, Ingresses, HPAs, PDBs, ...), fails closed. They keep
 only identity metadata (kind, name, uid, type, labels, `meta.helm.sh/*` annotations,
 owner references); Secret data never reaches the evidence. Accepted objects:
 
@@ -107,14 +110,28 @@ Everything else, including objects merely named like an experiment object, is fo
    `p4kdu_ns` package, requesting only (`p4kdu`, cu/du, `p4kdu-cu`/`p4kdu-du`,
    `p4-kdu-upgrade`); while instantiated its `nsd-id`, deployed KDUs and VNFR descriptors
    match; once terminated nothing is listed as deployed. Recorded as `ns-identity`.
-5. Terminate only an idle NS; continue only if the operation COMPLETED and, re-verified,
-   the NS is NOT_INSTANTIATED and idle with no running operation and no P4 Helm release
-   left (`after-termination`). Otherwise the NS record and packages are kept.
-6. Delete the NS record and confirm it is gone; delete `p4kdu_ns`/`p4kdu_knf` only if no NS
-   references the NSD; delete the namespace only when no release and no foreign object
-   remains.
-7. `other-ns-after` must equal `other-ns-before` (check `every other OSM NS unchanged`),
-   also when teardown stopped early.
+5. Record the NS operation records (`ns-operations`; OSM deletes them with the NS).
+6. Terminate only an idle NS and require that operation COMPLETED. Then all of these must
+   hold (re-read until they do or `op_timeout`; `after-termination`):
+   - identity re-verified; OSM v19 keeps `_admin.deployed.K8s` and `nsd-id` after a
+     successful terminate, so the retained KDU list must be empty or exactly the isolated
+     CU/DU (malformed, duplicate, other KDU/release/namespace/member rejected) and a retained
+     `nsd-id` must be the `p4kdu_ns` package;
+   - `nsState` and `_admin.nsState` both NOT_INSTANTIATED, `currentOperation` idle;
+   - the NS's latest terminate operation is COMPLETED, for this NS, after its single
+     instantiation, and is the operation this run issued;
+   - no operation of the NS pending or running;
+   - no Helm release in `p4-kdu-upgrade` and `helm status` knows neither P4 release;
+   - nothing left in the namespace besides `kube-root-ca.crt` and the `default` ServiceAccount.
+   Retained KDU metadata is never taken as running workloads, nor missing releases as proof
+   of termination: each condition is checked independently.
+7. Delete the NS record; a failed or uncertain delete stops (`ns-delete-error`). Continue only
+   when the record is gone by name and id; delete `p4kdu_ns`/`p4kdu_knf` only if no NS
+   references the NSD or KNF; delete the namespace only when no release and no foreign
+   object remains.
+8. `other-ns-after` must equal `other-ns-before` (`every other OSM NS unchanged`) and the
+   Kubernetes witness (every other namespace and Deployment/StatefulSet/DaemonSet, with
+   uid and generation) must be unchanged, also when teardown stopped early.
 
 Any refusal is recorded as the failed check `teardown completed` and leaves the remaining
 resources in place for inspection.
@@ -134,10 +151,8 @@ NOT_INSTANTIATED NS with the number of KDUs it still lists.
   reject invalid JSON, duplicate keys and non-mapping/non-list values.
 - `NsLcm.terminate` (`osm_lcm/ns.py`) sets `nsState`/`_admin.nsState` to
   NOT_INSTANTIATED, `currentOperation` IDLE and `operational-status` terminated, but keeps
-  `_admin.deployed.K8s` and `nsd-id` (reset only by the next instantiation). The current
-  post-termination guard requires an empty KDU list, so on such an OSM teardown stops
-  after a COMPLETED terminate with the NS record and packages kept. The guard is unchanged
-  until Dell evidence (e.g. `teardown-check`'s terminated-NS observation) confirms it.
+  `_admin.deployed.K8s` and `nsd-id` (reset only by the next instantiation). Teardown
+  accepts exactly the isolated CU/DU entries there (step 6); the simulator models this.
 - NBI deletes an NS only when `_admin.nsState` is not INSTANTIATED, and deleting it
   deletes its operation records and VNFRs.
 
@@ -210,6 +225,11 @@ python3 scripts/experiments/p4/p4_experiment.py validate-baseline --config ~/.co
 
 # 7c. Read-only teardown inspection (target, NS identity, namespace contents, other NSs)
 python3 scripts/experiments/p4/p4_experiment.py teardown-check --config ~/.config/p4/p4-dell.json
+
+# 7d. Archive evidence and fixtures (new directory, checksums, verified, read-only)
+python3 scripts/experiments/p4/p4_archive.py create --output ~/p4-archive/pre-rerun-$(date -u +%Y%m%dT%H%M%SZ) \
+    --source ~/p4-run/evidence --source ~/p4-run/helm-fixtures --source ~/p4-run/k8s-fixtures
+python3 scripts/experiments/p4/p4_archive.py verify ~/p4-archive/pre-rerun-<stamp>
 
 # 8. Teardown (NS, descriptors, releases, namespace p4-kdu-upgrade only)
 python3 scripts/experiments/p4/p4_experiment.py teardown --config ~/.config/p4/p4-dell.json

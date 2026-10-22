@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -348,7 +349,7 @@ class FullRunTests(Harness):
         original, lingering = self.target._kubectl, [2]
         def kubectl(args):
             value = original(args)
-            if args[1].startswith('deployments,') and not self.target.releases and lingering[0]:
+            if 'pods' in args[1].split(',') and not self.target.releases and lingering[0]:
                 lingering[0] -= 1      # pod of the deleted ReplicaSet still terminating
                 value['items'].append({'kind': 'Pod', 'metadata': {
                     'name': 'p4kdu-cu-584b65f7bc-9fn6v', 'uid': 'u', 'deletionTimestamp': '2026-10-22T10:00:00Z',
@@ -715,17 +716,33 @@ class NamespaceInventoryTests(unittest.TestCase):
         secret = self.inventory([self.find(items, 'Secret', 'sh.helm.release.v1.p4kdu-cu.v1')])[0]
         self.assertEqual((secret['type'], secret['labels']['owner'], secret['owners']), ('helm.sh/release.v1', 'helm', []))
 
-    def test_cluster_inventory_queries_workload_kinds_and_drops_data(self):
-        cluster = p4.Cluster('/usr/bin/kubectl', '/usr/local/bin/helm', '/k', 'osm', run=lambda argv, **_:
-                             subprocess.CompletedProcess(argv, 0, json.dumps({'items': dell_items()}).encode(), b''))
+    def test_cluster_inventory_lists_every_discovered_kind_and_drops_data(self):
+        from p4_sim import API_RESOURCES
+        def run(argv, **_):
+            if argv[1] == 'api-resources':
+                return subprocess.CompletedProcess(argv, 0, '\n'.join(API_RESOURCES).encode(), b'')
+            return subprocess.CompletedProcess(argv, 0, json.dumps({'items': dell_items()}).encode(), b'')
+        cluster = p4.Cluster('/usr/bin/kubectl', '/usr/local/bin/helm', '/k', 'osm', run=run)
         inventory = cluster.inventory()
         self.assertEqual([(i['kind'], i['name']) for i in inventory], DELL_INVENTORY_NAMES)
         self.assertNotIn('H4sI', json.dumps(inventory))
-        kinds = cluster.commands[0][2].split(',')
-        for kind in ('pods', 'secrets', 'configmaps', 'services', 'statefulsets', 'daemonsets', 'jobs', 'cronjobs',
-                     'persistentvolumeclaims'):
-            self.assertIn(kind, kinds)
-        self.assertEqual(cluster.commands[0][3:], ['-n', 'p4-kdu-upgrade', '-o', 'json'])
+        self.assertEqual(cluster.commands[0][1:], ['api-resources', '--namespaced=true', '--verbs=list', '-o', 'name'])
+        kinds = cluster.commands[1][2].split(',')
+        self.assertEqual(sorted(kinds), sorted(k for k in API_RESOURCES if k not in
+                                               ('events', 'events.events.k8s.io', 'pods.metrics.k8s.io')))
+        self.assertIn('servicemonitors.monitoring.coreos.com', kinds)       # CRDs are inventoried too
+        self.assertEqual(cluster.commands[1][3:], ['-n', 'p4-kdu-upgrade', '-o', 'json'])
+
+    def test_incomplete_discovery_fails_closed(self):
+        from p4_sim import API_RESOURCES
+        def cluster(returncode, names):
+            return p4.Cluster('/usr/bin/kubectl', '/usr/local/bin/helm', '/k', 'osm', run=lambda argv, **_:
+                              subprocess.CompletedProcess(argv, returncode, '\n'.join(names).encode(), b'error: partial'))
+        with self.assertRaisesRegex(p4.ClusterError, 'discovery incomplete: error: partial'):
+            cluster(1, API_RESOURCES).inventory()
+        for missing in ('roles.rbac.authorization.k8s.io', 'pods', 'deployments.apps', 'secrets'):
+            with self.subTest(missing=missing), self.assertRaisesRegex(p4.ClusterError, 'missing ' + re.escape(missing)):
+                cluster(0, [k for k in API_RESOURCES if k != missing]).inventory()
 
     def test_rollout_with_old_and_new_replicasets_is_accepted(self):
         items = dell_items() + [i for i in helm_release_objects('p4-kdu-upgrade', 'p4kdu-cu', [1, 2], '7d9c8b6f5a', 'abcde')
@@ -904,7 +921,7 @@ class TeardownSafetyTests(Harness):
             {'member-vnf-index': 'p4kdu', 'kdu-name': 'cu', 'kdu-instance': 'p4kdu-cu', 'namespace': 'p4-kdu-upgrade'}]
         self.before = list(self.target.mutations)
         _, failed = self.teardown_failed()
-        self.assertIn('terminated NS still lists deployed KDUs', failed['teardown completed'])
+        self.assertIn('terminated NS lists unexpected KDUs', failed['teardown completed'])
         self.assertEqual(self.new_mutations(), [])
 
     # G2 ------------------------------------------------------------------------------------------------
@@ -917,7 +934,7 @@ class TeardownSafetyTests(Harness):
     def test_failed_termination_keeps_ns_and_packages(self):
         self.target._terminate = lambda ns_id: self.target._new_op(ns_id, 'terminate', {}, state='FAILED')
         _, failed = self.teardown_failed()
-        self.assertEqual(failed['experiment NS terminated'], 'FAILED')
+        self.assertEqual(failed['experiment NS terminated']['state'], 'FAILED')
         self.assertIn('not COMPLETED', failed['teardown completed'])
         self.assert_kept_after_termination()
 
@@ -995,12 +1012,23 @@ class TeardownSafetyTests(Harness):
                 self.assert_untouched(failed, 'non-experiment')
         self.target.extra_objects.clear()
 
-    def test_inventory_covers_rbac_policy_and_scaling_kinds(self):
-        kinds = p4.INVENTORY_KINDS.split(',')
-        for kind in ('serviceaccounts', 'roles', 'rolebindings', 'networkpolicies', 'ingresses',
-                     'horizontalpodautoscalers', 'poddisruptionbudgets', 'endpoints', 'endpointslices',
-                     'resourcequotas', 'limitranges', 'replicationcontrollers', 'persistentvolumeclaims'):
-            self.assertIn(kind, kinds)
+    def test_inventory_requires_rbac_policy_and_scaling_kinds(self):
+        for kind in ('serviceaccounts', 'roles.rbac.authorization.k8s.io', 'rolebindings.rbac.authorization.k8s.io',
+                     'networkpolicies.networking.k8s.io', 'ingresses.networking.k8s.io',
+                     'horizontalpodautoscalers.autoscaling', 'poddisruptionbudgets.policy', 'endpoints',
+                     'endpointslices.discovery.k8s.io', 'resourcequotas', 'limitranges', 'replicationcontrollers',
+                     'persistentvolumeclaims', 'pods', 'deployments.apps', 'statefulsets.apps', 'jobs.batch'):
+            self.assertIn(kind, p4.REQUIRED_KINDS)
+
+    def test_discovery_failure_stops_teardown_before_anything_is_removed(self):
+        self.target.discovery_error = True
+        _, failed = self.teardown_failed()
+        self.assert_untouched(failed, 'discovery incomplete')
+
+    def test_custom_resources_in_the_namespace_stop_teardown(self):
+        self.target.extra_objects['p4-kdu-upgrade'] = [('ServiceMonitor', 'p4kdu-cu')]
+        _, failed = self.teardown_failed()
+        self.assert_untouched(failed, 'non-experiment')
 
     # G4 ------------------------------------------------------------------------------------------------
     def test_other_ns_state_change_during_teardown_is_reported(self):
@@ -1374,26 +1402,360 @@ class TeardownCheckTests(Harness):
         self.assertNotIn('NS identity proven from OSM records', [c['check'] for c in summary['checks']])
 
 
-class OsmV19TerminateTests(Harness):
-    """LCM v19 source: a COMPLETED terminate keeps _admin.deployed.K8s and nsd-id. The current
-    post-termination guard (unchanged pending Dell evidence) then stops teardown safely."""
-    def test_teardown_stops_after_termination_and_keeps_record_and_packages(self):
-        exp = self.experiment()
-        exp.run(('preflight', 'onboard', 'instantiate'))
+class PostTerminationTests(Harness):
+    """OSM v19 terminate keeps _admin.deployed.K8s and nsd-id (osm_lcm/ns.py). Teardown deletes
+    the NS record only after every post-termination condition holds, and packages only after
+    the record is confirmed gone; any failure stops before further removal."""
+    def setUp(self):
+        super().setUp()
         self.target.terminate_keeps_deployed = True
-        before = len(self.target.mutations)
+        self.first = self.experiment()
+        self.first.run(('preflight', 'onboard', 'instantiate'))
+        self.ns_id = self.first.ns_id
+        self.start = len(self.target.mutations)
+        self.original_terminate = self.target._terminate
+
+    def teardown(self):
         summary = self.experiment().teardown()
         failed = {c['check']: c.get('detail') for c in summary['checks'] if c['passed'] is False}
-        self.assertIn('terminated NS still lists deployed KDUs', failed['teardown completed'])
-        record = self.target.instances[exp.ns_id]
-        self.assertEqual((record['nsState'], record['currentOperation'], len(record['_admin']['deployed']['K8s'])),
-                         ('NOT_INSTANTIATED', 'IDLE', 2))
-        new = self.target.mutations[before:]
-        self.assertEqual([m[0] for m in new], ['POST'])                       # the terminate only
-        self.assertTrue(new[0][1].endswith('/terminate'))
+        return summary, failed
+
+    def removals(self):
+        return [m for m in self.target.mutations[self.start:]
+                if m[0] == 'DELETE' or (m[0] == 'kubectl' and m[1].startswith('delete'))]
+
+    def on_terminate(self, change):
+        def terminate(ns_id):
+            op = self.original_terminate(ns_id)
+            change(ns_id, op)
+            return op
+        self.target._terminate = terminate
+
+    def assert_stopped(self, failed, reason):
+        self.assertIn('teardown completed', failed)
+        self.assertIn(reason, failed['teardown completed'])
+        self.assertEqual(self.removals(), [])
+        self.assertIn(self.ns_id, self.target.instances)
         self.assertIn(('ns', 'p4kdu_ns'), self.target.packages)
-        self.assertIn('p4-kdu-upgrade', self.target.namespaces)
-        self.assertNotIn('every other OSM NS unchanged', failed)
+        self.assertIn(('knf', 'p4kdu_knf'), self.target.packages)
+
+    # positive ------------------------------------------------------------------------------------------
+    def test_termination_without_historical_entries(self):
+        self.target.terminate_keeps_deployed = False
+        summary, failed = self.teardown()
+        self.assertEqual(failed, {})
+        self.assert_clean_order()
+
+    def test_termination_retaining_exactly_the_cu_du_entries(self):
+        summary, failed = self.teardown()
+        self.assertEqual(failed, {})
+        after = json.loads((self.work / 'evidence/teardown/after-termination.json').read_text())
+        self.assertEqual(len(after['deployed']), 2)
+        self.assertEqual((after['releases'], after['helm_left'], after['residual'], after['running']), ([], [], [], []))
+        self.assertEqual(after['termination']['state'], 'COMPLETED')
+        self.assert_clean_order()
+
+    def assert_clean_order(self):
+        removals = self.removals()
+        paths = [m[1] for m in removals]
+        self.assertEqual(len(removals), 4)
+        self.assertTrue(paths[0].startswith('/nslcm/v1/ns_instances/' + self.ns_id))     # NS record first
+        self.assertIn('/nsd/v1/ns_descriptors/', paths[1])                               # then the packages
+        self.assertIn('/vnfpkgm/v1/vnf_packages/', paths[2])
+        self.assertEqual(paths[3], 'delete namespace p4-kdu-upgrade --wait=true --timeout=300s')
+        self.assertNotIn(self.ns_id, self.target.instances)
+        self.assertNotIn('p4-kdu-upgrade', self.target.namespaces)
+        operations = json.loads((self.work / 'evidence/teardown/ns-operations.json').read_text())
+        self.assertEqual(operations[0]['request']['nsName'], 'p4-kdu-upgrade-test')   # kept before deletion
+
+    def test_already_terminated_ns_is_cleaned_without_a_new_terminate(self):
+        self.target._terminate(self.ns_id)
+        self.start = len(self.target.mutations)
+        _, failed = self.teardown()
+        self.assertEqual(failed, {})
+        self.assertFalse([m for m in self.target.mutations[self.start:] if m[1].endswith('/terminate')])
+        self.assertNotIn(self.ns_id, self.target.instances)
+
+    # negative: termination -----------------------------------------------------------------------------
+    def test_failed_termination(self):
+        self.target._terminate = lambda ns_id: self.target._new_op(ns_id, 'terminate', {}, state='FAILED')
+        _, failed = self.teardown()
+        self.assert_stopped(failed, 'not COMPLETED')
+
+    def test_termination_still_processing(self):
+        def terminate(ns_id):
+            op = self.target._new_op(ns_id, 'terminate', {})
+            self.target.operations[op]['stuck'] = True
+            return op
+        self.target._terminate = terminate
+        _, failed = self.teardown()
+        self.assertEqual(failed['experiment NS terminated']['state'], 'PROCESSING')
+        self.assert_stopped(failed, 'not COMPLETED')
+
+    def test_ns_remains_instantiated(self):
+        def terminate(ns_id):
+            for kdu in self.target.instances[ns_id]['_admin']['deployed']['K8s']:
+                self.target.releases.pop((kdu['namespace'], kdu['kdu-instance']), None)
+            return self.target._new_op(ns_id, 'terminate', {}, state='COMPLETED')
+        self.target._terminate = terminate
+        _, failed = self.teardown()
+        self.assert_stopped(failed, 'not in a safe state')
+
+    def test_ns_not_idle(self):
+        original = self.target._refresh
+        def refresh(ns_id):
+            original(ns_id)
+            if ns_id == self.ns_id and self.target.instances[ns_id]['nsState'] == 'NOT_INSTANTIATED':
+                self.target.instances[ns_id]['currentOperation'] = 'TERMINATING'
+        self.target._refresh = refresh
+        _, failed = self.teardown()
+        self.assertEqual(failed['terminated NS idle with nothing deployed or running']['currentOperation'],
+                         'TERMINATING')
+        self.assert_stopped(failed, 'not in a safe state')
+
+    def test_pending_operation_after_termination(self):
+        def change(ns_id, op):
+            self.target.operations['late'] = dict(self.target.operations[op], _id='late', lcmOperationType='action',
+                                                  operationState='PROCESSING', stuck=True)
+        self.on_terminate(change)
+        self.target._refresh = lambda ns_id: self.target.instances[ns_id].update(currentOperation='IDLE')
+        _, failed = self.teardown()
+        self.assertEqual(failed['terminated NS idle with nothing deployed or running']['running'], ['late'])
+        self.assert_stopped(failed, 'not in a safe state')
+
+    # negative: Helm and workloads ----------------------------------------------------------------------
+    def keep_release(self, release):
+        saved = dict(self.target.releases)
+        self.on_terminate(lambda ns_id, op: self.target.releases.update(
+            {('p4-kdu-upgrade', release): saved[('p4-kdu-upgrade', release)]}))
+
+    def test_cu_release_remains(self):
+        self.keep_release('p4kdu-cu')
+        _, failed = self.teardown()
+        detail = failed['terminated NS idle with nothing deployed or running']
+        self.assertEqual((detail['releases'], detail['helm_left']), (['p4kdu-cu'], ['p4kdu-cu']))
+        self.assert_stopped(failed, 'not in a safe state')
+
+    def test_du_release_remains(self):
+        self.keep_release('p4kdu-du')
+        _, failed = self.teardown()
+        self.assertEqual(failed['terminated NS idle with nothing deployed or running']['helm_left'], ['p4kdu-du'])
+        self.assert_stopped(failed, 'not in a safe state')
+
+    def test_helm_status_without_list_entry_is_inconsistent(self):
+        saved = dict(self.target.releases)
+        original = self.target._helm
+        def helm(args):
+            if args[0] == 'status' and args[1] == 'p4kdu-cu' and not self.target.releases:
+                self.target.releases[('p4-kdu-upgrade', 'p4kdu-cu')] = saved[('p4-kdu-upgrade', 'p4kdu-cu')]
+                try:
+                    return original(args)
+                finally:
+                    self.target.releases.clear()
+            return original(args)
+        self.target._helm = helm
+        _, failed = self.teardown()
+        self.assertTrue(failed['terminated NS idle with nothing deployed or running']['helm_left'][0]
+                        .startswith('inconsistent'))
+        self.assert_stopped(failed, 'not in a safe state')
+
+    def test_workload_remains_without_a_release(self):
+        for kind, name in (('Deployment', 'p4kdu-cu'), ('Pod', 'p4kdu-du-67647b8b96-krkqf'),
+                           ('ReplicaSet', 'p4kdu-cu-584b65f7bc'), ('StatefulSet', 'p4kdu-du')):
+            with self.subTest(kind=kind):
+                self.setUp()
+                self.on_terminate(lambda ns_id, op: self.target.extra_objects.update(
+                    {'p4-kdu-upgrade': [(kind, name)]}))
+                _, failed = self.teardown()
+                self.assertEqual(failed['terminated NS idle with nothing deployed or running']['residual'],
+                                 [(kind, name)])
+                self.assert_stopped(failed, 'not in a safe state')
+
+    def test_unexpected_resources_appear_after_termination(self):
+        self.on_terminate(lambda ns_id, op: self.target.extra_objects.update(
+            {'p4-kdu-upgrade': [('Role', 'p4kdu-cu'), ('ConfigMap', 'other')]}))
+        _, failed = self.teardown()
+        self.assertEqual(sorted(failed['terminated NS idle with nothing deployed or running']['residual']),
+                         [('ConfigMap', 'other'), ('Role', 'p4kdu-cu')])
+        self.assert_stopped(failed, 'not in a safe state')
+
+    # negative: retained KDU entries --------------------------------------------------------------------
+    def retained(self, change):
+        self.on_terminate(lambda ns_id, op: change(self.target.instances[ns_id]['_admin']['deployed']))
+
+    def test_retained_entry_in_another_namespace(self):
+        self.retained(lambda d: d['K8s'][0].update(namespace='c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c'))
+        _, failed = self.teardown()
+        self.assert_stopped(failed, 'terminated NS lists unexpected KDUs')
+
+    def test_retained_entry_for_another_release_or_kdu(self):
+        for change in ({'kdu-instance': 'du-0010984531'}, {'kdu-name': 'core'}, {'member-vnf-index': 'core'}):
+            with self.subTest(change=change):
+                self.setUp()
+                self.retained(lambda d: d['K8s'][1].update(change))
+                _, failed = self.teardown()
+                self.assert_stopped(failed, 'terminated NS lists unexpected KDUs')
+
+    def test_duplicate_or_malformed_retained_entries(self):
+        cases = {'duplicate': lambda d: d['K8s'].append(dict(d['K8s'][0])),
+                 'duplicate replacing': lambda d: d['K8s'].__setitem__(1, dict(d['K8s'][0])),
+                 'only one': lambda d: d['K8s'].pop(),
+                 'entry not a mapping': lambda d: d['K8s'].append('p4kdu-cu'),
+                 'list not a list': lambda d: d.update(K8s={'cu': 'p4kdu-cu'})}
+        for label, change in cases.items():
+            with self.subTest(label):
+                self.setUp()
+                self.retained(change)
+                _, failed = self.teardown()
+                self.assert_stopped(failed, 'not provably the experiment NS')
+
+    # negative: other NS and OSM consistency -----------------------------------------------------------
+    def test_another_ns_uses_the_experiment_knf(self):
+        knf = self.target.packages[('knf', 'p4kdu_knf')]['_id']
+        self.target.instances[self.target.other_ns]['vnfd-id'] = [knf]
+        _, failed = self.teardown()
+        self.assertIn('still referenced', failed['teardown completed'])
+        self.assertFalse([m for m in self.removals() if '/ns_descriptors/' in m[1] or '/vnf_packages/' in m[1]])
+
+    def test_unrelated_kubernetes_change_is_reported(self):
+        self.on_terminate(lambda ns_id, op: self.target.extra_workloads.append(
+            {'kind': 'Deployment', 'metadata': {'namespace': 'osm', 'name': 'new', 'uid': 'u', 'generation': 1}}))
+        _, failed = self.teardown()
+        self.assertIn('unrelated Kubernetes namespaces and workloads unchanged', failed)
+
+    def test_state_fields_disagree(self):
+        self.on_terminate(lambda ns_id, op: self.target.instances[ns_id]['_admin'].update(nsState='INSTANTIATED'))
+        _, failed = self.teardown()
+        self.assert_stopped(failed, 'NS state and _admin.nsState disagree')
+
+    def test_terminate_record_inconsistent(self):
+        cases = {
+            'operation names another NS': lambda ns_id, op: self.target.operations[op].update(
+                operationParams={'nsInstanceId': self.target.other_ns}),
+            'operation without start time': lambda ns_id, op: self.target.operations[op].pop('startTime'),
+            'terminate before the instantiation': lambda ns_id, op: self.target.operations[op].update(startTime=0),
+            'retained nsd-id of another package': lambda ns_id, op: self.target.instances[ns_id].update(
+                {'nsd-id': '00000000-0000-4000-8000-000000000001'}),
+        }
+        for label, change in cases.items():
+            with self.subTest(label):
+                self.setUp()
+                self.on_terminate(change)
+                _, failed = self.teardown()
+                self.assertEqual(self.removals(), [])
+                self.assertIn(self.ns_id, self.target.instances)
+                self.assertIn('teardown completed', failed)
+
+    def test_already_terminated_ns_with_a_later_failed_terminate(self):
+        op = self.target._terminate(self.ns_id)
+        self.target.operations['failed-retry'] = dict(self.target.operations[op], _id='failed-retry',
+                                                      operationState='FAILED',
+                                                      startTime=self.target.operations[op]['startTime'] + 5)
+        self.start = len(self.target.mutations)
+        _, failed = self.teardown()
+        self.assertEqual(failed['terminated NS idle with nothing deployed or running']['termination']['state'], 'FAILED')
+        self.assert_stopped(failed, 'not in a safe state')
+
+    def test_operation_with_unreadable_start_time(self):
+        def change(ns_id, op):
+            self.target.operations['odd'] = dict(self.target.operations[op], _id='odd', lcmOperationType='action',
+                                                 operationState='COMPLETED', startTime=None)
+        self.on_terminate(change)
+        _, failed = self.teardown()
+        self.assertIn('without start times',
+                      failed['terminated NS idle with nothing deployed or running']['termination']['problem'])
+        self.assert_stopped(failed, 'not in a safe state')
+
+    def test_helm_lists_another_release_in_the_namespace(self):
+        original = self.target._helm
+        def helm(args):
+            value = original(args)
+            if args[0] == 'list' and not self.target.releases:
+                value = value + [{'name': 'leftover', 'namespace': 'p4-kdu-upgrade', 'revision': '1',
+                                  'status': 'uninstalling', 'chart': 'leftover-0.1.0', 'app_version': ''}]
+            return value
+        self.target._helm = helm
+        _, failed = self.teardown()
+        self.assertEqual(failed['terminated NS idle with nothing deployed or running']['releases'], ['leftover'])
+        self.assert_stopped(failed, 'not in a safe state')
+
+    def test_tampered_default_object_remains(self):
+        original = self.target._kubectl
+        def kubectl(args):
+            value = original(args)
+            if args[0] == 'get' and 'pods' in args[1].split(',') and not self.target.releases:
+                for item in value['items']:
+                    if item['metadata']['name'] == 'kube-root-ca.crt':
+                        item['metadata']['labels'] = {'app': 'someone-else'}
+            return value
+        self.target._kubectl = kubectl
+        _, failed = self.teardown()
+        self.assertEqual(failed['terminated NS idle with nothing deployed or running']['residual'],
+                         [('ConfigMap', 'kube-root-ca.crt')])
+        self.assert_stopped(failed, 'not in a safe state')
+
+    def test_ns_record_surviving_deletion_under_another_name(self):
+        original = self.target.request
+        def request(method, path, data=None, content_type='application/yaml'):
+            if method == 'DELETE' and path == '/nslcm/v1/ns_instances/' + self.ns_id:
+                self.target.mutations.append((method, path))
+                self.target.instances[self.ns_id]['name'] = 'renamed'
+                return b''
+            return original(method, path, data, content_type)
+        self.target.request = request
+        summary = self.experiment(request=request).teardown()
+        failed = {c['check']: c.get('detail') for c in summary['checks'] if c['passed'] is False}
+        self.assertIn('still present', failed['teardown completed'])
+        self.assertFalse([m for m in self.removals() if '/ns_descriptors/' in m[1] or '/vnf_packages/' in m[1]])
+
+    def test_issued_terminate_must_be_the_latest(self):
+        def change(ns_id, op):
+            self.target.operations['newer'] = dict(self.target.operations[op], _id='newer',
+                                                   startTime=self.target.operations[op]['startTime'] + 1)
+        self.on_terminate(change)
+        _, failed = self.teardown()
+        self.assertEqual(failed['terminated NS idle with nothing deployed or running']['termination']['operation'],
+                         'newer')
+        self.assert_stopped(failed, 'not in a safe state')
+
+    # negative: deletion --------------------------------------------------------------------------------
+    def failing_delete(self, error):
+        original = self.target.request
+        def request(method, path, data=None, content_type='application/yaml'):
+            if method == 'DELETE' and path.startswith('/nslcm/v1/ns_instances/'):
+                raise error
+            return original(method, path, data, content_type)
+        self.target.request = request
+        summary = self.experiment(request=request).teardown()
+        return {c['check']: c.get('detail') for c in summary['checks'] if c['passed'] is False}
+
+    def test_ns_deletion_fails_or_is_uncertain(self):
+        from osm_catalog import OSMHTTPError
+        for error in (OSMHTTPError(500, 'HTTP request'), TimeoutError('read timed out'), ConnectionResetError()):
+            with self.subTest(error=type(error).__name__):
+                self.setUp()
+                failed = self.failing_delete(error)
+                self.assertIn('NS deletion failed or uncertain', failed['teardown completed'])
+                self.assertFalse([m for m in self.removals() if '/ns_descriptors/' in m[1] or '/vnf_packages/' in m[1]])
+                self.assertIn(('ns', 'p4kdu_ns'), self.target.packages)
+                record = json.loads((self.work / 'evidence/teardown/ns-delete-error.json').read_text())
+                self.assertTrue(record['record_present'])
+
+
+class EvidenceIntegrityTests(unittest.TestCase):
+    def test_exclusive_directory_is_never_reused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p4.Evidence(Path(directory) / 'run-1', exclusive=True).record('s', 'x', 1)
+            with self.assertRaisesRegex(p4.ExperimentError, 'already exists'):
+                p4.Evidence(Path(directory) / 'run-1', exclusive=True)
+            self.assertEqual(json.loads((Path(directory) / 'run-1/s/x.json').read_text()), 1)
+
+    def test_recording_twice_keeps_both(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = p4.Evidence(Path(directory) / 'e')
+            first, second, third = (evidence.record('s', 'x', value) for value in (1, 2, 3))
+            self.assertEqual([p.name for p in (first, second, third)], ['x.json', 'x.2.json', 'x.3.json'])
+            self.assertEqual([json.loads(p.read_text()) for p in (first, second, third)], [1, 2, 3])
 
 
 class AdoptLostRequestTests(unittest.TestCase):

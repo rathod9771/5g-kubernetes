@@ -21,6 +21,18 @@ from osm_catalog import OSMHTTPError
 STORAGE = '/app/storage'
 LCM_DIGEST = 'sha256:' + '2a401465ba1eb09a4b2de96c11028de7860b8a66dc763b2f0f245962b6771fbd'
 UPDATED = '2026-10-22T09:14:03.513+00:00'
+# `kubectl api-resources --namespaced=true --verbs=list -o name` of a v1.29 cluster with a
+# CRD and the metrics API.
+API_RESOURCES = ('configmaps', 'endpoints', 'events', 'limitranges', 'persistentvolumeclaims', 'pods', 'podtemplates',
+                 'replicationcontrollers', 'resourcequotas', 'secrets', 'serviceaccounts', 'services',
+                 'controllerrevisions.apps', 'daemonsets.apps', 'deployments.apps', 'replicasets.apps',
+                 'statefulsets.apps', 'localsubjectaccessreviews.authorization.k8s.io',
+                 'horizontalpodautoscalers.autoscaling', 'cronjobs.batch', 'jobs.batch', 'leases.coordination.k8s.io',
+                 'endpointslices.discovery.k8s.io', 'events.events.k8s.io', 'pods.metrics.k8s.io',
+                 'servicemonitors.monitoring.coreos.com', 'ingresses.networking.k8s.io',
+                 'networkpolicies.networking.k8s.io', 'poddisruptionbudgets.policy',
+                 'rolebindings.rbac.authorization.k8s.io', 'roles.rbac.authorization.k8s.io',
+                 'csistoragecapacities.storage.k8s.io')
 
 
 def _uid(*parts):
@@ -113,6 +125,9 @@ class P4Target:
         self.mutations = []
         self.lcm_generation = 1
         self.atomic = True          # set False to model a broken helm --atomic
+        self.api_resources = list(API_RESOURCES)
+        self.discovery_error = False
+        self.extra_workloads = []   # Deployments/StatefulSets/DaemonSets elsewhere (G4 Kubernetes witness)
         # OSM v19 LCM terminate (osm_lcm/ns.py) keeps _admin.deployed.K8s and nsd-id; the
         # default model clears them. True models the v19 source until observed on the Dell.
         self.terminate_keeps_deployed = False
@@ -202,7 +217,7 @@ class P4Target:
         return record
 
     def _in_use(self, kind, package_id):
-        return any(n.get('nsd-id') == package_id or package_id in n.get('vnfd-ids', [])
+        return any(n.get('nsd-id') == package_id or package_id in (n.get('vnfd-id') or [])
                    for n in self.instances.values())
 
     def _upload(self, data, expected=None):
@@ -263,9 +278,9 @@ class P4Target:
             kdus.append({'kdu-name': kdu, 'kdu-instance': release, 'namespace': namespace,
                          'member-vnf-index': vnf['member-vnf-index'], 'k8scluster-type': 'helm-chart-v3',
                          'kdu-model': '{}/{}:{}/{}/helm-chart-v3s/{}'.format(STORAGE, knf['_id'], revision, knf_key[1], kdu)})
-        self.instances[ns_id] = {'_id': ns_id, 'name': body['nsName'], 'nsd-id': body['nsdId'], 'vnfd-ids': [knf['_id']],
+        self.instances[ns_id] = {'_id': ns_id, 'name': body['nsName'], 'nsd-id': body['nsdId'], 'vnfd-id': [knf['_id']],
                                  'nsState': 'READY', 'operational-status': 'running', 'currentOperation': 'IDLE',
-                                 '_admin': {'deployed': {'K8s': kdus}}}
+                                 '_admin': {'nsState': 'INSTANTIATED', 'deployed': {'K8s': kdus}}}
         self.vnfrs[vnfr_id] = {'_id': vnfr_id, 'nsr-id-ref': ns_id, 'vnfd-id': knf['_id'], 'revision': revision}
         # OSM v19 keeps the request as the operation parameters, additionalParamsForVnf as a
         # JSON-encoded string (as recorded on the Dell).
@@ -279,9 +294,10 @@ class P4Target:
         for kdu in record['_admin']['deployed']['K8s']:
             self.releases.pop((kdu['namespace'], kdu['kdu-instance']), None)
         record.update(nsState='NOT_INSTANTIATED', currentOperation='IDLE', **{'operational-status': 'terminated'})
+        record['_admin']['nsState'] = 'NOT_INSTANTIATED'
         if not self.terminate_keeps_deployed:
             record['_admin']['deployed']['K8s'] = []
-            record['vnfd-ids'], record['nsd-id'] = [], None
+            record['vnfd-id'], record['nsd-id'] = [], None
         return self._new_op(ns_id, 'terminate', {}, state='COMPLETED')
 
     def _action(self, ns_id, body):
@@ -367,6 +383,10 @@ class P4Target:
             value = self._kubectl(args) if tool == 'kubectl' else self._helm(args)
         except LookupError as missing:
             return subprocess.CompletedProcess(argv, 1, b'', ('Error: ' + str(missing) + ' not found (NotFound)').encode())
+        except RuntimeError:        # partial discovery: kubectl prints what it found and fails
+            return subprocess.CompletedProcess(argv, 1, b'configmaps\npods\n', b'error: unable to retrieve the complete '
+                                               b'list of server APIs: metrics.k8s.io/v1beta1: the server is currently '
+                                               b'unable to handle the request')
         if isinstance(value, (dict, list)):
             value = json.dumps(value).encode()
         return subprocess.CompletedProcess(argv, 0, value, b'')
@@ -388,6 +408,20 @@ class P4Target:
                                'status': {'addresses': [{'type': 'InternalIP', 'address': '172.30.0.20'}]}}]}
         if verb == 'version':
             return {'serverVersion': {'gitVersion': 'v1.29.15'}}
+        if verb == 'api-resources':
+            if self.discovery_error:
+                raise RuntimeError('discovery')
+            return '\n'.join(self.api_resources).encode() + b'\n'
+        if args[:2] == ['get', 'namespaces']:
+            return {'items': [{'metadata': {'name': name, 'uid': uid}, 'status': {'phase': 'Active'}}
+                              for name, uid in self.namespaces.items()]}
+        if args[:2] == ['get', 'deployments,statefulsets,daemonsets'] and '-A' in args:
+            items = [{'kind': 'Deployment', 'metadata': {'namespace': 'osm', 'name': name, 'uid': _uid('osm', name),
+                                                         'generation': self.lcm_generation if name == 'lcm' else 1}}
+                     for name in ('lcm', 'nbi')]
+            items += [{'kind': 'Deployment', 'metadata': {'namespace': ns, 'name': release, 'uid': _uid(ns, release),
+                                                          'generation': 3}} for (ns, release) in self.releases]
+            return {'items': items + list(self.extra_workloads)}
         if args[:2] == ['get', 'namespace']:
             if args[2] not in self.namespaces:
                 raise LookupError('namespaces ' + args[2])
@@ -404,7 +438,9 @@ class P4Target:
             return {'metadata': {'name': args[2], 'generation': 3},
                     'spec': {'replicas': 1}, 'status': {'observedGeneration': 3, 'replicas': 1, 'updatedReplicas': 1,
                                                         'readyReplicas': ready, 'availableReplicas': ready}}
-        if verb == 'get' and args[1].startswith('deployments,'):
+        if verb == 'get' and 'pods' in args[1].split(',') and namespace:
+            kinds = args[1].split(',')
+            assert not set(kinds) & {'events', 'events.events.k8s.io', 'pods.metrics.k8s.io'}, kinds
             items = [kube_root_ca(), default_service_account()]
             for (ns, release), history in self.releases.items():
                 if ns == namespace:

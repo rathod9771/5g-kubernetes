@@ -347,7 +347,7 @@ class Cluster:
         verb = args[0]
         scoped = '-n' in args and args[args.index('-n') + 1]
         if tool == self.kubectl_bin:
-            if verb in ('get', 'version'):
+            if verb in ('get', 'version', 'api-resources'):
                 return True
             if self.read_only:
                 return False
@@ -435,11 +435,37 @@ class Cluster:
     def deployment(self, release):
         return self._json(self.kubectl('get', 'deployment', release, '-n', NAMESPACE, '-o', 'json'), missing_ok=True)
 
+    def namespaced_kinds(self):
+        """Every listable namespaced resource the API server serves (including CRDs), less
+        IGNORED_KINDS. Fails closed: a discovery error or a missing built-in kind raises."""
+        result = self._run(self.kubectl('api-resources', '--namespaced=true', '--verbs=list', '-o', 'name'))
+        out = result.stdout.decode('utf-8', 'replace') if isinstance(result.stdout, bytes) else str(result.stdout)
+        if result.returncode:
+            err = result.stderr.decode('utf-8', 'replace') if isinstance(result.stderr, bytes) else str(result.stderr)
+            raise ClusterError('Kubernetes resource discovery incomplete: ' + err.strip()[:300])
+        kinds = sorted({line.strip() for line in out.splitlines() if line.strip()})
+        missing = sorted(set(REQUIRED_KINDS) - set(kinds))
+        if missing:
+            raise ClusterError('Kubernetes resource discovery incomplete; missing ' + ', '.join(missing))
+        return [k for k in kinds if k not in IGNORED_KINDS and not k.endswith(IGNORED_GROUPS)]
+
     def inventory(self):
-        """Namespace objects reduced to identity metadata (inventory_item); Secret data and
-        object specs are dropped here and never reach the evidence."""
-        value = self._json(self.kubectl('get', INVENTORY_KINDS, '-n', NAMESPACE, '-o', 'json'))
+        """All namespace objects of every discovered kind, reduced to identity metadata
+        (inventory_item); Secret data and object specs are dropped here and never reach the
+        evidence."""
+        value = self._json(self.kubectl('get', ','.join(self.namespaced_kinds()), '-n', NAMESPACE, '-o', 'json'))
         return sorted((inventory_item(i) for i in value['items']), key=lambda i: (i['kind'], i['name']))
+
+    def unrelated_state(self):
+        """G4 Kubernetes witness: every namespace and every Deployment/StatefulSet/DaemonSet
+        outside the experiment namespace (identity, phase, generation)."""
+        namespaces = self._json(self.kubectl('get', 'namespaces', '-o', 'json'))['items']
+        workloads = self._json(self.kubectl('get', 'deployments,statefulsets,daemonsets', '-A', '-o', 'json'))['items']
+        return {'namespaces': sorted([n['metadata']['name'], n['metadata'].get('uid'), (n.get('status') or {}).get('phase')]
+                                     for n in namespaces if n['metadata']['name'] != NAMESPACE),
+                'workloads': sorted([w['kind'], w['metadata'].get('namespace'), w['metadata']['name'],
+                                     w['metadata'].get('uid'), w['metadata'].get('generation')]
+                                    for w in workloads if w['metadata'].get('namespace') != NAMESPACE)}
 
     # mutations (scope-checked)
     def restart_lcm(self):
@@ -472,11 +498,17 @@ def deployment_ready(deployment):
         {k: status.get(k) for k in ('replicas', 'updatedReplicas', 'readyReplicas', 'availableReplicas')})
 
 
-# Namespaced kinds a workload or leftover could take; all but the expected ones are foreign.
-INVENTORY_KINDS = ('deployments,replicasets,pods,services,configmaps,secrets,statefulsets,daemonsets,jobs,'
-                   'cronjobs,persistentvolumeclaims,serviceaccounts,roles,rolebindings,networkpolicies,ingresses,'
-                   'horizontalpodautoscalers,poddisruptionbudgets,endpoints,endpointslices,limitranges,'
-                   'resourcequotas,replicationcontrollers')
+# The inventory lists every namespaced kind discovered by `kubectl api-resources` (CRDs too).
+# Built-in kinds that must be discovered, or the inventory fails closed:
+REQUIRED_KINDS = ('configmaps', 'endpoints', 'limitranges', 'persistentvolumeclaims', 'pods', 'replicationcontrollers',
+                  'resourcequotas', 'secrets', 'serviceaccounts', 'services', 'daemonsets.apps', 'deployments.apps',
+                  'replicasets.apps', 'statefulsets.apps', 'horizontalpodautoscalers.autoscaling', 'cronjobs.batch',
+                  'jobs.batch', 'endpointslices.discovery.k8s.io', 'ingresses.networking.k8s.io',
+                  'networkpolicies.networking.k8s.io', 'poddisruptionbudgets.policy',
+                  'rolebindings.rbac.authorization.k8s.io', 'roles.rbac.authorization.k8s.io')
+# Records and live views, not resources: Events and the metrics API (PodMetrics of the P4 pods).
+IGNORED_KINDS = ('events', 'events.events.k8s.io')
+IGNORED_GROUPS = ('.metrics.k8s.io',)
 HELM_SECRET = re.compile(r'sh\.helm\.release\.v1\.(?P<release>[a-z0-9-]+)\.v(?P<revision>[1-9][0-9]*)')
 CHART_LABELS = {'app.kubernetes.io/name': 'p4kdu', 'app.kubernetes.io/part-of': 'p4-kdu-upgrade'}
 
@@ -587,15 +619,28 @@ class Observer:
 
 # --- evidence ------------------------------------------------------------------------------------------
 class Evidence:
-    def __init__(self, directory, clock=time):
+    """Evidence files of one command. Never overwrites: exclusive=True (main) refuses an
+    existing directory, and a name recorded twice gets a numbered sibling file."""
+    def __init__(self, directory, clock=time, exclusive=False):
         self.directory, self.clock = Path(directory), clock
+        if exclusive:
+            self.directory.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self.directory.mkdir()
+            except FileExistsError:
+                raise ExperimentError('Evidence directory already exists; not overwriting: ' + str(directory)) from None
         self.directory.mkdir(parents=True, exist_ok=True)
         self.checks, self.steps = [], []
 
     def record(self, step, name, value):
         path = self.directory / step / (name + '.json')
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(value, indent=2, sort_keys=True, default=str) + '\n')
+        number = 2
+        while path.exists():
+            path = self.directory / step / '{}.{}.json'.format(name, number)
+            number += 1
+        with open(path, 'x') as handle:
+            handle.write(json.dumps(value, indent=2, sort_keys=True, default=str) + '\n')
         return path
 
     def check(self, step, name, passed, detail=None):
@@ -1266,11 +1311,24 @@ class Experiment:
                 params.get('nsName') != NS_NAME or not nsd or params.get('nsdId') != nsd['id'] or \
                 requested != self.ISOLATED_KDUS:
             problems.append('instantiate operation is not the isolated experiment request')
+        admin = ns.get('_admin') if isinstance(ns.get('_admin'), dict) else {}
+        entries = (admin.get('deployed') or {}).get('K8s') if isinstance(admin.get('deployed') or {}, dict) else None
+        entries = [] if entries is None else entries
+        if not isinstance(entries, list) or not all(isinstance(k, dict) for k in entries):
+            problems.append('malformed deployed KDU entries')
+            entries = []
         deployed = sorted((k.get('member-vnf-index'), k.get('kdu-name'), k.get('kdu-instance'), k.get('namespace'))
-                          for k in (ns.get('_admin') or {}).get('deployed', {}).get('K8s') or [])
+                          for k in entries)
         if ns.get('nsState') == 'NOT_INSTANTIATED':
-            if deployed:
-                problems.append('terminated NS still lists deployed KDUs')
+            # OSM v19 LCM terminate (osm_lcm/ns.py) sets both states but keeps _admin.deployed.K8s
+            # and nsd-id. Retained KDU entries are historical: accepted only as exactly the
+            # isolated CU/DU; absence of the workloads is proven separately (wait_terminated).
+            if admin.get('nsState') != 'NOT_INSTANTIATED':
+                problems.append('NS state and _admin.nsState disagree')
+            if deployed not in ([], self.ISOLATED_KDUS):
+                problems.append('terminated NS lists unexpected KDUs')
+            if ns.get('nsd-id') is not None and (not nsd or ns.get('nsd-id') != nsd['id']):
+                problems.append('NSD reference')
         else:
             knf = self.osm.lifecycle.package('knf', VNFD)
             vnfrs = self.osm.lifecycle.vnf_instances(ns_id)
@@ -1287,19 +1345,87 @@ class Experiment:
             raise TargetError('OSM NS ' + ns_id + ' is not provably the experiment NS: ' + ', '.join(problems))
         return ns, identity
 
-    def wait_terminated(self, ns_id, nsd):
-        """G2: terminated NS idle with nothing deployed, no running operation, no P4 Helm release."""
+    def operation_summaries(self, ns_id):
+        """OSM operation records of one NS (identity, state, times, KDU action and, for the
+        instantiation, its request) for the evidence; nothing secret is kept."""
+        summaries = []
+        for operation in self.osm.lifecycle.ns_operations(ns_id):
+            params = operation.get('operationParams') if isinstance(operation.get('operationParams'), dict) else {}
+            try:
+                kdu_model = lifecycle.primitive_params(operation).get('kdu_model')
+            except ValueError as error:
+                kdu_model = 'unreadable primitive_params: ' + str(error)[:100]
+            summary = {'id': operation.get('_id'), 'type': operation.get('lcmOperationType'),
+                       'state': operation.get('operationState'), 'start': operation.get('startTime'),
+                       'entered': operation.get('statusEnteredTime'), 'nsInstanceId': operation.get('nsInstanceId'),
+                       'primitive': params.get('primitive'), 'kdu': params.get('kdu_name'), 'kdu_model': kdu_model}
+            if operation.get('lcmOperationType') == 'instantiate':
+                summary['request'] = {k: params.get(k) for k in ('nsInstanceId', 'nsName', 'nsdId', 'vimAccountId',
+                                                                  'additionalParamsForVnf')}
+            summaries.append(summary)
+        return summaries
+
+    def termination_record(self, ns_id, operation_id=None):
+        """The NS's latest terminate operation, required COMPLETED for this NS after its instantiation
+        (and, when this run issued it, that operation). Returns (ok, detail)."""
+        operations = self.osm.lifecycle.ns_operations(ns_id)
+        times = [o.get('startTime') for o in operations]
+        if not operations or not all(type(t) in (int, float) for t in times):
+            return False, {'problem': 'operation records missing or without start times'}
+        terminates = sorted((o for o in operations if o.get('lcmOperationType') == 'terminate'),
+                            key=lambda o: o['startTime'])
+        instantiations = [o for o in operations if o.get('lcmOperationType') == 'instantiate']
+        if not terminates or len(instantiations) != 1:
+            return False, {'problem': 'no terminate operation or not exactly one instantiation',
+                           'terminates': [o.get('_id') for o in terminates]}
+        latest = terminates[-1]
+        params = latest.get('operationParams')
+        detail = {'operation': latest.get('_id'), 'state': latest.get('operationState'),
+                  'nsInstanceId': latest.get('nsInstanceId'), 'start': latest['startTime']}
+        ok = (latest.get('operationState') == 'COMPLETED' and latest.get('nsInstanceId') == ns_id and
+              (not isinstance(params, dict) or params.get('nsInstanceId') in (None, ns_id)) and
+              latest['startTime'] >= instantiations[0]['startTime'] and
+              (operation_id is None or latest.get('_id') == operation_id))
+        return ok, detail
+
+    def residual_objects(self):
+        """Objects left in the experiment namespace other than the Kubernetes defaults
+        (kube-root-ca.crt ConfigMap, default ServiceAccount); [] when the namespace is gone."""
+        if not self.cluster.namespace():
+            return []
+        defaults = {('ConfigMap', 'kube-root-ca.crt'), ('ServiceAccount', 'default')}
+        inventory = self.cluster.inventory()
+        foreign = {(kind, name) for kind, name, _ in foreign_objects(inventory)}
+        return [(i['kind'], i['name']) for i in inventory
+                if (i['kind'], i['name']) not in defaults or (i['kind'], i['name']) in foreign]
+
+    def wait_terminated(self, ns_id, nsd, operation_id=None):
+        """G2 post-termination conditions, all required (re-read until they hold or op_timeout):
+        identity re-verified (retained KDU entries only the isolated CU/DU); latest terminate
+        operation COMPLETED for this NS; NS NOT_INSTANTIATED and idle; no operation pending;
+        no Helm release in the namespace and neither P4 release known to helm status; no
+        object left in the namespace besides the Kubernetes defaults."""
         deadline = self.clock.monotonic() + self.timeouts['op_timeout']
         while True:
             ns, identity = self.verified_teardown_ns(ns_id, nsd)
+            terminated, termination = self.termination_record(ns_id, operation_id)
             running = [o.get('_id') for o in self.osm.lifecycle.ns_operations(ns_id)
                        if o.get('operationState') not in TERMINAL]
-            releases = [r.get('name') for r in self.cluster.releases()] if self.cluster.namespace() else []
-            safe = (ns.get('nsState') == 'NOT_INSTANTIATED' and ns.get('currentOperation') in ('IDLE', None) and
-                    not running and not releases)
+            namespace = self.cluster.namespace()
+            releases = [r.get('name') for r in self.cluster.releases()] if namespace else []
+            try:
+                views = {release: self.cluster.release_view(release) for release in RELEASES.values()} \
+                    if namespace else {}
+                helm_left = sorted(r for r, v in views.items() if v is not None)
+            except HelmMetadataError as error:
+                helm_left = ['inconsistent: ' + str(error)[:200]]
+            residual = self.residual_objects()
+            safe = (terminated and ns.get('nsState') == 'NOT_INSTANTIATED' and
+                    ns.get('currentOperation') in ('IDLE', None) and not running and not releases and
+                    not helm_left and not residual)
             if safe or self.clock.monotonic() >= deadline:
-                return safe, dict(identity, currentOperation=ns.get('currentOperation'), running=running,
-                                  releases=releases)
+                return safe, dict(identity, termination=termination, currentOperation=ns.get('currentOperation'),
+                                  running=running, releases=releases, helm_left=helm_left, residual=residual)
             self.clock.sleep(self.timeouts['poll'])
 
     def teardown_check(self):
@@ -1323,6 +1449,7 @@ class Experiment:
             experiment_id = ns and ns['_id']
             others = self.other_ns_states(experiment_id)
             self.evidence.record(step, 'other-ns', others)
+            self.evidence.record(step, 'unrelated-kubernetes', self.cluster.unrelated_state())
             users = [n.get('_id') for n in listing if nsd and n.get('_id') != experiment_id and
                      n.get('nsd-id') == nsd['id']]
             self.evidence.check(step, 'no other NS uses the experiment NSD', not users, users)
@@ -1359,20 +1486,7 @@ class Experiment:
                                         {'vnfd-id': [v.get('vnfd-id') for v in vnfrs], 'package': knf and knf['id']})
                 self.evidence.check(step, 'NS idle (no operation in progress)',
                                     record.get('currentOperation') in ('IDLE', None), record.get('currentOperation'))
-                operations = []
-                for operation in self.osm.lifecycle.ns_operations(ns['_id']):
-                    params = operation.get('operationParams') or {}
-                    try:
-                        kdu_model = lifecycle.primitive_params(operation).get('kdu_model')
-                    except ValueError as error:
-                        kdu_model = 'unreadable primitive_params: ' + str(error)[:100]
-                    operations.append({'id': operation.get('_id'), 'type': operation.get('lcmOperationType'),
-                                       'state': operation.get('operationState'), 'start': operation.get('startTime'),
-                                       'entered': operation.get('statusEnteredTime'),
-                                       'primitive': params.get('primitive') if isinstance(params, dict) else None,
-                                       'kdu': params.get('kdu_name') if isinstance(params, dict) else None,
-                                       'kdu_model': kdu_model})
-                self.evidence.record(step, 'ns-operations', operations)
+                self.evidence.record(step, 'ns-operations', self.operation_summaries(ns['_id']))
                 self.evidence.observe(step, 'teardown would terminate the NS first', instantiated)
             self.evidence.observe(step, 'P1 runner state present (left untouched)', self.state_path.exists())
         except Exception as error:          # read-only: report, never repair
@@ -1392,14 +1506,17 @@ class Experiment:
         deployed (G2). Every other OSM NS must be unchanged afterwards (G4).
         """
         step = 'teardown'
-        others_before = experiment_id = None
+        others_before = kubernetes_before = experiment_id = None
         try:
             self.verify_target()
             nsd = self.osm.lifecycle.package('ns', NSD)
+            knf = self.osm.lifecycle.package('knf', VNFD)
             ns = self.osm.experiment_ns()
             experiment_id = ns and ns['_id']
             others_before = self.other_ns_states(experiment_id)
             self.evidence.record(step, 'other-ns-before', others_before)
+            kubernetes_before = self.cluster.unrelated_state()
+            self.evidence.record(step, 'unrelated-kubernetes-before', kubernetes_before)
             if self.cluster.namespace():
                 inventory = self.cluster.inventory()
                 self.evidence.record(step, 'namespace-before-teardown', inventory)
@@ -1410,22 +1527,38 @@ class Experiment:
                 self.ns_id = ns['_id']
                 ns, identity = self.verified_teardown_ns(ns['_id'], nsd)
                 self.evidence.record(step, 'ns-identity', identity)
+                # OSM deletes an NS's operation records with the NS: keep them first.
+                self.evidence.record(step, 'ns-operations', self.operation_summaries(ns['_id']))
+                operation = None
                 if ns.get('nsState') != 'NOT_INSTANTIATED':
                     if ns.get('currentOperation') not in ('IDLE', None):
                         raise ExperimentError('Experiment NS has an operation in progress; not terminating')
-                    state = self.wait_operation(self.osm.terminate(ns['_id']))
-                    if not self.evidence.check(step, 'experiment NS terminated', state == 'COMPLETED', state):
+                    operation = self.osm.terminate(ns['_id'])
+                    state = self.wait_operation(operation)
+                    if not self.evidence.check(step, 'experiment NS terminated', state == 'COMPLETED',
+                                               {'operation': operation, 'state': state}):
                         raise ExperimentError('Termination not COMPLETED (' + str(state) + '); NS and packages kept')
-                safe, detail = self.wait_terminated(ns['_id'], nsd)
+                safe, detail = self.wait_terminated(ns['_id'], nsd, operation)
                 self.evidence.record(step, 'after-termination', detail)
                 if not self.evidence.check(step, 'terminated NS idle with nothing deployed or running', safe, detail):
                     raise ExperimentError('Terminated NS not in a safe state; NS and packages kept')
-                self.osm.delete_ns(ns['_id'])
-                if self.osm.experiment_ns() is not None:
+                self.evidence.record(step, 'ns-operations-before-delete', self.operation_summaries(ns['_id']))
+                try:
+                    self.osm.delete_ns(ns['_id'])
+                except Exception as error:      # failed or uncertain: never continue to the packages
+                    present = [n.get('_id') for n in self.osm.ns_instances() if n.get('_id') == ns['_id']]
+                    self.evidence.record(step, 'ns-delete-error', {'error': type(error).__name__ + ': ' + str(error)[:300],
+                                                                  'record_present': bool(present)})
+                    raise ExperimentError('NS deletion failed or uncertain; packages kept') from None
+                if self.osm.experiment_ns() is not None or \
+                        any(n.get('_id') == ns['_id'] for n in self.osm.ns_instances()):
                     raise ExperimentError('Experiment NS record still present; packages kept')
-            users = [n.get('_id') for n in self.osm.ns_instances() if nsd and n.get('nsd-id') == nsd['id']]
+            listing = self.osm.ns_instances()
+            users = [n.get('_id') for n in listing if nsd and n.get('nsd-id') == nsd['id']]
+            users += [n.get('_id') for n in listing if knf and knf['id'] in (n.get('vnfd-id') or [])]
             if users:
-                raise ExperimentError('Experiment NSD still referenced by NS ' + str(users) + '; packages kept')
+                raise ExperimentError('Experiment NSD/KNF still referenced by NS ' + str(sorted(set(users))) +
+                                      '; packages kept')
             for kind, name in (('ns', NSD), ('knf', VNFD)):
                 self.evidence.record(step, 'deleted-' + name, self.osm.delete_package(kind, name))
             deadline = self.clock.monotonic() + self.timeouts['health_timeout']
@@ -1453,6 +1586,16 @@ class Experiment:
             self.evidence.record(step, 'other-ns-after', others_after)
             self.evidence.check(step, 'every other OSM NS unchanged', others_after == others_before,
                                 {'before': others_before, 'after': others_after})
+        if kubernetes_before is not None:
+            try:
+                kubernetes_after = self.cluster.unrelated_state()
+            except Exception as error:      # unknown is reported as a failure, never as unchanged
+                kubernetes_after = {'error': type(error).__name__ + ': ' + str(error)[:300]}
+            self.evidence.record(step, 'unrelated-kubernetes-after', kubernetes_after)
+            self.evidence.check(step, 'unrelated Kubernetes namespaces and workloads unchanged',
+                                kubernetes_after == kubernetes_before,
+                                None if kubernetes_after == kubernetes_before else
+                                {'before': kubernetes_before, 'after': kubernetes_after})
         return self.evidence.summary({'teardown': True})
 
 
@@ -1493,7 +1636,7 @@ def main(argv=None):
         parser.error('--config is required')
     config = load_config(args.config)
     stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
-    evidence = Evidence(Path(config['work_dir']) / 'evidence' / (args.command + '-' + stamp))
+    evidence = Evidence(Path(config['work_dir']) / 'evidence' / (args.command + '-' + stamp), exclusive=True)
     read_only = args.command in READ_ONLY_COMMANDS
     cluster = Cluster(config['kubectl'], config['helm'], config['kubeconfig'], config['osm_namespace'],
                       read_only=read_only)
