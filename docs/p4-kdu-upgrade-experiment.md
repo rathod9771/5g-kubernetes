@@ -58,6 +58,25 @@ no host access, no cluster-scoped objects.
 
 The run stops at the first failed or broken step; evidence collected so far is kept.
 
+### Helm release observation
+
+Chart versions are never read from `helm status`: on the Dell its JSON carries no
+`chart` object. Every check uses one cross-checked view per release:
+
+| Source (`-o json`, namespace `p4-kdu-upgrade`) | Fields used |
+|---|---|
+| `helm status <release>` | `name`, `namespace`, `version` (revision), `info.status` |
+| `helm history <release>` | per revision: `revision`, `status`, `chart` (`<name>-<version>`), `app_version`, `description` |
+| `helm list -a` | the single entry named `<release>`: `revision` (string), `status`, `chart`, `app_version` |
+
+The chart field must be exactly `p4kdu-<kdu>-X.Y.Z` (this release's chart, plain
+version) in every history entry; the latest history entry must equal status
+(revision, state) and the list entry (revision, state, chart, app version). A `chart`
+object in `helm status`, if a Helm version emits one, must agree too. Anything
+missing, duplicated or inconsistent (after one re-read) is recorded in the snapshot as
+`helm.<kdu>.error` and fails that release's checks; nothing is inferred. The app
+version is the marker (`r1`/`r2`/`r3`) and is checked alongside the ConfigMap.
+
 ## P1 changes made for P4 (on this branch)
 
 - `lifecycle.instance_name(entry)`: NS name from `ns_name` in the registry entry,
@@ -117,6 +136,13 @@ python3 scripts/experiments/p4/p4_experiment.py run --config ~/.config/p4/p4-del
 # 7. Evidence
 ls ~/p4-run/evidence/run-*/
 python3 -m json.tool ~/p4-run/evidence/run-*/summary.json | less
+
+# 7b. Read-only check of an existing revision-1 deployment (after instantiate):
+#     target guards, catalog revision 1, revision-pinned kdu-models, both releases
+#     at Helm revision 1 / chart 0.1.0 / app version r1, ConfigMaps r1, Deployments
+#     ready, NS READY/idle with only the instantiate operation, namespace contents,
+#     P1 state bound to this NS with nothing pending. Writes only evidence files.
+python3 scripts/experiments/p4/p4_experiment.py validate-baseline --config ~/.config/p4/p4-dell.json
 
 # 8. Teardown (NS, descriptors, releases, namespace p4-kdu-upgrade only)
 python3 scripts/experiments/p4/p4_experiment.py teardown --config ~/.config/p4/p4-dell.json

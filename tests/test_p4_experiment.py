@@ -350,6 +350,292 @@ class FullRunTests(Harness):
         self.assertIn('p4-kdu-upgrade', self.target.namespaces)
 
 
+# Helm 3 `-o json` output for the revision-1 deployment on the Dell (p4kdu-cu-0.1.0 / r1,
+# p4kdu-du-0.1.0 / r1). helm status there carries no chart object, which broke the
+# original status['chart']['metadata']['version'] read.
+DELL_STATUS = {release: {
+    'name': release, 'namespace': 'p4-kdu-upgrade', 'version': 1, 'config': {},
+    'info': {'first_deployed': '2026-10-22T09:14:03.513811273Z', 'last_deployed': '2026-10-22T09:14:03.513811273Z',
+             'deleted': '', 'description': 'Install complete', 'status': 'deployed'}}
+    for release in ('p4kdu-cu', 'p4kdu-du')}
+DELL_HISTORY = {release: [{'revision': 1, 'updated': '2026-10-22T09:14:03.513811273Z', 'status': 'deployed',
+                           'chart': release + '-0.1.0', 'app_version': 'r1', 'description': 'Install complete'}]
+                for release in ('p4kdu-cu', 'p4kdu-du')}
+DELL_LIST = [{'name': release, 'namespace': 'p4-kdu-upgrade', 'revision': '1',
+              'updated': '2026-10-22 09:14:03.513811273 +0000 UTC', 'status': 'deployed',
+              'chart': release + '-0.1.0', 'app_version': 'r1'} for release in ('p4kdu-cu', 'p4kdu-du')]
+
+
+class HelmMetadataTests(unittest.TestCase):
+    def view(self, release='p4kdu-cu', status=None, history=None, listing=None):
+        return p4.release_view(release, DELL_STATUS[release] if status is None else status,
+                               DELL_HISTORY[release] if history is None else history,
+                               DELL_LIST if listing is None else listing)
+
+    def rejected(self, pattern, **changes):
+        with self.assertRaisesRegex(p4.HelmMetadataError, pattern):
+            self.view(**changes)
+
+    def test_dell_revision_1_output(self):
+        self.assertNotIn('chart', DELL_STATUS['p4kdu-cu'])
+        for release in ('p4kdu-cu', 'p4kdu-du'):
+            view = self.view(release)
+            self.assertEqual({k: v for k, v in view.items() if k != 'history'},
+                             {'version': 1, 'state': 'deployed', 'chart': '0.1.0', 'chart_ref': release + '-0.1.0',
+                              'app_version': 'r1'})
+            self.assertEqual([(h['revision'], h['chart_version'], h['app_version']) for h in view['history']],
+                             [(1, '0.1.0', 'r1')])
+
+    def test_absent_everywhere_is_missing_not_an_error(self):
+        self.assertIsNone(p4.release_view('p4kdu-cu', None, [], [DELL_LIST[1]]))
+
+    def test_partially_known_release_is_rejected(self):
+        self.rejected('only some', listing=[DELL_LIST[1]])
+        self.rejected('only some', history=[])
+        with self.assertRaisesRegex(p4.HelmMetadataError, 'only some'):
+            p4.release_view('p4kdu-cu', None, DELL_HISTORY['p4kdu-cu'], DELL_LIST)
+
+    def test_ambiguous_list_is_rejected(self):
+        self.rejected('ambiguous', listing=DELL_LIST + [dict(DELL_LIST[0])])
+
+    def test_non_list_output_is_rejected(self):
+        self.rejected('not a JSON list', listing={'releases': DELL_LIST})
+        self.rejected('not a JSON list', history={'revision': 1})
+
+    def test_name_and_namespace_must_match(self):
+        self.rejected('name or namespace', status=dict(DELL_STATUS['p4kdu-cu'], name='p4kdu-du'))
+        self.rejected('name or namespace', status=dict(DELL_STATUS['p4kdu-cu'], namespace='osm'))
+        self.rejected('name or namespace', listing=[dict(DELL_LIST[0], namespace='default'), DELL_LIST[1]])
+
+    def test_chart_field_must_be_this_release_chart_with_a_plain_version(self):
+        for chart in ('p4kdu-du-0.1.0', 'p4kdu-cu-0.1.0-rc1', 'p4kdu-cu', 'p4kdu-cu-0.1', 'cu-0.1.0',
+                      'xp4kdu-cu-0.1.0', '', None, 1):
+            with self.subTest(chart=chart):
+                self.rejected('chart field', history=[dict(DELL_HISTORY['p4kdu-cu'][0], chart=chart)])
+        with self.assertRaisesRegex(p4.HelmMetadataError, 'chart field'):
+            p4.chart_version('ran-fran-oai', 'ran-fran-oai-0.1.0')
+
+    def test_every_history_entry_must_belong_to_the_release(self):
+        history = [dict(DELL_HISTORY['p4kdu-cu'][0], chart='other-0.1.0', status='superseded'),
+                   dict(DELL_HISTORY['p4kdu-cu'][0], revision=2)]
+        self.rejected('chart field', history=history,
+                      status=dict(DELL_STATUS['p4kdu-cu'], version=2),
+                      listing=[dict(DELL_LIST[0], revision='2')])
+
+    def test_missing_fields_are_rejected(self):
+        self.rejected('info.status', status=dict(DELL_STATUS['p4kdu-cu'], info={}))
+        self.rejected('malformed', history=[{k: v for k, v in DELL_HISTORY['p4kdu-cu'][0].items() if k != 'app_version'}])
+        self.rejected('malformed', history=[{k: v for k, v in DELL_HISTORY['p4kdu-cu'][0].items() if k != 'status'}])
+        self.rejected('invalid revision in helm status', status={k: v for k, v in DELL_STATUS['p4kdu-cu'].items()
+                                                                 if k != 'version'})
+        for revision in ('01', '1.0', '', 0, True, None):
+            with self.subTest(revision=revision):
+                self.rejected('invalid revision in helm list', listing=[dict(DELL_LIST[0], revision=revision)])
+
+    def test_inconsistent_sources_are_rejected(self):
+        cu = DELL_LIST[0]
+        self.rejected('status and latest history', status=dict(DELL_STATUS['p4kdu-cu'], version=2))
+        self.rejected('status and latest history', status=dict(DELL_STATUS['p4kdu-cu'], info={'status': 'failed'}))
+        for change in ({'revision': '2'}, {'status': 'failed'}, {'chart': 'p4kdu-cu-0.2.0'}, {'app_version': 'r2'}):
+            with self.subTest(change=change):
+                self.rejected('list and helm history', listing=[dict(cu, **change), DELL_LIST[1]])
+
+    def test_history_order_and_uniqueness(self):
+        entry = DELL_HISTORY['p4kdu-cu'][0]
+        self.rejected('duplicated or out of order', history=[entry, dict(entry)])
+        self.rejected('duplicated or out of order', history=[dict(entry, revision=2), entry])
+
+    def test_latest_history_entry_gives_the_current_chart(self):
+        history = [dict(DELL_HISTORY['p4kdu-du'][0], status='superseded'),
+                   dict(DELL_HISTORY['p4kdu-du'][0], revision=2, chart='p4kdu-du-0.2.0', app_version='r2',
+                        description='Upgrade complete'),
+                   dict(DELL_HISTORY['p4kdu-du'][0], revision=3, status='failed', chart='p4kdu-du-0.3.0',
+                        app_version='r3', description='Upgrade "p4kdu-du" failed: context deadline exceeded'),
+                   dict(DELL_HISTORY['p4kdu-du'][0], revision=4, chart='p4kdu-du-0.2.0', app_version='r2',
+                        description='Rollback to 2')]
+        view = self.view('p4kdu-du', status=dict(DELL_STATUS['p4kdu-du'], version=4), history=history,
+                         listing=[dict(DELL_LIST[1], revision='4', chart='p4kdu-du-0.2.0', app_version='r2')])
+        self.assertEqual((view['version'], view['chart'], view['app_version']), (4, '0.2.0', 'r2'))
+        self.assertEqual([h['chart_version'] for h in view['history']], ['0.1.0', '0.2.0', '0.3.0', '0.2.0'])
+
+    def test_pending_release_is_reported_consistently(self):
+        history = [dict(DELL_HISTORY['p4kdu-cu'][0], status='superseded'),
+                   dict(DELL_HISTORY['p4kdu-cu'][0], revision=2, status='pending-upgrade', chart='p4kdu-cu-0.3.0',
+                        app_version='r3', description='Preparing upgrade')]
+        view = self.view(status=dict(DELL_STATUS['p4kdu-cu'], version=2, info={'status': 'pending-upgrade'}),
+                         history=history, listing=[dict(DELL_LIST[0], revision='2', status='pending-upgrade',
+                                                        chart='p4kdu-cu-0.3.0', app_version='r3')])
+        self.assertEqual((view['state'], view['chart']), ('pending-upgrade', '0.3.0'))
+
+    def test_chart_object_in_status_is_cross_checked_when_present(self):
+        status = dict(DELL_STATUS['p4kdu-cu'], chart={'metadata': {'name': 'p4kdu-cu', 'version': '0.1.0',
+                                                                   'appVersion': 'r1'}})
+        self.assertEqual(self.view(status=status)['chart'], '0.1.0')
+        for metadata in ({'name': 'p4kdu-cu', 'version': '0.2.0', 'appVersion': 'r1'},
+                         {'name': 'p4kdu-du', 'version': '0.1.0', 'appVersion': 'r1'},
+                         {'name': 'p4kdu-cu', 'version': '0.1.0', 'appVersion': 'r2'}, None):
+            with self.subTest(metadata=metadata):
+                self.rejected('contradicts', status=dict(status, chart={'metadata': metadata}))
+        self.rejected('contradicts', status=dict(status, chart={}))
+
+    def cluster(self, outputs):
+        """Cluster whose helm calls return the next prepared output for each verb."""
+        def run(argv, **_):
+            return subprocess.CompletedProcess(argv, 0, json.dumps(outputs[argv[1]].pop(0)).encode(), b'')
+        return p4.Cluster('/usr/bin/kubectl', '/usr/local/bin/helm', '/k', 'osm', run=run)
+
+    def test_cluster_reads_status_history_and_list(self):
+        cluster = self.cluster({'status': [DELL_STATUS['p4kdu-cu']], 'history': [DELL_HISTORY['p4kdu-cu']],
+                                'list': [DELL_LIST]})
+        self.assertEqual(cluster.release_view('p4kdu-cu')['chart_ref'], 'p4kdu-cu-0.1.0')
+        self.assertEqual([c[1:3] for c in cluster.commands], [['status', 'p4kdu-cu'], ['history', 'p4kdu-cu'],
+                                                              ['list', '-n']])
+        self.assertTrue(all(c[c.index('-n') + 1] == 'p4-kdu-upgrade' and c[-2:] == ['-o', 'json']
+                            for c in cluster.commands))
+
+    def test_cluster_rereads_once_then_rejects(self):
+        moving = [dict(DELL_LIST[0], revision='2', chart='p4kdu-cu-0.2.0', app_version='r2')]
+        def outputs(lists):
+            return {'status': [DELL_STATUS['p4kdu-cu']] * 2, 'history': [DELL_HISTORY['p4kdu-cu']] * 2, 'list': lists}
+        self.assertEqual(self.cluster(outputs([moving, DELL_LIST])).release_view('p4kdu-cu')['version'], 1)
+        with self.assertRaisesRegex(p4.HelmMetadataError, 'helm list and helm history'):
+            self.cluster(outputs([moving, moving])).release_view('p4kdu-cu')
+
+
+class ExpectReleaseTests(Harness):
+    """A release passes only when Helm (state, chart, chart ref, app version), the
+    ConfigMap marker and the Deployment all agree and the Helm view had no error."""
+    def snap(self, **helm):
+        status = dict({'version': 1, 'state': 'deployed', 'chart': '0.1.0', 'chart_ref': 'p4kdu-du-0.1.0',
+                       'app_version': 'r1'}, **helm)
+        return {'helm': {'du': {'status': status, 'history': [], 'error': None}},
+                'markers': {'du': 'r1'}, 'deployments': {'du': 'ready'}}
+
+    def expect(self, snap):
+        return self.experiment().expect_release('s', snap, 'du', '0.1.0', 'r1', 'baseline')
+
+    def test_consistent_release_passes(self):
+        self.assertTrue(self.expect(self.snap()))
+
+    def test_each_disagreement_fails(self):
+        cases = {'app version': self.snap(app_version='r2'), 'chart': self.snap(chart='0.2.0'),
+                 'chart ref': self.snap(chart_ref='p4kdu-cu-0.1.0'), 'state': self.snap(state='failed'),
+                 'marker': dict(self.snap(), markers={'du': 'r2'}),
+                 'deployment': dict(self.snap(), deployments={'du': 'not ready'})}
+        errored = self.snap()
+        errored['helm']['du']['error'] = 'p4kdu-du: helm list and helm history disagree'
+        cases['helm error'] = errored
+        missing = self.snap()
+        missing['helm']['du']['status'] = None
+        cases['missing release'] = missing
+        for name, snap in cases.items():
+            with self.subTest(name):
+                self.assertFalse(self.expect(snap))
+
+
+class BaselineValidationTests(Harness):
+    """validate-baseline on a deployment left by the instantiate step (as on the Dell)."""
+    def setUp(self):
+        super().setUp()
+        self.first = self.experiment()
+        self.first.run(('preflight', 'onboard', 'instantiate'))
+        self.state = self.first.state_path.read_bytes()
+        self.mutations = list(self.target.mutations)
+
+    def validate(self):
+        self.config = config(self.work)
+        exp = self.experiment()
+        exp.evidence = p4.Evidence(self.work / 'evidence-baseline', clock=self.clock)
+        summary = exp.validate_baseline()
+        self.assertEqual(self.target.mutations, self.mutations)
+        self.assertEqual(exp.state_path.read_bytes() if exp.state_path.exists() else None, self.state)
+        self.assertIsNone(lifecycle.P4_KDU_UPGRADE_APPROVAL)
+        return summary, [c['check'] for c in summary['checks'] if c['passed'] is False]
+
+    def test_instantiate_baseline_checks_pass_with_dell_helm_output(self):
+        status = json.loads(self.target.run(['/usr/local/bin/helm', 'status', 'p4kdu-cu', '-n', 'p4-kdu-upgrade',
+                                             '-o', 'json']).stdout)
+        self.assertNotIn('chart', status)
+        baseline = [c for c in self.first.evidence.checks if c['check'].startswith('baseline: ')]
+        self.assertEqual([(c['check'], c['passed']) for c in baseline],
+                         [('baseline: cu serves r1', True), ('baseline: du serves r1', True)])
+        self.assertEqual(baseline[0]['detail']['helm']['chart_ref'], 'p4kdu-cu-0.1.0')
+
+    def test_existing_revision_1_deployment_validates_read_only(self):
+        summary, failed = self.validate()
+        self.assertEqual(failed, [])
+        self.assertEqual(summary['steps'][0]['result'], 'passed')
+        self.assertEqual((summary['ns_id'], summary['read_only']), (self.first.ns_id, True))
+        self.assertGreaterEqual(summary['passed'], 14)
+
+    def test_inconsistent_helm_metadata_fails_without_guessing(self):
+        original = self.target._helm
+        def helm(args):
+            value = original(args)
+            if args[0] == 'list':
+                value = [dict(r, app_version='r2') if r['name'] == 'p4kdu-du' else r for r in value]
+            return value
+        self.target._helm = helm
+        summary, failed = self.validate()
+        self.assertIn('baseline: du serves r1', failed)
+        self.assertNotIn('baseline: cu serves r1', failed)
+        detail = next(c['detail'] for c in summary['checks'] if c['check'] == 'baseline: du serves r1')
+        self.assertIn('helm list and helm history disagree', detail['helm_error'])
+
+    def test_upgraded_deployment_is_not_a_baseline(self):
+        self.first.run(('upgrade_rev2_lost_response',))
+        self.state, self.mutations = self.first.state_path.read_bytes(), list(self.target.mutations)
+        _, failed = self.validate()
+        self.assertIn('baseline: cu serves r1', failed)
+        self.assertIn('catalog holds revision 1 of the experiment KNF and NSD', failed)
+        self.assertIn('P1 state names this NS as active with nothing pending', failed)
+
+    def test_baseline_state_is_the_instantiation_state(self):
+        state = yaml.safe_load(self.state)
+        self.assertEqual(sorted(state['osm']), ['active_instance_id', 'active_operation_id', 'active_scenario'])
+        summary, failed = self.validate()
+        self.assertEqual(failed, [])
+        self.assertIn('P1 state names this NS as active with nothing pending',
+                      [c['check'] for c in summary['checks'] if c['passed'] is True])
+
+    def test_missing_state_is_recorded_not_rejected(self):
+        self.first.state_path.unlink()
+        self.state = None
+        summary, failed = self.validate()
+        self.assertEqual(failed, [])
+        self.assertIn('P1 state not present (re-established before any upgrade)',
+                      [c['check'] for c in summary['checks'] if c['passed'] is None])
+
+    def test_state_of_another_ns_or_with_pending_work_fails(self):
+        for change in ({'active_instance_id': self.target.other_ns},
+                       {'pending_update': {'stage': 'submitted'}}):
+            with self.subTest(change=change):
+                state = yaml.safe_load(self.state)
+                state['osm'].update(change)
+                self.first.state_path.write_text(yaml.safe_dump(state))
+                self.state = self.first.state_path.read_bytes()
+                _, failed = self.validate()
+                self.assertEqual(failed, ['P1 state names this NS as active with nothing pending'])
+
+    def test_state_bound_to_another_context_fails(self):
+        state = yaml.safe_load(self.state)
+        state['context']['namespace_uid'] = '00000000-0000-4000-8000-000000000000'
+        self.first.state_path.write_text(yaml.safe_dump(state))
+        self.state = self.first.state_path.read_bytes()
+        _, failed = self.validate()
+        self.assertEqual(failed, ['P1 state names this NS as active with nothing pending'])
+
+    def test_hp_target_is_refused_before_reading(self):
+        self.config = config(self.work)
+        self.resolved['nbi.172.30.0.20.nip.io'] = {'172.30.18.32'}
+        exp = self.experiment()
+        summary = exp.validate_baseline()
+        failed = [c for c in summary['checks'] if c['passed'] is False]
+        self.assertEqual([c['check'] for c in failed], ['baseline readable'])
+        self.assertIn('TargetError', failed[0]['detail'])
+        self.assertEqual(self.target.mutations, self.mutations)
+
+
 class AdoptLostRequestTests(unittest.TestCase):
     """lifecycle.adopt_lost_request against recorded OSM operations (read-only)."""
     def setUp(self):

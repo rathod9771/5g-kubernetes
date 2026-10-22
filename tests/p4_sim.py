@@ -19,6 +19,7 @@ from osm_catalog import OSMHTTPError
 
 STORAGE = '/app/storage'
 LCM_DIGEST = 'sha256:' + '2a401465ba1eb09a4b2de96c11028de7860b8a66dc763b2f0f245962b6771fbd'
+UPDATED = '2026-10-22T09:14:03.513+00:00'
 
 
 def dump(value):
@@ -366,18 +367,23 @@ class P4Target:
         verb, namespace = args[0], self._ns(args)
         if verb == 'version':
             return b'v3.21.0+g000000'
+        # Output shapes of helm 3 -o json as observed on the Dell: status carries no chart
+        # object; list/history give the chart as '<name>-<version>' plus app_version.
         if verb == 'status':
             live = self._live(namespace, args[1])
-            return {'name': args[1], 'version': live['revision'], 'namespace': namespace,
-                    'info': {'status': live['status']}, 'chart': {'metadata': {'version': live['version']}}}
+            return {'name': args[1], 'version': live['revision'], 'namespace': namespace, 'config': {},
+                    'info': {'first_deployed': UPDATED, 'last_deployed': UPDATED, 'deleted': '',
+                             'description': live['description'], 'status': live['status']}}
         if verb == 'history':
             history = self.releases.get((namespace, args[1]))
             if not history:
                 raise LookupError(args[1])
-            return [{'revision': h['revision'], 'status': h['status'], 'chart': h['chart'],
+            return [{'revision': h['revision'], 'updated': UPDATED, 'status': h['status'], 'chart': h['chart'],
                      'app_version': h['marker'], 'description': h['description']} for h in history]
         if verb == 'list':
-            return [{'name': release, 'namespace': ns, 'revision': str(h[-1]['revision']), 'status': h[-1]['status']}
+            return [{'name': release, 'namespace': ns, 'revision': str(h[-1]['revision']),
+                     'updated': '2026-10-22 09:14:03.513 +0000 UTC', 'status': h[-1]['status'],
+                     'chart': h[-1]['chart'], 'app_version': h[-1]['marker']}
                     for (ns, release), h in self.releases.items() if ns == namespace]
         if verb == 'rollback':
             self.mutations.append(('helm', ' '.join(args)))

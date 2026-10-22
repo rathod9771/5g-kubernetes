@@ -45,6 +45,8 @@ VNFD, NSD = p4_packages.KNF, p4_packages.NSD
 NS_NAME = 'p4-kdu-upgrade-test'
 SCENARIO = 'p4kdu'
 RELEASES = {'cu': 'p4kdu-cu', 'du': 'p4kdu-du'}
+# Helm chart name of each release (p4_packages.chart_files names every KDU chart p4kdu-<kdu>).
+CHART_NAMES = {release: 'p4kdu-' + kdu for kdu, release in RELEASES.items()}
 MEMBER_INDEX = p4_packages.VNF_PROFILE
 TERMINAL = lifecycle.TERMINAL
 EXPECTED_CHART = {1: '0.1.0', 2: '0.2.0', 3: '0.3.0'}
@@ -243,6 +245,86 @@ class ClusterError(ExperimentError):
     pass
 
 
+class HelmMetadataError(ClusterError):
+    """Helm release metadata is missing, ambiguous or inconsistent; never guessed."""
+
+
+def chart_version(release, chart):
+    """Chart version from Helm's '<chart name>-<version>' field (helm list/history).
+
+    Only the release's own chart name and a plain X.Y.Z version (all P4 charts) are
+    accepted, so the split between name and version is unambiguous.
+    """
+    match = re.fullmatch(re.escape(CHART_NAMES[release]) + r'-(\d+\.\d+\.\d+)', chart) \
+        if isinstance(chart, str) and release in CHART_NAMES else None
+    if not match:
+        raise HelmMetadataError(release + ': unexpected Helm chart field ' + json.dumps(chart))
+    return match[1]
+
+
+def _revision(value, release, source):
+    """Helm revisions: integers in status/history, decimal strings in helm list."""
+    if isinstance(value, str) and re.fullmatch(r'[1-9][0-9]*', value):
+        value = int(value)
+    if type(value) is not int or value < 1:
+        raise HelmMetadataError(release + ': invalid revision in helm ' + source + ': ' + json.dumps(value))
+    return value
+
+
+def release_view(release, status, history, listing):
+    """Cross-checked view of one release from helm status, history and list (-o json).
+
+    helm status supplies the revision (`version`) and state (`info.status`); its
+    `chart` object is not relied on (absent in the output observed on the Dell) and is
+    only cross-checked when present. The chart and app version come from the latest
+    helm history entry and must equal the release's single helm list entry. Returns
+    None only when no source knows the release.
+    """
+    entries = [r for r in listing if isinstance(r, dict) and r.get('name') == release] \
+        if isinstance(listing, list) else None
+    if entries is None or not isinstance(history, list):
+        raise HelmMetadataError(release + ': helm list/history output is not a JSON list')
+    if status is None and not history and not entries:
+        return None
+    if status is None or not history or not entries:
+        raise HelmMetadataError(release + ': release known to only some of helm status/history/list')
+    if len(entries) != 1:
+        raise HelmMetadataError(release + ': ambiguous helm list (' + str(len(entries)) + ' entries)')
+    listed = entries[0]
+    if not isinstance(status, dict) or status.get('name') != release or status.get('namespace') != NAMESPACE \
+            or listed.get('namespace') != NAMESPACE:
+        raise HelmMetadataError(release + ': helm status/list name or namespace mismatch')
+    state = (status.get('info') or {}).get('status')
+    if not isinstance(state, str) or not state:
+        raise HelmMetadataError(release + ': helm status has no info.status')
+    revisions_seen = []
+    for item in history:
+        if not isinstance(item, dict) or not isinstance(item.get('status'), str) or \
+                not isinstance(item.get('app_version'), str):
+            raise HelmMetadataError(release + ': malformed helm history entry ' + json.dumps(item, default=str))
+        revisions_seen.append({'revision': _revision(item.get('revision'), release, 'history'), 'status': item['status'],
+                        'chart': item.get('chart'), 'chart_version': chart_version(release, item.get('chart')),
+                        'app_version': item['app_version'], 'description': item.get('description'),
+                        'updated': item.get('updated')})
+    revisions = [e['revision'] for e in revisions_seen]
+    if len(set(revisions)) != len(revisions) or revisions != sorted(revisions):
+        raise HelmMetadataError(release + ': helm history revisions duplicated or out of order')
+    latest, version = revisions_seen[-1], _revision(status.get('version'), release, 'status')
+    current = {'version': version, 'state': state, 'chart': latest['chart_version'],
+               'chart_ref': latest['chart'], 'app_version': latest['app_version']}
+    if latest['revision'] != version or latest['status'] != state:
+        raise HelmMetadataError(release + ': helm status and latest history entry disagree')
+    if _revision(listed.get('revision'), release, 'list') != version or listed.get('status') != state or \
+            listed.get('chart') != latest['chart'] or listed.get('app_version') != latest['app_version']:
+        raise HelmMetadataError(release + ': helm list and helm history disagree')
+    metadata = (status.get('chart') or {}).get('metadata') if isinstance(status.get('chart'), dict) else None
+    if status.get('chart') is not None and (
+            not isinstance(metadata, dict) or metadata.get('name') != CHART_NAMES[release] or
+            metadata.get('version') != current['chart'] or metadata.get('appVersion', '') != current['app_version']):
+        raise HelmMetadataError(release + ': chart metadata in helm status contradicts helm history')
+    return dict(current, history=revisions_seen)
+
+
 class Cluster:
     """kubectl/helm on the experiment target. Mutations are limited by _allowed()."""
     def __init__(self, kubectl, helm, kubeconfig, osm_namespace, run=subprocess.run, timeout=180):
@@ -323,6 +405,14 @@ class Cluster:
     def releases(self):
         return self._json(self.helm('list', '-n', NAMESPACE, '-a', '-o', 'json'))
 
+    def release_view(self, release):
+        """release_view() of live helm output; read twice before declaring it inconsistent
+        (a release can change between the three helm calls while an operation finishes)."""
+        try:
+            return release_view(release, self.release_status(release), self.release_history(release), self.releases())
+        except HelmMetadataError:
+            return release_view(release, self.release_status(release), self.release_history(release), self.releases())
+
     def configmap_marker(self, release):
         value = self._json(self.kubectl('get', 'configmap', release + '-release', '-n', NAMESPACE, '-o', 'json'),
                            missing_ok=True)
@@ -373,18 +463,22 @@ class Observer:
         self.cluster = cluster
 
     def helm_revision(self, instance):
-        status = self.cluster.release_status(instance)
-        if not status:
+        view = self.cluster.release_view(instance)
+        if not view:
             raise ClusterError('Helm release missing: ' + instance)
-        return int(status['version'])
+        return view['version']
 
     def health(self, entry, kdus, since):
         details = []
         for kdu in kdus:
             release = RELEASES[kdu['name']]
-            status = self.cluster.release_status(release) or {}
-            if status.get('info', {}).get('status') != 'deployed':
-                details.append(release + ' helm ' + str(status.get('info', {}).get('status')))
+            try:
+                view = self.cluster.release_view(release) or {}
+            except HelmMetadataError as error:
+                details.append(str(error))
+                continue
+            if view.get('state') != 'deployed':
+                details.append(release + ' helm ' + str(view.get('state')))
                 continue
             ready, detail = deployment_ready(self.cluster.deployment(release))
             if not ready:
@@ -558,11 +652,12 @@ class Experiment:
                     'kdu_model': (params.get('primitive_params') or {}).get('kdu_model'),
                     'timeout': params.get('timeout_ns_action')})
         for kdu, release in RELEASES.items():
-            status = self.cluster.release_status(release)
-            value['helm'][kdu] = {'status': status and {'version': status.get('version'),
-                                                        'state': status.get('info', {}).get('status'),
-                                                        'chart': status.get('chart', {}).get('metadata', {}).get('version')},
-                                  'history': self.cluster.release_history(release)}
+            try:
+                view = self.cluster.release_view(release)
+                value['helm'][kdu] = {'status': view and {k: v for k, v in view.items() if k != 'history'},
+                                      'history': view['history'] if view else [], 'error': None}
+            except HelmMetadataError as error:   # recorded; every check on this release then fails
+                value['helm'][kdu] = {'status': None, 'history': [], 'error': str(error)}
             value['markers'][kdu] = self.cluster.configmap_marker(release)
             value['deployments'][kdu] = deployment_ready(self.cluster.deployment(release))[1]
         if self.state_path.exists():
@@ -572,11 +667,13 @@ class Experiment:
 
     def expect_release(self, step, snap, kdu, chart, marker, label):
         helm = snap['helm'][kdu]['status'] or {}
-        ok = (helm.get('state') == 'deployed' and helm.get('chart') == chart and snap['markers'][kdu] == marker
-              and snap['deployments'][kdu] == 'ready')
+        ok = (snap['helm'][kdu].get('error') is None and helm.get('state') == 'deployed' and
+              helm.get('chart') == chart and helm.get('chart_ref') == CHART_NAMES[RELEASES[kdu]] + '-' + chart and
+              helm.get('app_version') == marker and snap['markers'][kdu] == marker and
+              snap['deployments'][kdu] == 'ready')
         return self.evidence.check(step, label + ': ' + kdu + ' serves ' + marker,
-                                   ok, {'helm': helm, 'marker': snap['markers'][kdu],
-                                        'deployment': snap['deployments'][kdu]})
+                                   ok, {'helm': helm, 'helm_error': snap['helm'][kdu].get('error'),
+                                        'marker': snap['markers'][kdu], 'deployment': snap['deployments'][kdu]})
 
     def expect_identity(self, step, snap):
         self.evidence.check(step, 'NS identity preserved', snap['ns'] and snap['ns']['_id'] == self.ns_id,
@@ -588,6 +685,18 @@ class Experiment:
     def new_operations(self, before, after):
         known = {o['id'] for o in before['operations']}
         return [o for o in after['operations'] if o['id'] not in known]
+
+    def runtime_context(self):
+        """P1 runtime context of the experiment deployment (namespace created by OSM at instantiation)."""
+        namespace = self.cluster.namespace()
+        kube_system = self.cluster.namespace('kube-system')
+        if not namespace or not kube_system:
+            raise ExperimentError('Experiment or kube-system namespace missing')
+        return {'project_id': self.ids['project'], 'vim_id': self.ids['vim'],
+                'cluster_uid': kube_system['metadata']['uid'], 'namespace_uid': namespace['metadata']['uid'],
+                'namespace': NAMESPACE, 'repo_root': str(ROOT), 'workload_kubeconfig': self.config['kubeconfig'],
+                'deployment_profile': 'p4-experiment', 'osm_host': self.config['osm_url'],
+                'k8s_cluster_id': self.ids['k8scluster']}
 
     def write_state(self, state):
         self.state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -632,9 +741,8 @@ class Experiment:
         """Bring every KDU back to revision-2 content through OSM rollback actions (bounded)."""
         for kdu, release in RELEASES.items():
             for _ in range(3):
-                status = self.cluster.release_status(release) or {}
-                if status.get('chart', {}).get('metadata', {}).get('version') == EXPECTED_CHART[2] and \
-                        status.get('info', {}).get('status') == 'deployed':
+                view = self.cluster.release_view(release) or {}
+                if view.get('chart') == EXPECTED_CHART[2] and view.get('state') == 'deployed':
                     break
                 operation = osm.kdu_action(self.ns_id, MEMBER_INDEX, kdu, 'rollback', {}, self.timeouts['kdu_timeout'])
                 self.evidence.record(step, 'restore-' + kdu + '-' + operation[:8],
@@ -684,13 +792,7 @@ class Experiment:
         self.evidence.check(step, 'KDU models are revision-pinned storage paths of revision 1', all(
             (m := lifecycle.KDU_MODEL.fullmatch(str(models[k]))) and m['id'] == knf['id'] and m['rev'] == '1'
             and m['package'] == VNFD and m['kdu'] == k for k in RELEASES), models)
-        namespace = self.cluster.namespace()
-        kube_system = self.cluster.namespace('kube-system')
-        self.context = {'project_id': self.ids['project'], 'vim_id': self.ids['vim'],
-                        'cluster_uid': kube_system['metadata']['uid'], 'namespace_uid': namespace['metadata']['uid'],
-                        'namespace': NAMESPACE, 'repo_root': str(ROOT), 'workload_kubeconfig': self.config['kubeconfig'],
-                        'deployment_profile': 'p4-experiment', 'osm_host': self.config['osm_url'],
-                        'k8s_cluster_id': self.ids['k8scluster']}
+        self.context = self.runtime_context()
         self.write_state({'active': SCENARIO, 'context': self.context,
                           'osm': {'active_instance_id': ns_id, 'active_scenario': SCENARIO,
                                   'active_operation_id': operation}})
@@ -766,7 +868,8 @@ class Experiment:
                 self.expect_release(step, after, 'du', expected_chart, marker, 'explicit rollback')
                 old, new = before['helm']['du']['status'] or {}, after['helm']['du']['status'] or {}
                 self.evidence.check(step, 'rollback creates the next Helm revision (' + marker + ')',
-                                    new.get('version') == (old.get('version') or 0) + 1, [old, new])
+                                    type(old.get('version')) is int and new.get('version') == old['version'] + 1,
+                                    [old, new])
                 self.expect_release(step, after, 'cu', EXPECTED_CHART[2], 'r2', 'CU untouched by DU rollback')
                 self.expect_identity(step, after)
 
@@ -784,7 +887,7 @@ class Experiment:
                                         ('rollback', 'cu', 'COMPLETED')], summary)
         du_history = after['helm']['du']['history']
         self.evidence.check(step, 'helm --atomic recorded the failed DU revision and rolled it back', any(
-            h.get('status') == 'failed' and h.get('chart', '').endswith(EXPECTED_CHART[3]) for h in du_history) and
+            h['status'] == 'failed' and h['chart_version'] == EXPECTED_CHART[3] for h in du_history) and
             du_history and du_history[-1].get('status') == 'deployed' and
             'Rollback' in str(du_history[-1].get('description')), du_history)
         for kdu in RELEASES:
@@ -836,8 +939,8 @@ class Experiment:
         self.evidence.check(step, 'OSM received no new action', not [
             o for o in self.new_operations(before, after) if o['type'] == 'action'])
         for kdu in RELEASES:
-            self.evidence.check(step, kdu + ' Helm revision unchanged', (after['helm'][kdu]['status'] or {}).get('version')
-                                == (before['helm'][kdu]['status'] or {}).get('version'))
+            old, new = (before['helm'][kdu]['status'] or {}).get('version'), (after['helm'][kdu]['status'] or {}).get('version')
+            self.evidence.check(step, kdu + ' Helm revision unchanged', old is not None and new == old, [old, new])
         self.evidence.check(step, 'no pending update remains', 'pending_update' not in after['state']['osm'])
 
     def lcm_restart_recovery(self, step):
@@ -868,8 +971,8 @@ class Experiment:
                 with contextlib.suppress(lifecycle.LifecycleError):
                     recovery.append(('reconcile', self.reconcile_until_settled(step, policy)))
             for kdu, release in RELEASES.items():
-                status = self.cluster.release_status(release) or {}
-                if str(status.get('info', {}).get('status', '')).startswith('pending-'):
+                view = self.cluster.release_view(release) or {}
+                if str(view.get('state', '')).startswith('pending-'):
                     self.cluster.helm_rollback(release)
                     recovery.append(('helm-rollback', release))
             self.restore_rev2(step, osm)
@@ -879,8 +982,8 @@ class Experiment:
         after = self.snapshot(step, 'after')
         for kdu in RELEASES:
             self.expect_release(step, after, kdu, EXPECTED_CHART[2], 'r2', 'recovered after LCM restart')
-            self.evidence.check(step, kdu + ' Helm release not left pending', not str(
-                (after['helm'][kdu]['status'] or {}).get('state', '')).startswith('pending-'))
+            self.evidence.check(step, kdu + ' Helm release not left pending', after['helm'][kdu]['status'] is not None
+                                and not str(after['helm'][kdu]['status']['state']).startswith('pending-'))
         self.expect_identity(step, after)
         self.evidence.check(step, 'no pending update remains', 'pending_update' not in after['state']['osm'])
         self.evidence.check(step, 'LCM ready again', bool(self.cluster.lcm_pods()))
@@ -910,6 +1013,75 @@ class Experiment:
                 break
         return self.evidence.summary({'commit': self.commit, 'ns_id': self.ns_id, 'lcm_digest': self.lcm_digest,
                                       'target': self.config['target_address']})
+
+    def validate_baseline(self):
+        """Read-only check that the existing deployment is the clean revision-1 baseline
+        `instantiate` produces, i.e. that a later run could continue from it.
+
+        Reads OSM, Kubernetes, Helm and the P1 state file; writes only evidence files.
+        """
+        step = 'baseline'
+        started = self.clock.time()
+        try:
+            self.verify_target()
+            self.discover()
+            self.lcm_digest = self.cluster.lcm_image_digest()
+            self.evidence.record(step, 'target', {'ids': self.ids, 'lcm_digest': self.lcm_digest, 'commit': self.commit,
+                                                  'gate_committed': lifecycle.P4_KDU_UPGRADE_APPROVAL})
+            ns = self.experiment_ns()
+            self.ns_id, self.ns_count = ns['_id'], len(self.osm.ns_instances())
+            self.evidence.check(step, 'committed P4 gate is closed', lifecycle.P4_KDU_UPGRADE_APPROVAL is None)
+            knf, nsd = self.osm.lifecycle.package('knf', VNFD), self.osm.lifecycle.package('ns', NSD)
+            self.evidence.check(step, 'catalog holds revision 1 of the experiment KNF and NSD',
+                                bool(knf and nsd) and knf['revision'] == 1 and nsd['revision'] == 1, [knf, nsd])
+            deployed = ns['_admin']['deployed']['K8s']
+            self.evidence.check(step, 'KDUs deployed under member-vnf-index ' + MEMBER_INDEX,
+                                all(d.get('member-vnf-index') == MEMBER_INDEX for d in deployed))
+            models = {d['kdu-name']: d.get('kdu-model') for d in deployed}
+            self.evidence.check(step, 'KDU models are revision-pinned storage paths of revision 1', bool(knf) and all(
+                (m := lifecycle.KDU_MODEL.fullmatch(str(models[k]))) and m['id'] == knf['id'] and m['rev'] == '1'
+                and m['package'] == VNFD and m['kdu'] == k for k in RELEASES), models)
+            snap = self.snapshot(step, 'baseline')
+            for kdu, release in RELEASES.items():
+                self.expect_release(step, snap, kdu, EXPECTED_CHART[1], 'r1', 'baseline')
+                helm = snap['helm'][kdu]
+                # A consistent view at revision 1 has exactly one history entry.
+                self.evidence.check(step, 'Helm release ' + release + ' at revision 1',
+                                    helm['status'] is not None and helm['status']['version'] == 1, helm)
+            self.expect_identity(step, snap)
+            self.evidence.check(step, 'no OSM operation other than the completed instantiation',
+                                [(o['type'], o['state']) for o in snap['operations']] == [('instantiate', 'COMPLETED')],
+                                snap['operations'])
+            inventory = self.cluster.inventory()
+            foreign = [i for i in inventory if not (i[1].startswith(tuple(RELEASES.values())) or
+                                                     i[1] in ('kube-root-ca.crt', 'istio-ca-root-cert'))]
+            self.evidence.check(step, 'namespace holds only experiment objects', not foreign, inventory)
+            # The runner's P1 state is written at instantiation (active NS, context) and gains
+            # active_release only after an upgrade, so a revision-1 baseline must not have one.
+            # A missing file does not invalidate the deployment (nothing in OSM, Kubernetes or
+            # Helm depends on it): it is recorded, and would be re-established before any upgrade.
+            try:
+                self.context = self.runtime_context()
+                if not self.state_path.exists():
+                    self.evidence.observe(step, 'P1 state not present (re-established before any upgrade)',
+                                          str(self.state_path))
+                else:
+                    state = self.read_state()
+                    osm = state['osm']
+                    self.evidence.check(step, 'P1 state names this NS as active with nothing pending',
+                                        state.get('active') == SCENARIO and osm.get('active_instance_id') == self.ns_id
+                                        and not any(k.startswith('pending_') for k in osm)
+                                        and 'active_release' not in osm, state)
+            except (lifecycle.LifecycleError, ValueError) as error:
+                self.evidence.check(step, 'P1 state names this NS as active with nothing pending', False,
+                                    type(error).__name__ + ': ' + str(error))
+        except Exception as error:          # read-only: report, never repair
+            self.evidence.check(step, 'baseline readable', False, type(error).__name__ + ': ' + str(error)[:500])
+        failed = [c for c in self.evidence.checks if c['passed'] is False]
+        self.evidence.steps.append({'step': step, 'result': 'failed' if failed else 'passed',
+                                    'started': started, 'ended': self.clock.time()})
+        return self.evidence.summary({'commit': self.commit, 'ns_id': self.ns_id, 'lcm_digest': self.lcm_digest,
+                                      'target': self.config['target_address'], 'read_only': True})
 
     def teardown(self):
         """Remove only experiment resources: NS, descriptors, Helm releases, namespace."""
@@ -961,7 +1133,7 @@ def connect(config):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('command', choices=('build-packages', 'preflight', 'run', 'teardown'))
+    parser.add_argument('command', choices=('build-packages', 'preflight', 'validate-baseline', 'run', 'teardown'))
     parser.add_argument('--config', type=Path)
     parser.add_argument('--output', type=Path, help='build-packages: output directory')
     parser.add_argument('--allow-lcm-restart', action='store_true',
@@ -979,6 +1151,8 @@ def main(argv=None):
     experiment = Experiment(config, connect(config), cluster, evidence)
     if args.command == 'teardown':
         summary = experiment.teardown()
+    elif args.command == 'validate-baseline':
+        summary = experiment.validate_baseline()
     else:
         summary = experiment.run(('preflight',) if args.command == 'preflight' else STEPS, args.allow_lcm_restart)
     print(json.dumps({k: summary[k] for k in ('steps', 'passed', 'failed', 'observations', 'summary_sha256')
