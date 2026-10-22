@@ -46,7 +46,7 @@ no host access, no cluster-scoped objects.
 
 | Step | Checks |
 |---|---|
-| `preflight` | target guards; OSM project/VIM/K8s cluster; LCM image digest; no leftovers; committed gate closed |
+| `preflight` | target guards; OSM project/VIM/K8s cluster; LCM image digest; no leftovers; no P1 runner state from an earlier run (`<work_dir>/state` empty or absent); committed gate closed |
 | `onboard` | revision 1 KNF/NSD published through P1's `publish` |
 | `instantiate` | NS COMPLETED; KDUs in `p4-kdu-upgrade` as `p4kdu-cu`/`p4kdu-du`, member index `p4kdu`; revision-pinned `kdu-model` `…:1/p4kdu_knf/helm-chart-v3s/<kdu>`; runner/OSM clocks agree |
 | `upgrade_rev2_lost_response` | P1 `process_release` to revision 2: CU then DU, `timeout_ns_action` sent, kdu_model `/app/storage/<id>:2/…`; the DU response is dropped after OSM accepted it → `UpdateUncertain` → `adopt_lost_request` finds the operation → `reconcile_update` confirms; both releases revision 2 / chart 0.2.0 / `r2`; **same NS id, same NS count**; DU started after CU completed; P1 records active=2, previous=1; NSR `kdu-model` and VNFR revision recorded as observations |
@@ -80,21 +80,44 @@ version is the marker (`r1`/`r2`/`r3`) and is checked alongside the ConfigMap.
 ### Namespace isolation
 
 `validate-baseline` and `teardown` list `p4-kdu-upgrade` (Deployments, ReplicaSets, Pods,
-Services, ConfigMaps, Secrets, StatefulSets, DaemonSets, Jobs, CronJobs, PVCs) and keep
+Services, ConfigMaps, Secrets, StatefulSets, DaemonSets, Jobs, CronJobs, PVCs,
+ServiceAccounts, Roles, RoleBindings, NetworkPolicies, Ingresses, HPAs, PDBs, Endpoints,
+EndpointSlices, LimitRanges, ResourceQuotas, ReplicationControllers) and keep
 only identity metadata (kind, name, uid, type, labels, `meta.helm.sh/*` annotations,
 owner references); Secret data never reaches the evidence. Accepted objects:
 
 | Object | Required identity |
 |---|---|
-| ConfigMap `kube-root-ca.crt` | no owner, no labels (published by Kubernetes) |
+| ConfigMap `kube-root-ca.crt`, ServiceAccount `default` | no owner, no labels (created by Kubernetes) |
 | Deployment `R`, ConfigMap `R-release` (R = `p4kdu-cu`/`p4kdu-du`) | P4 chart labels, `app.kubernetes.io/instance=R`, `managed-by=Helm`, `meta.helm.sh/release-name=R`, `release-namespace=p4-kdu-upgrade`, no owner |
 | ReplicaSet `R-<hash>` | sole controller owner = that Deployment (uid), `pod-template-hash=<hash>` |
 | Pod `R-<hash>-<id>` | sole controller owner = an accepted ReplicaSet (uid), same hash and instance |
 | Secret `sh.helm.release.v1.R.vN` | type `helm.sh/release.v1`, labels `owner=helm`, `name=R`, `version=N`, no owner |
 
 Everything else, including objects merely named like an experiment object, is foreign:
-`validate-baseline` fails and `teardown` refuses to delete the namespace (after waiting
-for pods of an uninstalled release to finish terminating).
+`validate-baseline` fails and `teardown` removes nothing.
+
+### Teardown safety
+
+1. Target guards (as for every step).
+2. Witness: identity and state of every other OSM NS are recorded (`other-ns-before`).
+3. Namespace contents checked before anything is removed (table above).
+4. NS identity proven from OSM records, not the name: the NS by id is named
+   `p4-kdu-upgrade-test`; OSM recorded exactly one instantiate operation for it, for the
+   `p4kdu_ns` package, requesting only (`p4kdu`, cu/du, `p4kdu-cu`/`p4kdu-du`,
+   `p4-kdu-upgrade`); while instantiated its `nsd-id`, deployed KDUs and VNFR descriptors
+   match; once terminated nothing is listed as deployed. Recorded as `ns-identity`.
+5. Terminate only an idle NS; continue only if the operation COMPLETED and, re-verified,
+   the NS is NOT_INSTANTIATED and idle with no running operation and no P4 Helm release
+   left (`after-termination`). Otherwise the NS record and packages are kept.
+6. Delete the NS record and confirm it is gone; delete `p4kdu_ns`/`p4kdu_knf` only if no NS
+   references the NSD; delete the namespace only when no release and no foreign object
+   remains.
+7. `other-ns-after` must equal `other-ns-before` (check `every other OSM NS unchanged`),
+   also when teardown stopped early.
+
+Any refusal is recorded as the failed check `teardown completed` and leaves the remaining
+resources in place for inspection.
 
 ## P1 changes made for P4 (on this branch)
 

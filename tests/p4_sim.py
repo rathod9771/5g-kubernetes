@@ -33,6 +33,10 @@ def kube_root_ca():
         'annotations': {'kubernetes.io/description': 'Contains a CA bundle ...'}}, 'data': {'ca.crt': 'PEM'}}
 
 
+def default_service_account():
+    return {'kind': 'ServiceAccount', 'metadata': {'name': 'default', 'uid': _uid('default-sa')}}
+
+
 def helm_release_objects(namespace, release, revisions, template_hash, pod_suffix):
     """Objects of one P4 Helm release as Kubernetes/Helm 3 create them (kubectl get -o json)."""
     chart = {'app.kubernetes.io/name': 'p4kdu', 'app.kubernetes.io/component': release.rpartition('-')[2],
@@ -260,7 +264,9 @@ class P4Target:
                                  'nsState': 'READY', 'operational-status': 'running', 'currentOperation': 'IDLE',
                                  '_admin': {'deployed': {'K8s': kdus}}}
         self.vnfrs[vnfr_id] = {'_id': vnfr_id, 'nsr-id-ref': ns_id, 'vnfd-id': knf['_id'], 'revision': revision}
-        op = self._new_op(ns_id, 'instantiate', {'nsName': body['nsName']}, state='COMPLETED')
+        # OSM keeps the instantiation request as the operation parameters.
+        op = self._new_op(ns_id, 'instantiate', dict(body, lcmOperationType='instantiate', nsInstanceId=ns_id),
+                          state='COMPLETED')
         return dump({'id': ns_id, 'nslcmop_id': op})
 
     def _terminate(self, ns_id):
@@ -391,7 +397,7 @@ class P4Target:
                     'spec': {'replicas': 1}, 'status': {'observedGeneration': 3, 'replicas': 1, 'updatedReplicas': 1,
                                                         'readyReplicas': ready, 'availableReplicas': ready}}
         if verb == 'get' and args[1].startswith('deployments,'):
-            items = [kube_root_ca()]
+            items = [kube_root_ca(), default_service_account()]
             for (ns, release), history in self.releases.items():
                 if ns == namespace:
                     template = hashlib.sha256((release + history[-1]['marker']).encode()).hexdigest()[:10]

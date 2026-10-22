@@ -460,7 +460,9 @@ def deployment_ready(deployment):
 
 # Namespaced kinds a workload or leftover could take; all but the expected ones are foreign.
 INVENTORY_KINDS = ('deployments,replicasets,pods,services,configmaps,secrets,statefulsets,daemonsets,jobs,'
-                   'cronjobs,persistentvolumeclaims')
+                   'cronjobs,persistentvolumeclaims,serviceaccounts,roles,rolebindings,networkpolicies,ingresses,'
+                   'horizontalpodautoscalers,poddisruptionbudgets,endpoints,endpointslices,limitranges,'
+                   'resourcequotas,replicationcontrollers')
 HELM_SECRET = re.compile(r'sh\.helm\.release\.v1\.(?P<release>[a-z0-9-]+)\.v(?P<revision>[1-9][0-9]*)')
 CHART_LABELS = {'app.kubernetes.io/name': 'p4kdu', 'app.kubernetes.io/part-of': 'p4-kdu-upgrade'}
 
@@ -485,7 +487,8 @@ def foreign_objects(inventory):
     """Objects in the experiment namespace not provably created for the P4 releases.
 
     Accepted, each by exact identity rather than name prefix:
-    - ConfigMap kube-root-ca.crt (published into every namespace by Kubernetes; no owner)
+    - ConfigMap kube-root-ca.crt and ServiceAccount default (created in every namespace by
+      Kubernetes; no owner, no labels)
     - per release R: Deployment R and ConfigMap R-release rendered by the P4 chart and
       owned by Helm release R in this namespace (chart labels + meta.helm.sh annotations)
     - ReplicaSets controlled by such a Deployment (matched by uid, name R-<pod-template-hash>)
@@ -513,8 +516,8 @@ def foreign_objects(inventory):
     foreign = []
     for i in inventory:
         kind, name, labels = i['kind'], i['name'], i['labels']
-        if kind == 'ConfigMap' and name == 'kube-root-ca.crt':
-            ok = not i['owners'] and not labels
+        if kind == 'ConfigMap' and name == 'kube-root-ca.crt' or kind == 'ServiceAccount' and name == 'default':
+            ok = not i['owners'] and not labels     # created in every namespace by Kubernetes
         elif kind == 'ConfigMap':
             ok = name[:-len('-release')] in releases and name.endswith('-release') and \
                 helm_owned(i, name[:-len('-release')])
@@ -842,9 +845,16 @@ class Experiment:
         clean = (self.osm.experiment_ns() is None and self.osm.lifecycle.package('knf', VNFD) is None and
                  self.osm.lifecycle.package('ns', NSD) is None and self.cluster.namespace() is None)
         self.evidence.check(step, 'no leftovers from an earlier run', clean)
+        # A new run starts from no runner state; earlier state belongs to earlier evidence.
+        state_dir = self.state_path.parent
+        stale = sorted(p.name for p in state_dir.iterdir()) if state_dir.exists() else []
+        self.evidence.check(step, 'no stale P1 runner state', not stale, {'state_dir': str(state_dir), 'files': stale})
         self.evidence.check(step, 'committed P4 gate is closed', lifecycle.P4_KDU_UPGRADE_APPROVAL is None)
         if not clean:
             raise ExperimentError('Experiment resources already exist; run teardown first')
+        if stale:
+            raise ExperimentError('P1 runner state from an earlier run exists in ' + str(state_dir) +
+                                  '; archive it before a new run')
 
     def onboard(self, step):
         _, blobs = self.release(1)
@@ -1165,36 +1175,145 @@ class Experiment:
         return self.evidence.summary({'commit': self.commit, 'ns_id': self.ns_id, 'lcm_digest': self.lcm_digest,
                                       'target': self.config['target_address'], 'read_only': True})
 
-    def teardown(self):
-        """Remove only experiment resources: NS, descriptors, Helm releases, namespace."""
-        step = 'teardown'
-        self.verify_target()
-        ns = self.osm.experiment_ns()
-        if ns:
-            self.ns_id = ns['_id']
-            if ns.get('nsState') != 'NOT_INSTANTIATED':
-                state = self.wait_operation(self.osm.terminate(ns['_id']))
-                self.evidence.check(step, 'experiment NS terminated', state == 'COMPLETED', state)
-            self.osm.delete_ns(ns['_id'])
-        for kind, name in (('ns', NSD), ('knf', VNFD)):
-            self.evidence.record(step, 'deleted-' + name, self.osm.delete_package(kind, name))
-        deadline = self.clock.monotonic() + self.timeouts['health_timeout']
-        # After the uninstall, pods of deleted ReplicaSets may still be terminating; wait for
-        # them too, so only objects that stay are judged foreign.
-        while self.cluster.namespace() and (self.cluster.releases() or foreign_objects(self.cluster.inventory())) \
-                and self.clock.monotonic() < deadline:
+    # -- teardown ----------------------------------------------------------------------------------------------
+    # (member-vnf-index, KDU, Helm release, Kubernetes namespace) of the experiment's KDUs
+    ISOLATED_KDUS = sorted((MEMBER_INDEX, kdu, release, NAMESPACE) for kdu, release in RELEASES.items())
+
+    def other_ns_states(self, experiment_id):
+        """Identity and state of every OSM NS except the experiment NS (G4 witness)."""
+        return sorted([str(n.get('_id')), n.get('name', n.get('nsName')), n.get('nsState'), n.get('currentOperation'),
+                       n.get('operational-status'), n.get('config-status')]
+                      for n in self.osm.ns_instances() if n.get('_id') != experiment_id)
+
+    def verified_teardown_ns(self, ns_id, nsd):
+        """Prove from OSM records, not the name, that ns_id is the experiment NS (G1).
+
+        Requires: the NS (by id) is named NS_NAME; OSM recorded exactly one instantiate
+        operation for it, requesting this NSD package with only the isolated CU/DU KDUs
+        (member index, KDU name, Kubernetes namespace, release name); while instantiated,
+        its NSD reference is that package, its deployed KDUs are exactly the isolated ones and
+        every VNFR uses the experiment KNF; once terminated, nothing remains deployed.
+        """
+        ns = self.osm.lifecycle.get_ns(ns_id)
+        problems = []
+        if ns.get('name', ns.get('nsName')) != NS_NAME:
+            problems.append('name')
+        if not nsd:
+            problems.append('experiment NSD package missing')
+        instantiations = [o for o in self.osm.lifecycle.ns_operations(ns_id) if o.get('lcmOperationType') == 'instantiate']
+        params = (instantiations[0].get('operationParams') or {}) if instantiations else {}
+        requested = sorted((v.get('member-vnf-index'), k.get('kdu_name'), k.get('kdu-deployment-name'),
+                            k.get('k8s-namespace'))
+                           for v in params.get('additionalParamsForVnf') or [] for k in v.get('additionalParamsForKdu') or [])
+        if len(instantiations) != 1 or params.get('nsName') != NS_NAME or not nsd or \
+                params.get('nsdId') != nsd['id'] or requested != self.ISOLATED_KDUS:
+            problems.append('instantiate operation is not the isolated experiment request')
+        deployed = sorted((k.get('member-vnf-index'), k.get('kdu-name'), k.get('kdu-instance'), k.get('namespace'))
+                          for k in (ns.get('_admin') or {}).get('deployed', {}).get('K8s') or [])
+        if ns.get('nsState') == 'NOT_INSTANTIATED':
+            if deployed:
+                problems.append('terminated NS still lists deployed KDUs')
+        else:
+            knf = self.osm.lifecycle.package('knf', VNFD)
+            vnfrs = self.osm.lifecycle.vnf_instances(ns_id)
+            if not nsd or ns.get('nsd-id') != nsd['id']:
+                problems.append('NSD reference')
+            if deployed != self.ISOLATED_KDUS:
+                problems.append('deployed KDUs')
+            if not knf or not vnfrs or any(v.get('vnfd-id') != knf['id'] for v in vnfrs):
+                problems.append('VNFR descriptors')
+        identity = {'ns_id': ns_id, 'nsState': ns.get('nsState'), 'nsd_id': ns.get('nsd-id'), 'deployed': deployed,
+                    'instantiate_operations': [o.get('_id') for o in instantiations], 'requested': requested,
+                    'problems': problems}
+        if problems:
+            raise TargetError('OSM NS ' + ns_id + ' is not provably the experiment NS: ' + ', '.join(problems))
+        return ns, identity
+
+    def wait_terminated(self, ns_id, nsd):
+        """G2: terminated NS idle with nothing deployed, no running operation, no P4 Helm release."""
+        deadline = self.clock.monotonic() + self.timeouts['op_timeout']
+        while True:
+            ns, identity = self.verified_teardown_ns(ns_id, nsd)
+            running = [o.get('_id') for o in self.osm.lifecycle.ns_operations(ns_id)
+                       if o.get('operationState') not in TERMINAL]
+            releases = [r.get('name') for r in self.cluster.releases()] if self.cluster.namespace() else []
+            safe = (ns.get('nsState') == 'NOT_INSTANTIATED' and ns.get('currentOperation') in ('IDLE', None) and
+                    not running and not releases)
+            if safe or self.clock.monotonic() >= deadline:
+                return safe, dict(identity, currentOperation=ns.get('currentOperation'), running=running,
+                                  releases=releases)
             self.clock.sleep(self.timeouts['poll'])
-        if self.cluster.namespace():
-            releases = self.cluster.releases()
-            inventory = self.cluster.inventory()
-            self.evidence.record(step, 'namespace-before-delete', {'releases': releases, 'inventory': inventory})
-            foreign = foreign_objects(inventory)
-            if releases or foreign:
-                raise ExperimentError('Namespace holds non-experiment resources; not deleting it: ' + str(foreign or releases))
-            self.cluster.delete_namespace()
-        clean = (self.osm.experiment_ns() is None and self.osm.lifecycle.package('knf', VNFD) is None and
-                 self.osm.lifecycle.package('ns', NSD) is None and self.cluster.namespace() is None)
-        self.evidence.check(step, 'experiment resources removed', clean)
+
+    def teardown(self):
+        """Remove only experiment resources: NS, descriptors, Helm releases, namespace.
+
+        Nothing is touched unless the target is the Dell, the namespace holds only P4
+        objects and the NS is provably the experiment NS (G1, G3). The NS record and the
+        packages are deleted only after a COMPLETED termination left nothing running or
+        deployed (G2). Every other OSM NS must be unchanged afterwards (G4).
+        """
+        step = 'teardown'
+        others_before = experiment_id = None
+        try:
+            self.verify_target()
+            nsd = self.osm.lifecycle.package('ns', NSD)
+            ns = self.osm.experiment_ns()
+            experiment_id = ns and ns['_id']
+            others_before = self.other_ns_states(experiment_id)
+            self.evidence.record(step, 'other-ns-before', others_before)
+            if self.cluster.namespace():
+                inventory = self.cluster.inventory()
+                self.evidence.record(step, 'namespace-before-teardown', inventory)
+                foreign = foreign_objects(inventory)
+                if foreign:
+                    raise ExperimentError('Namespace holds non-experiment resources; nothing removed: ' + str(foreign))
+            if ns:
+                self.ns_id = ns['_id']
+                ns, identity = self.verified_teardown_ns(ns['_id'], nsd)
+                self.evidence.record(step, 'ns-identity', identity)
+                if ns.get('nsState') != 'NOT_INSTANTIATED':
+                    if ns.get('currentOperation') not in ('IDLE', None):
+                        raise ExperimentError('Experiment NS has an operation in progress; not terminating')
+                    state = self.wait_operation(self.osm.terminate(ns['_id']))
+                    if not self.evidence.check(step, 'experiment NS terminated', state == 'COMPLETED', state):
+                        raise ExperimentError('Termination not COMPLETED (' + str(state) + '); NS and packages kept')
+                safe, detail = self.wait_terminated(ns['_id'], nsd)
+                self.evidence.record(step, 'after-termination', detail)
+                if not self.evidence.check(step, 'terminated NS idle with nothing deployed or running', safe, detail):
+                    raise ExperimentError('Terminated NS not in a safe state; NS and packages kept')
+                self.osm.delete_ns(ns['_id'])
+                if self.osm.experiment_ns() is not None:
+                    raise ExperimentError('Experiment NS record still present; packages kept')
+            users = [n.get('_id') for n in self.osm.ns_instances() if nsd and n.get('nsd-id') == nsd['id']]
+            if users:
+                raise ExperimentError('Experiment NSD still referenced by NS ' + str(users) + '; packages kept')
+            for kind, name in (('ns', NSD), ('knf', VNFD)):
+                self.evidence.record(step, 'deleted-' + name, self.osm.delete_package(kind, name))
+            deadline = self.clock.monotonic() + self.timeouts['health_timeout']
+            # After the uninstall, pods of deleted ReplicaSets may still be terminating; wait for
+            # them too, so only objects that stay are judged foreign.
+            while self.cluster.namespace() and (self.cluster.releases() or foreign_objects(self.cluster.inventory())) \
+                    and self.clock.monotonic() < deadline:
+                self.clock.sleep(self.timeouts['poll'])
+            if self.cluster.namespace():
+                releases = self.cluster.releases()
+                inventory = self.cluster.inventory()
+                self.evidence.record(step, 'namespace-before-delete', {'releases': releases, 'inventory': inventory})
+                foreign = foreign_objects(inventory)
+                if releases or foreign:
+                    raise ExperimentError('Namespace holds non-experiment resources; not deleting it: '
+                                          + str(foreign or releases))
+                self.cluster.delete_namespace()
+            clean = (self.osm.experiment_ns() is None and self.osm.lifecycle.package('knf', VNFD) is None and
+                     self.osm.lifecycle.package('ns', NSD) is None and self.cluster.namespace() is None)
+            self.evidence.check(step, 'experiment resources removed', clean)
+        except Exception as error:          # stop; whatever was not yet removed stays for inspection
+            self.evidence.check(step, 'teardown completed', False, type(error).__name__ + ': ' + str(error)[:500])
+        if others_before is not None:
+            others_after = self.other_ns_states(experiment_id)
+            self.evidence.record(step, 'other-ns-after', others_after)
+            self.evidence.check(step, 'every other OSM NS unchanged', others_after == others_before,
+                                {'before': others_before, 'after': others_after})
         return self.evidence.summary({'teardown': True})
 
 
