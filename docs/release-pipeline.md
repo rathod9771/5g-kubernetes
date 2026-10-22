@@ -18,11 +18,20 @@ push (reproducible-installer, feature/**) / pull_request / workflow_dispatch
          osm_packages.build() for affected, ready entries (deterministic bytes)
          image evidence (+ anonymous Docker Hub digest/platform verification)
          release-manifest.json + SHA256SUMS
+       release_manifest.py publication-decision (fails closed)
+         verifies the written candidate as a consumer would and recomputes
+         eligibility from evidence; output publication_allowed=true only on exit 0
        upload artifact (not for pull requests)
-  └─ attest job (push to reproducible-installer only, packages > 0)
+  └─ attest job (push to reproducible-installer only, packages > 0,
+     publication_allowed == 'true')
        id-token/attestations permissions only here; runs no repository code
+       inline re-check of the downloaded manifest (unblocked decision, commit, branch)
        actions/attest-build-provenance over manifest, packages, provenance
 ```
+
+A candidate with any blocker (blocked scenario, missing, local-only or unverified
+image digests, failed CI, non-release channel) is uploaded for inspection but never
+attested, so P3 cannot even find a signature for it.
 
 Channels: `release` (push to `reproducible-installer`), `development` (other branch
 pushes), `pull-request`, `manual` (workflow_dispatch), `local`. Only `release` can

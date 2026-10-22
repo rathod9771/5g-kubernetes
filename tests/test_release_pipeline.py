@@ -726,6 +726,71 @@ class ActiveInactiveContractTests(unittest.TestCase):
         self.assertEqual(self.harness.actions(), [])
         self.harness.assert_no_replacement()
 
+    # --- pre-attestation publication decision (workflow gate) ----------------------------------
+    def decision(self, key, change=None, read_change=None, **expected):
+        head, _ = self.builds[key]
+        manifest_bytes, read = read_release(Path(self.temp.name) / key)
+        if change:
+            manifest = json.loads(manifest_bytes)
+            change(manifest)
+            manifest_bytes = release_manifest.render(manifest)
+        exp = dict({'repository': REPOSITORY, 'branches': (BRANCH,), 'commit': head, 'workflow_path': WORKFLOW}, **expected)
+        return release_manifest.publication_decision(manifest_bytes, read_change(read) if read_change else read, exp, REGISTRY)
+
+    def test_complete_release_candidate_is_publication_allowed(self):
+        self.assertEqual(self.decision('cran-oai'), {'publication_allowed': True, 'blockers': []})
+
+    def test_incomplete_or_blocked_candidates_are_never_publication_allowed(self):
+        def unverified_image(m):
+            next(iter(m['images']['components'].values()))['registry_verification'] = 'UNVERIFIED'
+        def local_image(m):
+            next(iter(m['images']['components'].values())).update(status='LOCAL_ONLY', digest=None)
+        def blocked(m):
+            m['change_impact']['blocked']['oran-srsran'] = 'not reconciled'
+        def blocker_recorded(m):
+            m['eligibility']['blockers'] = ['builder blocker']
+        def claim_false(m):
+            m['eligibility']['publication_allowed'] = False
+        def deploy_claim(m):
+            m['eligibility']['automatic_deployment_allowed'] = True
+        def manual(m):
+            m['channel'] = 'manual'
+        def ci_failed(m):
+            m['ci_validation']['status'] = 'not-run'
+        def self_hosted(m):
+            m['workflow']['runner_environment'] = 'self-hosted'
+        def no_packages(m):
+            m['packages'], m['artifacts'] = [], {}
+        def no_eligibility(m):
+            del m['eligibility']
+        cases = [unverified_image, local_image, blocked, blocker_recorded, claim_false, deploy_claim, manual, ci_failed,
+                 self_hosted, no_packages, no_eligibility]
+        for change in cases:
+            with self.subTest(change=change.__name__):
+                decision = self.decision('cran-oai', change)
+                self.assertIs(decision['publication_allowed'], False)
+                self.assertTrue(decision['blockers'])
+        with self.subTest('altered package bytes'):
+            altered = lambda read: lambda name: read(name) + (b'x' if name.startswith('packages/') else b'')  # noqa: E731
+            self.assertFalse(self.decision('cran-oai', read_change=altered)['publication_allowed'])
+        for expected in ({'commit': 'f' * 40}, {'branches': ('main',)}, {'repository': 'other/repo'}):
+            with self.subTest(expected=expected):
+                self.assertFalse(self.decision('cran-oai', **expected)['publication_allowed'])
+
+    def test_decision_cli_exit_status_fails_closed(self):
+        head, _ = self.builds['cran-oai']
+        args = ['publication-decision', '--release', str(Path(self.temp.name) / 'cran-oai'), '--repository', REPOSITORY,
+                '--commit', head, '--branch', BRANCH]
+        with mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            self.assertEqual(release_manifest.main(args), 0)
+        self.assertIs(json.loads(out.getvalue())['publication_allowed'], True)
+        for bad in (['--commit', 'f' * 40], ['--release', str(Path(self.temp.name) / 'missing')]):
+            changed = list(args)
+            changed[changed.index(bad[0]) + 1] = bad[1]
+            with self.subTest(bad=bad), mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+                self.assertEqual(release_manifest.main(changed), 3)
+            self.assertIs(json.loads(out.getvalue())['publication_allowed'], False)
+
 
 class WorkflowSafetyTests(unittest.TestCase):
     workflow = yaml.safe_load((ROOT / '.github/workflows/release-candidate.yml').read_text())
@@ -749,7 +814,57 @@ class WorkflowSafetyTests(unittest.TestCase):
         self.assertEqual(attest['permissions'], {'contents': 'read', 'id-token': 'write', 'attestations': 'write'})
         self.assertIn("github.event_name == 'push'", attest['if'])
         self.assertIn("github.ref == 'refs/heads/reproducible-installer'", attest['if'])
-        self.assertFalse(any('run' in step for step in attest['steps']), 'attestation job runs no repository code')
+        self.assertIn("needs.build.outputs.publication_allowed == 'true'", attest['if'])
+        # The only command in the OIDC job is the inline, isolated re-check; it runs no repository code.
+        runs = [step for step in attest['steps'] if 'run' in step]
+        self.assertEqual(len(runs), 1)
+        self.assertIn('python3 -I -', runs[0]['run'])
+        self.assertNotIn('scripts/', runs[0]['run'])
+        names = [step.get('uses', step.get('name', '')) for step in attest['steps']]
+        attest_step = next(i for i, n in enumerate(names) if n.startswith('actions/attest-build-provenance@'))
+        self.assertLess(attest['steps'].index(runs[0]), attest_step)
+
+    def test_publication_decision_is_computed_from_the_built_candidate(self):
+        build = self.workflow['jobs']['build']
+        self.assertEqual(build['outputs']['publication_allowed'], '${{ steps.decision.outputs.publication_allowed }}')
+        steps = build['steps']
+        decision = next(s for s in steps if s.get('id') == 'decision')
+        release = next(s for s in steps if s.get('id') == 'release')
+        self.assertLess(steps.index(release), steps.index(decision))
+        run = decision['run']
+        self.assertIn('scripts/release_manifest.py publication-decision', run)
+        self.assertIn('--commit "$GITHUB_SHA"', run)
+        self.assertIn('--branch "$RELEASE_BRANCH"', run)
+        self.assertNotIn('inputs.', self.text)                  # no dispatch input can influence the decision
+        self.assertIn('allowed=false', run)
+        self.assertEqual(run.count('allowed=true'), 1)
+
+    def run_attest_gate(self, manifest, commit='c' * 40):
+        script = next(s for s in self.workflow['jobs']['attest']['steps'] if 'run' in s)['run']
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / 'release').mkdir()
+            (Path(directory) / 'release/release-manifest.json').write_text(json.dumps(manifest))
+            env = {'PATH': os.environ['PATH'], 'EXPECTED_COMMIT': commit, 'RELEASE_BRANCH': BRANCH}
+            return subprocess.run(['bash', '-c', script], cwd=directory, env=env, capture_output=True).returncode
+
+    def test_attest_job_gate_rejects_incomplete_candidates(self):
+        good = {'channel': 'release', 'source': {'commit': 'c' * 40, 'branch': BRANCH}, 'packages': [{'scenario': 'fran'}],
+                'eligibility': {'publication_allowed': True, 'blockers': [], 'automatic_deployment_allowed': False}}
+        self.assertEqual(self.run_attest_gate(good), 0)
+        bad = [('blockers', lambda m: m['eligibility'].update(blockers=['image identity evidence incomplete'])),
+               ('not allowed', lambda m: m['eligibility'].update(publication_allowed=False)),
+               ('truthy string', lambda m: m['eligibility'].update(publication_allowed='true')),
+               ('deployment', lambda m: m['eligibility'].update(automatic_deployment_allowed=True)),
+               ('channel', lambda m: m.update(channel='manual')),
+               ('commit', lambda m: m['source'].update(commit='d' * 40)),
+               ('branch', lambda m: m['source'].update(branch='main')),
+               ('no packages', lambda m: m.update(packages=[])),
+               ('no eligibility', lambda m: m.pop('eligibility'))]
+        for name, change in bad:
+            manifest = copy.deepcopy(good)
+            change(manifest)
+            with self.subTest(name):
+                self.assertNotEqual(self.run_attest_gate(manifest), 0)
 
     def test_exact_commit_pinned_actions_and_existing_workflow_preserved(self):
         steps = self.workflow['jobs']['build']['steps']

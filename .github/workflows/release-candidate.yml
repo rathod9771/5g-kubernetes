@@ -31,6 +31,7 @@ jobs:
     outputs:
       channel: ${{ steps.release.outputs.channel }}
       packages: ${{ steps.release.outputs.packages }}
+      publication_allowed: ${{ steps.decision.outputs.publication_allowed }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -83,6 +84,22 @@ jobs:
           { echo '```json'; cat "$RUNNER_TEMP/summary.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           echo "channel=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["channel"])' "$RUNNER_TEMP/summary.json")" >> "$GITHUB_OUTPUT"
           echo "packages=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["packages"])' "$RUNNER_TEMP/summary.json")" >> "$GITHUB_OUTPUT"
+      - name: Decide publication (verified candidate, eligibility recomputed from evidence)
+        id: decision
+        shell: bash
+        run: |
+          # Fails closed: only exit status 0 of the verified decision yields "true";
+          # blockers, verification errors or a crash all leave the candidate unattested.
+          if python3 scripts/release_manifest.py publication-decision --release "$RUNNER_TEMP/release" \
+              --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --branch "$RELEASE_BRANCH" \
+              > "$RUNNER_TEMP/decision.json"; then
+            allowed=true
+          else
+            allowed=false
+          fi
+          cat "$RUNNER_TEMP/decision.json"
+          { echo '```json'; cat "$RUNNER_TEMP/decision.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "publication_allowed=$allowed" >> "$GITHUB_OUTPUT"
       - name: Upload release candidate
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -95,8 +112,9 @@ jobs:
   attest:
     # Signed provenance only for pushes to the approved release branch. OIDC and
     # attestation permissions exist only in this job, which runs no repository code.
+    # Only candidates with a verified, unblocked publication decision are attested.
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/reproducible-installer' && needs.build.outputs.channel == 'release' && needs.build.outputs.packages != '0'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/reproducible-installer' && needs.build.outputs.channel == 'release' && needs.build.outputs.packages != '0' && needs.build.outputs.publication_allowed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -108,6 +126,23 @@ jobs:
         with:
           name: release-candidate-${{ github.sha }}-${{ github.run_attempt }}
           path: release
+      - name: Refuse to attest a candidate without an unblocked publication decision
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        # Inline check of the downloaded bytes (no repository code runs with OIDC).
+        run: |
+          python3 -I - release/release-manifest.json <<'EOF'
+          import json, os, sys
+          m = json.load(open(sys.argv[1]))
+          e, s = m.get('eligibility') or {}, m.get('source') or {}
+          ok = (e.get('publication_allowed') is True and e.get('blockers') == [] and
+                e.get('automatic_deployment_allowed') is False and m.get('channel') == 'release' and
+                s.get('commit') == os.environ['EXPECTED_COMMIT'] and s.get('branch') == os.environ['RELEASE_BRANCH'] and
+                isinstance(m.get('packages'), list) and len(m['packages']) > 0)
+          print('publication decision confirmed' if ok else 'candidate is not publication-eligible; refusing to attest')
+          sys.exit(0 if ok else 1)
+          EOF
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: |

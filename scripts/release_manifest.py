@@ -5,9 +5,12 @@ binding of the manifest to an actual GitHub workflow execution comes only from a
 verified GitHub artifact attestation (Sigstore), supplied by an injected verifier.
 Without that verification provenance is UNVERIFIED and nothing is eligible.
 """
+import argparse
 import hashlib
 import json
+from pathlib import Path
 import re
+import sys
 
 SCHEMA = '5g-kubernetes/release-manifest'
 SCHEMA_VERSION = 1
@@ -200,3 +203,63 @@ def lifecycle_release(manifest_bytes, verdict, read_artifact, target):
                'target': target, 'ci_status': 'success' if manifest['ci_validation']['status'] == 'passed' else 'failure',
                'scenarios': scenarios}
     return release, blobs
+
+
+def _images_complete(images):
+    records = list(images['components'].values()) + [i for s in images['scenarios'].values() for i in s['chart_images']]
+    return bool(records) and all(r.get('status') == 'PINNED_DIGEST' and r.get('registry_verification') == 'VERIFIED'
+                                 for r in records)
+
+
+def publication_decision(manifest_bytes, read_artifact, expected, registry):
+    """CI gate before attestation: may these exact bytes be attested as a publication candidate?
+
+    Fails closed. The manifest's own eligibility claim is necessary but never sufficient:
+    the candidate is verified as a consumer would and eligibility is recomputed from evidence.
+    """
+    try:
+        verify(manifest_bytes, read_artifact, expected, registry)
+        manifest = _strict_json(manifest_bytes)
+        claimed = manifest['eligibility']
+        blockers = list(eligibility(manifest, _images_complete(manifest['images']))['blockers'])
+    except (ManifestError, KeyError, TypeError, AttributeError) as error:
+        return {'publication_allowed': False, 'blockers': ['candidate verification failed: ' + str(error)]}
+    if not isinstance(claimed, dict) or claimed.get('publication_allowed') is not True or claimed.get('blockers') != []:
+        blockers.append('manifest does not record an unblocked publication decision')
+    if not isinstance(claimed, dict) or claimed.get('automatic_deployment_allowed') is not False:
+        blockers.append('manifest does not forbid automatic deployment')
+    return {'publication_allowed': not blockers, 'blockers': blockers}
+
+
+def _read_release_file(root):
+    def read(name):
+        path = root / name
+        if path.is_symlink() or not path.is_file():
+            raise ManifestError('Release file missing or not a regular file: ' + name)
+        return path.read_bytes()
+    return read
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description='Pre-attestation publication decision for a built candidate.')
+    parser.add_argument('command', choices=['publication-decision'])
+    parser.add_argument('--release', type=Path, required=True, help='candidate directory written by build_release.py')
+    parser.add_argument('--repository', required=True)
+    parser.add_argument('--commit', required=True)
+    parser.add_argument('--branch', required=True)
+    args = parser.parse_args(argv)
+    try:
+        from scenario_registry import load_registry
+        manifest_bytes = _read_release_file(args.release)(MANIFEST_NAME)
+        decision = publication_decision(manifest_bytes, _read_release_file(args.release),
+                                        {'repository': args.repository, 'branches': (args.branch,),
+                                         'commit': args.commit, 'workflow_path': WORKFLOW_PATH}, load_registry())
+    except Exception as error:      # any failure is a refusal, never an approval
+        decision = {'publication_allowed': False, 'blockers': ['decision failed: ' + type(error).__name__]}
+    print(json.dumps(decision, indent=2, sort_keys=True))
+    # Exit 0 only for an approved candidate; the workflow treats anything else as "do not attest".
+    return 0 if decision['publication_allowed'] is True else 3
+
+
+if __name__ == '__main__':
+    sys.exit(main())
