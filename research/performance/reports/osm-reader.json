@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "status": "UNAVAILABLE",
+    "error_class": "ConfigError",
+    "error_code": "DEFAULT_CREDENTIALS_REJECTED",
+    "details": "SUPPRESSED",
+    "lifecycle_calls": 0
+  },
+  "records": []
+}

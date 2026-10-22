@@ -1,0 +1,14 @@
+{
+  "process_current_rss_bytes": 22327296,
+  "process_current_image_hwm_bytes": 22327296,
+  "kind": "OFFLINE_ENGINEERING_MICROBENCHMARK",
+  "input_provenance": "SYNTHETIC_TEST",
+  "live_calls": 0,
+  "iterations": 100,
+  "ues_per_cycle": 32,
+  "wall_seconds": 0.4811063688248396,
+  "cpu_seconds": 0.461152385,
+  "legacy_ru_maxrss_kib_not_current_image_memory": 598236,
+  "series_retained": 192,
+  "not_a_radio_or_cluster_benchmark": true
+}

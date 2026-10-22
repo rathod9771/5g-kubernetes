@@ -1,0 +1,545 @@
+{
+  "namespace": "id-1b4ff6edc2bb",
+  "source": "read-only Kubernetes metadata; no credential/env dumps",
+  "image_semantics": "runtime imageID is not independently verified registry manifest digest",
+  "workloads": [
+    {
+      "name": "pod-41e0a0eae418",
+      "uid": "id-bf8a6b8ab746",
+      "ready": true,
+      "images": [
+        {
+          "name": "cu",
+          "image": "oaisoftwarealliance/oai-gnb:2026.w13",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "2Gi"
+            },
+            "requests": {
+              "cpu": "250m",
+              "memory": "1Gi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "cu",
+          "restarts": 0,
+          "imageID": "sha256:d9857ec16affbad2f6d142365e56c360e96344a297d7f1651f8d815cc95a3ffd",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-a9a07a4cbdca",
+      "uid": "id-3cdecb7182e1",
+      "ready": true,
+      "images": [
+        {
+          "name": "du",
+          "image": "oaisoftwarealliance/oai-gnb:2026.w25",
+          "resources": {
+            "limits": {
+              "cpu": "1",
+              "memory": "2Gi"
+            },
+            "requests": {
+              "cpu": "500m",
+              "memory": "1Gi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "du",
+          "restarts": 0,
+          "imageID": "sha256:baba005b4e05570353bbfa8e765667c8b3d735f002d5e430a82db19dd53124c9",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-4223a5527285",
+      "uid": "id-f0ae59570963",
+      "ready": true,
+      "images": [
+        {
+          "name": "fog",
+          "image": "docker.io/library/python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9",
+          "resources": {
+            "limits": {
+              "cpu": "200m",
+              "memory": "128Mi"
+            },
+            "requests": {
+              "cpu": "50m",
+              "memory": "32Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "fog",
+          "restarts": 0,
+          "imageID": "docker.io/library/python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-3b47d191a331",
+      "uid": "id-5f6f2d5b5b5c",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-amf",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        },
+        {
+          "name": "istio-proxy",
+          "image": "registry.istio.io/release/proxyv2:1.30.5",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "istio-proxy",
+          "restarts": 2,
+          "imageID": "registry.istio.io/release/proxyv2@sha256:a30fb25b1e4cfc0fbc50a8a6795f5984a49022dd0ec09bcd8683b3db35af5ed3",
+          "ready": true
+        },
+        {
+          "name": "open5gs-0004215456-amf",
+          "restarts": 3,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-293fa3702cbe",
+      "uid": "id-4cbeb271bca3",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-ausf",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        },
+        {
+          "name": "istio-proxy",
+          "image": "registry.istio.io/release/proxyv2:1.30.5",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "istio-proxy",
+          "restarts": 3,
+          "imageID": "registry.istio.io/release/proxyv2@sha256:a30fb25b1e4cfc0fbc50a8a6795f5984a49022dd0ec09bcd8683b3db35af5ed3",
+          "ready": true
+        },
+        {
+          "name": "open5gs-0004215456-ausf",
+          "restarts": 3,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-5201d534b3c8",
+      "uid": "id-8b7f609b9ee7",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-bsf",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        },
+        {
+          "name": "istio-proxy",
+          "image": "registry.istio.io/release/proxyv2:1.30.5",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "istio-proxy",
+          "restarts": 3,
+          "imageID": "registry.istio.io/release/proxyv2@sha256:a30fb25b1e4cfc0fbc50a8a6795f5984a49022dd0ec09bcd8683b3db35af5ed3",
+          "ready": true
+        },
+        {
+          "name": "open5gs-0004215456-bsf",
+          "restarts": 2,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-a126d9ace77e",
+      "uid": "id-3d8086b25761",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-nrf",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        },
+        {
+          "name": "istio-proxy",
+          "image": "registry.istio.io/release/proxyv2:1.30.5",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "istio-proxy",
+          "restarts": 3,
+          "imageID": "registry.istio.io/release/proxyv2@sha256:a30fb25b1e4cfc0fbc50a8a6795f5984a49022dd0ec09bcd8683b3db35af5ed3",
+          "ready": true
+        },
+        {
+          "name": "open5gs-0004215456-nrf",
+          "restarts": 5,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-6bdc49f6055e",
+      "uid": "id-6dc603831105",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-nssf",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        },
+        {
+          "name": "istio-proxy",
+          "image": "registry.istio.io/release/proxyv2:1.30.5",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "istio-proxy",
+          "restarts": 3,
+          "imageID": "registry.istio.io/release/proxyv2@sha256:a30fb25b1e4cfc0fbc50a8a6795f5984a49022dd0ec09bcd8683b3db35af5ed3",
+          "ready": true
+        },
+        {
+          "name": "open5gs-0004215456-nssf",
+          "restarts": 3,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-25c111a7dbbe",
+      "uid": "id-665a8c68e095",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-pcf",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        },
+        {
+          "name": "istio-proxy",
+          "image": "registry.istio.io/release/proxyv2:1.30.5",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "istio-proxy",
+          "restarts": 3,
+          "imageID": "registry.istio.io/release/proxyv2@sha256:a30fb25b1e4cfc0fbc50a8a6795f5984a49022dd0ec09bcd8683b3db35af5ed3",
+          "ready": true
+        },
+        {
+          "name": "open5gs-0004215456-pcf",
+          "restarts": 13,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-e5ae892a4f49",
+      "uid": "id-d82985126ce0",
+      "ready": true,
+      "images": [
+        {
+          "name": "populate",
+          "image": "docker.io/gradiant/open5gs-dbctl:0.10.3",
+          "resources": {}
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "populate",
+          "restarts": 2,
+          "imageID": "docker.io/gradiant/open5gs-dbctl@sha256:332031245fceb7714e295c235faf974dcb7ab5538bcbb51600bd219088602197",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-888f0e4b68f6",
+      "uid": "id-da3fb7adb39a",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-smf",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        },
+        {
+          "name": "istio-proxy",
+          "image": "registry.istio.io/release/proxyv2:1.30.5",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "istio-proxy",
+          "restarts": 2,
+          "imageID": "registry.istio.io/release/proxyv2@sha256:a30fb25b1e4cfc0fbc50a8a6795f5984a49022dd0ec09bcd8683b3db35af5ed3",
+          "ready": true
+        },
+        {
+          "name": "open5gs-0004215456-smf",
+          "restarts": 6,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-20dce51929ff",
+      "uid": "id-dee6ac462d63",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-udm",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        },
+        {
+          "name": "istio-proxy",
+          "image": "registry.istio.io/release/proxyv2:1.30.5",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "istio-proxy",
+          "restarts": 3,
+          "imageID": "registry.istio.io/release/proxyv2@sha256:a30fb25b1e4cfc0fbc50a8a6795f5984a49022dd0ec09bcd8683b3db35af5ed3",
+          "ready": true
+        },
+        {
+          "name": "open5gs-0004215456-udm",
+          "restarts": 3,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-14de3859ad99",
+      "uid": "id-316f66000971",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-udr",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        },
+        {
+          "name": "istio-proxy",
+          "image": "registry.istio.io/release/proxyv2:1.30.5",
+          "resources": {
+            "limits": {
+              "cpu": "2",
+              "memory": "1Gi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "istio-proxy",
+          "restarts": 3,
+          "imageID": "registry.istio.io/release/proxyv2@sha256:a30fb25b1e4cfc0fbc50a8a6795f5984a49022dd0ec09bcd8683b3db35af5ed3",
+          "ready": true
+        },
+        {
+          "name": "open5gs-0004215456-udr",
+          "restarts": 15,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-6c691ba4f5af",
+      "uid": "id-6da32ebc69b8",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-upf",
+          "image": "docker.io/gradiant/open5gs:2.7.2",
+          "resources": {}
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "open5gs-0004215456-upf",
+          "restarts": 2,
+          "imageID": "docker.io/gradiant/open5gs@sha256:f8a3aa0115c5cf97a7a757e35a7ee78f5f8dae0d842e0f09c14d4d7597ad6ff3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-862c26e724c5",
+      "uid": "id-49e8c9934553",
+      "ready": true,
+      "images": [
+        {
+          "name": "open5gs-0004215456-webui",
+          "image": "docker.io/gradiant/open5gs-webui:2.7.2",
+          "resources": {}
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "open5gs-0004215456-webui",
+          "restarts": 3,
+          "imageID": "docker.io/gradiant/open5gs-webui@sha256:600e23d31222734ef12a9f3ff10e65c31043e565fd6e84bfa8c9592c16f07bf3",
+          "ready": true
+        }
+      ]
+    },
+    {
+      "name": "pod-f242b0c7791f",
+      "uid": "id-9347d58ba4aa",
+      "ready": true,
+      "images": [
+        {
+          "name": "mongo",
+          "image": "mongo:6.0",
+          "resources": {}
+        }
+      ],
+      "runtime_images": [
+        {
+          "name": "mongo",
+          "restarts": 0,
+          "imageID": "docker.io/library/mongo@sha256:8b6d8f5bbedb25cb73517b65cf99f13aeb75ad5b157a56c479287a840bbad3ac",
+          "ready": true
+        }
+      ]
+    }
+  ],
+  "baseline": "e0602ec8067ac20452064fc728f77996f30a691a",
+  "implementation_worktree": "feature/performance-evaluation; uncommitted source changes",
+  "cpu_observed": {
+    "CPU(s)": "8",
+    "On-line CPU(s) list": "0-7",
+    "Model name": "Intel(R) Core(TM) i7-4790 CPU @ 3.60GHz",
+    "Thread(s) per core": "2",
+    "Core(s) per socket": "4",
+    "Socket(s)": "1"
+  },
+  "kernel": "6.8.0-142-generic"
+}

@@ -1,0 +1,53 @@
+{
+  "at": 1792647828.1324058,
+  "logs": {
+    "cu": {
+      "bytes": 18756,
+      "lines": 169,
+      "radio_stat_lines": 0,
+      "f1_mentions": 7,
+      "image": "oaisoftwarealliance/oai-gnb:2026.w13"
+    },
+    "du": {
+      "bytes": 10276,
+      "lines": 200,
+      "radio_stat_lines": 0,
+      "f1_mentions": 0,
+      "image": "oaisoftwarealliance/oai-gnb:2026.w25"
+    }
+  },
+  "grafana_dashboard_count": 29,
+  "grafana_titles": [
+    "Alertmanager / Overview",
+    "Kubernetes / API server",
+    "Kubernetes / Networking / Cluster",
+    "Kubernetes / Controller Manager",
+    "etcd",
+    "Grafana Overview",
+    "CoreDNS",
+    "Kubernetes / Compute Resources / Cluster",
+    "Kubernetes / Compute Resources /  Multi-Cluster",
+    "Kubernetes / Compute Resources / Namespace (Pods)",
+    "Kubernetes / Compute Resources / Node (Pods)",
+    "Kubernetes / Compute Resources / Nodes Overview",
+    "Kubernetes / Compute Resources / Pod",
+    "Kubernetes / Compute Resources / Workload",
+    "Kubernetes / Compute Resources / Namespace (Workloads)",
+    "Kubernetes / Kubelet",
+    "Kubernetes / Networking / Namespace (Pods)",
+    "Kubernetes / Networking / Namespace (Workload)",
+    "Node Exporter / USE Method / Cluster",
+    "Node Exporter / USE Method / Node",
+    "Node Exporter / Nodes",
+    "Node Exporter / AIX",
+    "Node Exporter / MacOS",
+    "Kubernetes / Persistent Volumes",
+    "Kubernetes / Networking / Pod",
+    "Prometheus / Overview",
+    "Kubernetes / Proxy",
+    "Kubernetes / Scheduler",
+    "Kubernetes / Networking / Workload"
+  ],
+  "ue_pods": [],
+  "metrics_api_registered": false
+}

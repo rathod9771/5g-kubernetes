@@ -22,14 +22,14 @@ spec:
       containers:
       - name: exporter
         image: python:3.12-slim
-        command: ["bash", "-c", "pip install --no-cache-dir --break-system-packages kubernetes prometheus_client >/tmp/pip.log 2>&1 && python3 /app/ran_exporter.py"]
+        command: ["python3", "/app/ran_exporter.py"]
         env:
         - name: TARGET_NAMESPACE
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
         - name: POD_LABEL_SELECTOR
-          value: "app=cloud-ran-oai-gnb"
+          value: "" # namespace-scoped discovery; strict image/role classification in code
         ports:
         - containerPort: 9091
           name: metrics

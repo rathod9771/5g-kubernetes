@@ -1,0 +1,89 @@
+{
+  "at": 1792650207.550462,
+  "protected_spec_config_objects": 48,
+  "changed_objects": [],
+  "workload_pods": [
+    {
+      "name": "pod-41e0a0eae418",
+      "uid": "id-bf8a6b8ab746",
+      "ready": true
+    },
+    {
+      "name": "pod-a9a07a4cbdca",
+      "uid": "id-3cdecb7182e1",
+      "ready": true
+    },
+    {
+      "name": "pod-4223a5527285",
+      "uid": "id-f0ae59570963",
+      "ready": true
+    },
+    {
+      "name": "pod-3b47d191a331",
+      "uid": "id-5f6f2d5b5b5c",
+      "ready": true
+    },
+    {
+      "name": "pod-293fa3702cbe",
+      "uid": "id-4cbeb271bca3",
+      "ready": true
+    },
+    {
+      "name": "pod-5201d534b3c8",
+      "uid": "id-8b7f609b9ee7",
+      "ready": true
+    },
+    {
+      "name": "pod-a126d9ace77e",
+      "uid": "id-3d8086b25761",
+      "ready": true
+    },
+    {
+      "name": "pod-6bdc49f6055e",
+      "uid": "id-6dc603831105",
+      "ready": true
+    },
+    {
+      "name": "pod-25c111a7dbbe",
+      "uid": "id-665a8c68e095",
+      "ready": true
+    },
+    {
+      "name": "pod-e5ae892a4f49",
+      "uid": "id-d82985126ce0",
+      "ready": true
+    },
+    {
+      "name": "pod-888f0e4b68f6",
+      "uid": "id-da3fb7adb39a",
+      "ready": true
+    },
+    {
+      "name": "pod-20dce51929ff",
+      "uid": "id-dee6ac462d63",
+      "ready": true
+    },
+    {
+      "name": "pod-14de3859ad99",
+      "uid": "id-316f66000971",
+      "ready": true
+    },
+    {
+      "name": "pod-6c691ba4f5af",
+      "uid": "id-6da32ebc69b8",
+      "ready": true
+    },
+    {
+      "name": "pod-862c26e724c5",
+      "uid": "id-49e8c9934553",
+      "ready": true
+    },
+    {
+      "name": "pod-f242b0c7791f",
+      "uid": "id-9347d58ba4aa",
+      "ready": true
+    }
+  ],
+  "all_observed_protected_pods_ready": true,
+  "osm_nbi_status": "UNAVAILABLE; default credentials rejected; do not infer NS state from pods"
+}

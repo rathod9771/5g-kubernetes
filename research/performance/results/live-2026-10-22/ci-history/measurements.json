@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "requests": 2,
+    "run_id": 39724140683,
+    "run_conclusion": "success",
+    "sha": "e0602ec8067ac20452064fc728f77996f30a691a",
+    "scope": "CI step only, not source build/deployment duration",
+    "lifecycle_calls": 0
+  },
+  "records": [
+    {
+      "timestamp": "2026-10-22T04:48:04Z",
+      "scenario": "ci-offline",
+      "ran_implementation": "none",
+      "component": "github-actions",
+      "metric": "ci_validation_step_duration",
+      "value": 150.0,
+      "unit": "seconds",
+      "source": "https://github.com/rathod9771/5g-kubernetes/actions/runs/39724140683 step Regressions, simulations, Helm and OSM package validation",
+      "experiment_id": "H-CI-records",
+      "trial_id": "39724140683",
+      "software_version": "e0602ec8067ac20452064fc728f77996f30a691a",
+      "measurement_status": "MEASURED",
+      "provenance": "RECORDED_LIVE",
+      "freshness": "LIVE",
+      "sampling_interval_seconds": null,
+      "collection_window_seconds": null,
+      "reason": "",
+      "labels": {
+        "runner": "GitHub Actions 1000000086",
+        "timestamp_resolution_seconds": 1
+      }
+    }
+  ]
+}

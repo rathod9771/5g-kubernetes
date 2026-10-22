@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "requests": 3,
+    "new_traffic_generated": false,
+    "source": "existing probe metrics only"
+  },
+  "records": [
+    {
+      "timestamp": "2026-10-22T05:57:52.761712Z",
+      "scenario": "fran-oai",
+      "ran_implementation": "oai",
+      "component": "tcp-probe",
+      "metric": "amf_tcp_connect_mean_5m",
+      "value": 0.0008065700241974714,
+      "unit": "seconds",
+      "source": "prometheus:sum(rate(network_tcp_connect_latency_seconds_sum{target=\"amf-sbi\"}[5m])) / sum(rate(network_tcp_connect_latency_seconds_count{target=\"amf-sbi\"}[5m]))",
+      "experiment_id": "network-passive-audit",
+      "trial_id": "existing-probe-001",
+      "software_version": "existing latency-probe; no configuration change",
+      "measurement_status": "MEASURED",
+      "provenance": "LIVE",
+      "freshness": "LIVE",
+      "sampling_interval_seconds": 10,
+      "collection_window_seconds": 300,
+      "reason": "TCP connect only, not SBI HTTP or UE data-plane latency",
+      "labels": {}
+    },
+    {
+      "timestamp": "2026-10-22T05:57:52.761712Z",
+      "scenario": "fran-oai",
+      "ran_implementation": "oai",
+      "component": "tcp-probe",
+      "metric": "amf_tcp_connect_success_fraction_5m",
+      "value": null,
+      "unit": "ratio",
+      "source": "prometheus:sum(rate(network_tcp_connect_success_total{target=\"amf-sbi\"}[5m])) / (sum(rate(network_tcp_connect_success_total{target=\"amf-sbi\"}[5m])) + sum(rate(network_tcp_connect_failure_total{target=\"amf-sbi\"}[5m])))",
+      "experiment_id": "network-passive-audit",
+      "trial_id": "existing-probe-001",
+      "software_version": "existing latency-probe; no configuration change",
+      "measurement_status": "UNAVAILABLE",
+      "provenance": "LIVE",
+      "freshness": "UNAVAILABLE",
+      "sampling_interval_seconds": 10,
+      "collection_window_seconds": 300,
+      "reason": "Failure series absent; no zero-filling and no success100% claim",
+      "labels": {}
+    }
+  ]
+}

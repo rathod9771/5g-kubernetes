@@ -1,0 +1,44 @@
+{
+  "new_tests": {
+    "passed": 43,
+    "seconds": 0.034,
+    "log": "offline focused test run; detailed output retained privately"
+  },
+  "existing_regressions": {
+    "passed": 32,
+    "seconds": 10.195,
+    "log": "offline existing regression run; detailed output retained privately"
+  },
+  "full_repository_suite": "NOT_RUN; no full-suite pass claim",
+  "python_ast_files": 19,
+  "python_syntax": "PASS",
+  "yaml_candidates": "PASS",
+  "git_diff_check": "PASS",
+  "plot_with_insufficient_trials": "REFUSED; no plot created",
+  "matplotlib": "NOT_INSTALLED; no installation performed",
+  "live_measurement_records": 521,
+  "synthetic_live_result_records": 0,
+  "source_sha256": {
+    "monitoring/ran-exporter/ran_exporter.py": "3201dd025fa6fae0ce3a9d1661699bfc2fe0a4be4c2fbe716655d01f240d2cf8",
+    "research/performance/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "research/performance/schema.py": "6adc938fe23f34c0e14e6cf69ca5683763a999697f02d335c3491b2760189fb4",
+    "research/performance/parsers/events.py": "4fb2d4db087da939a89d0108517cf542ffe5179329bbf526a93c7f078fa3873f",
+    "research/performance/parsers/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "research/performance/parsers/traffic.py": "c754c218ffc0627f4e07474f210426c7ebb1fddaf839e0f5d722445e516a491d",
+    "research/performance/collectors/passive.py": "cde6ab9ea9c7b08bcdc6820fc17a9eebb30a0bc787498663717989ee7f5bf1d5",
+    "research/performance/collectors/osm_records.py": "9e895027a67d96166a8e544ac0645d2ef29b3b1c189b096f242cfb602693ef09",
+    "research/performance/collectors/radio.py": "adeb051bf76ee62ac92ef4d34024c08801824ad327f2fa833a305b694e6c98ed",
+    "research/performance/collectors/github_ci.py": "23ab575714cf843a169efb1f99537089e3f859eab6e60247f2e5db7cc5022bd3",
+    "research/performance/collectors/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "research/performance/benchmarks/summarize.py": "dd669b7b7b055cd465b56dc0cd3baa668bc28e274a51f17b3b292b46dd872957",
+    "research/performance/benchmarks/plot.py": "6c058ab1075bc9a3080a06467b4e90dca50082467876062f764f2d8a7004b85a",
+    "research/performance/benchmarks/reliability.py": "40c025c7f9c482287e95c0745822e1063d8a2ea2417c7eb7a4ad2609cabf38b7",
+    "research/performance/benchmarks/exporter_overhead.py": "1a9e6be3144a3eaa995e4c3dab5d59dd54015103f6df70f3073dd2234915735b",
+    "research/performance/benchmarks/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "research/performance/tests/test_exporter.py": "57b4266e08049f01221d1723ac7dba46ea8dc571fe24bf6ced64ad753a661283",
+    "research/performance/tests/test_framework.py": "bcf6bb7c19fdd33694e3b230e5529aff822767d4203296d1caf7c38ada56a2e9",
+    "research/performance/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "live_result_bundles": 5,
+  "publication_evidence_sanitized": true
+}

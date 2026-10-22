@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Performance measurement record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timestamp",
+    "scenario",
+    "ran_implementation",
+    "component",
+    "metric",
+    "value",
+    "unit",
+    "source",
+    "experiment_id",
+    "trial_id",
+    "software_version",
+    "measurement_status",
+    "provenance",
+    "freshness",
+    "sampling_interval_seconds",
+    "collection_window_seconds",
+    "reason",
+    "labels"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scenario": {
+      "type": "string"
+    },
+    "ran_implementation": {
+      "type": "string"
+    },
+    "component": {
+      "type": "string"
+    },
+    "metric": {
+      "type": "string"
+    },
+    "value": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "unit": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "experiment_id": {
+      "type": "string"
+    },
+    "trial_id": {
+      "type": "string"
+    },
+    "software_version": {
+      "type": "string"
+    },
+    "measurement_status": {
+      "enum": [
+        "MEASURED",
+        "AVAILABLE_BUT_NOT_COLLECTED",
+        "REQUIRES_ACTIVE_UE",
+        "REQUIRES_CONTROLLED_TEST",
+        "UNAVAILABLE"
+      ]
+    },
+    "provenance": {
+      "enum": [
+        "LIVE",
+        "RECORDED_LIVE",
+        "SYNTHETIC_TEST"
+      ]
+    },
+    "freshness": {
+      "enum": [
+        "LIVE",
+        "STALE",
+        "UNAVAILABLE"
+      ]
+    },
+    "sampling_interval_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0
+    },
+    "collection_window_seconds": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0
+    },
+    "reason": {
+      "type": "string"
+    },
+    "labels": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "measurement_status": {
+            "const": "MEASURED"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "value": {
+            "type": "number"
+          },
+          "freshness": {
+            "const": "LIVE"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "value": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

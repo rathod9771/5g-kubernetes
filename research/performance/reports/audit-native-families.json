@@ -1,0 +1,249 @@
+{
+  "at": 1792648672.761712,
+  "queries": {
+    "active_telemetry_families": {
+      "expression": "count by (__name__) ({__name__=~\"fivegs_.*|fiveg_.*|.*sbi.*|istio_.*|network_tcp_.*|oai_gnb_.*|ran_ue|amf_session\"})",
+      "series": [
+        {
+          "name": "fivegs_ep_n3_gtp_indatapktn3upf",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_ep_n3_gtp_outdatapktn3upf",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_upffunction_sm_n4sessionestabreq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_upffunction_sm_n4sessionreport",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_upffunction_sm_n4sessionreportsucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_upffunction_upf_sessionnbr",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_mm_confupdate",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_reginitreq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_regemergreq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_mm_paging5greq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_regperiodreq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_mm_confupdatesucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_reginitsucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_amf_authreject",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_regmobreq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "amf_session",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_regmobsucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_amf_authreq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_regemergsucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_mm_paging5gsucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "ran_ue",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_regperiodsucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "oai_gnb_exporter_lines_parsed_total",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "oai_gnb_exporter_lines_parsed_created",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_smffunction_sm_n4sessionreport",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_smffunction_sm_n4sessionreportsucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_smffunction_sm_n4sessionestabreq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_reginitfail",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "network_tcp_connect_latency_seconds_bucket",
+          "timestamp": 1792648672.765,
+          "value": "14"
+        },
+        {
+          "name": "network_tcp_connect_latency_seconds_count",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "network_tcp_connect_latency_seconds_sum",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "network_tcp_connect_latency_seconds_created",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "network_tcp_connect_latency_last_seconds",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "network_tcp_connect_success_total",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "network_tcp_connect_success_created",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_pcffunction_pa_policyamassoreq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_pcffunction_pa_policysmassoreq",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_pcffunction_pa_policysmassosucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_pcffunction_pa_sessionnbr",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_smffunction_sm_sessionnbr",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_smffunction_sm_pdusessioncreationreq",
+          "timestamp": 1792648672.765,
+          "value": "2"
+        },
+        {
+          "name": "fivegs_smffunction_sm_pdusessioncreationsucc",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_smffunction_sm_qos_flow_nbr",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_amffunction_rm_registeredsubnbr",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        },
+        {
+          "name": "fivegs_upffunction_upf_qosflows",
+          "timestamp": 1792648672.765,
+          "value": "1"
+        }
+      ]
+    },
+    "amf_tcp_connect_mean_5m": {
+      "expression": "sum(rate(network_tcp_connect_latency_seconds_sum{target=\"amf-sbi\"}[5m])) / sum(rate(network_tcp_connect_latency_seconds_count{target=\"amf-sbi\"}[5m]))",
+      "series": [
+        {
+          "name": null,
+          "timestamp": 1792648672.769,
+          "value": "0.0008065700241974714"
+        }
+      ]
+    },
+    "amf_tcp_connect_success_fraction_5m": {
+      "expression": "sum(rate(network_tcp_connect_success_total{target=\"amf-sbi\"}[5m])) / (sum(rate(network_tcp_connect_success_total{target=\"amf-sbi\"}[5m])) + sum(rate(network_tcp_connect_failure_total{target=\"amf-sbi\"}[5m])))",
+      "series": []
+    }
+  }
+}
