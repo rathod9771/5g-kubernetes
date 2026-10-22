@@ -1185,6 +1185,43 @@ class Experiment:
                        n.get('operational-status'), n.get('config-status')]
                       for n in self.osm.ns_instances() if n.get('_id') != experiment_id)
 
+    @staticmethod
+    def requested_kdus(value):
+        """(member-vnf-index, KDU, release, namespace) requested by an instantiate operation.
+
+        OSM v19 stores operationParams.additionalParamsForVnf as a JSON-encoded string (seen on
+        the Dell); the request itself is a list. Either form must be exactly: a non-empty list of
+        VNF members with unique member-vnf-index, each {member-vnf-index, additionalParamsForKdu} with
+        at least one KDU entry,
+        each KDU entry exactly {kdu_name, k8s-namespace, kdu-deployment-name}, all strings, no
+        duplicate JSON keys. Anything else raises ValueError.
+        """
+        def no_duplicates(pairs):
+            keys = [k for k, _ in pairs]
+            if len(set(keys)) != len(keys):
+                raise ValueError('duplicate key in additionalParamsForVnf')
+            return dict(pairs)
+        if isinstance(value, str):
+            value = json.loads(value, object_pairs_hook=no_duplicates)   # JSONDecodeError is a ValueError
+        if not isinstance(value, list) or not value:
+            raise ValueError('additionalParamsForVnf is not a non-empty list')
+        requested, members = [], []
+        for vnf in value:
+            if not isinstance(vnf, dict) or set(vnf) != {'member-vnf-index', 'additionalParamsForKdu'} or \
+                    not isinstance(vnf['member-vnf-index'], str) or not isinstance(vnf['additionalParamsForKdu'], list) \
+                    or not vnf['additionalParamsForKdu']:
+                raise ValueError('unexpected VNF entry in additionalParamsForVnf')
+            members.append(vnf['member-vnf-index'])
+            for kdu in vnf['additionalParamsForKdu']:
+                if not isinstance(kdu, dict) or set(kdu) != {'kdu_name', 'k8s-namespace', 'kdu-deployment-name'} or \
+                        not all(isinstance(v, str) for v in kdu.values()):
+                    raise ValueError('unexpected KDU entry in additionalParamsForVnf')
+                requested.append((vnf['member-vnf-index'], kdu['kdu_name'], kdu['kdu-deployment-name'],
+                                  kdu['k8s-namespace']))
+        if len(set(members)) != len(members):
+            raise ValueError('duplicate member-vnf-index in additionalParamsForVnf')
+        return sorted(requested)
+
     def verified_teardown_ns(self, ns_id, nsd):
         """Prove from OSM records, not the name, that ns_id is the experiment NS (G1).
 
@@ -1202,11 +1239,14 @@ class Experiment:
             problems.append('experiment NSD package missing')
         instantiations = [o for o in self.osm.lifecycle.ns_operations(ns_id) if o.get('lcmOperationType') == 'instantiate']
         params = (instantiations[0].get('operationParams') or {}) if instantiations else {}
-        requested = sorted((v.get('member-vnf-index'), k.get('kdu_name'), k.get('kdu-deployment-name'),
-                            k.get('k8s-namespace'))
-                           for v in params.get('additionalParamsForVnf') or [] for k in v.get('additionalParamsForKdu') or [])
-        if len(instantiations) != 1 or params.get('nsName') != NS_NAME or not nsd or \
-                params.get('nsdId') != nsd['id'] or requested != self.ISOLATED_KDUS:
+        try:
+            requested = self.requested_kdus(params.get('additionalParamsForVnf')) if isinstance(params, dict) else None
+        except ValueError as error:
+            requested = None
+            problems.append(str(error)[:200])
+        if len(instantiations) != 1 or not isinstance(params, dict) or params.get('nsInstanceId') != ns_id or \
+                params.get('nsName') != NS_NAME or not nsd or params.get('nsdId') != nsd['id'] or \
+                requested != self.ISOLATED_KDUS:
             problems.append('instantiate operation is not the isolated experiment request')
         deployed = sorted((k.get('member-vnf-index'), k.get('kdu-name'), k.get('kdu-instance'), k.get('namespace'))
                           for k in (ns.get('_admin') or {}).get('deployed', {}).get('K8s') or [])

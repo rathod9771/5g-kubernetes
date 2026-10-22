@@ -264,8 +264,10 @@ class P4Target:
                                  'nsState': 'READY', 'operational-status': 'running', 'currentOperation': 'IDLE',
                                  '_admin': {'deployed': {'K8s': kdus}}}
         self.vnfrs[vnfr_id] = {'_id': vnfr_id, 'nsr-id-ref': ns_id, 'vnfd-id': knf['_id'], 'revision': revision}
-        # OSM keeps the instantiation request as the operation parameters.
-        op = self._new_op(ns_id, 'instantiate', dict(body, lcmOperationType='instantiate', nsInstanceId=ns_id),
+        # OSM v19 keeps the request as the operation parameters, additionalParamsForVnf as a
+        # JSON-encoded string (as recorded on the Dell).
+        op = self._new_op(ns_id, 'instantiate', dict(body, lcmOperationType='instantiate', nsInstanceId=ns_id,
+                                                     additionalParamsForVnf=json.dumps(body['additionalParamsForVnf'])),
                           state='COMPLETED')
         return dump({'id': ns_id, 'nslcmop_id': op})
 

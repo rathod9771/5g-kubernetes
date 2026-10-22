@@ -852,16 +852,24 @@ class TeardownSafetyTests(Harness):
     def test_same_named_ns_that_is_not_the_experiment_is_refused(self):
         ns = lambda: self.target.instances[self.ns_id]
         op = lambda: self.instantiate_op()['operationParams']
-        kdus = lambda: op()['additionalParamsForVnf'][0]['additionalParamsForKdu']
+        def request(change):
+            """Edit the JSON-encoded additionalParamsForVnf as OSM v19 stores it."""
+            def edit():
+                value = json.loads(op()['additionalParamsForVnf'])
+                change(value)
+                op()['additionalParamsForVnf'] = json.dumps(value)
+            return edit
         other_nsd = '00000000-0000-4000-8000-000000000001'
         cases = {
             'instantiated from another NSD': lambda: op().update(nsdId=other_nsd),
             'requested under another name': lambda: op().update(nsName='ran-fran-oai'),
-            'requested into another namespace': lambda: kdus()[0].update({'k8s-namespace': 'c63ff4ec-6bd4-46bc-90a2'}),
-            'requested another release name': lambda: kdus()[1].update({'kdu-deployment-name': 'du-0010984531'}),
-            'requested an extra KDU': lambda: kdus().append({'kdu_name': 'core', 'k8s-namespace': 'p4-kdu-upgrade',
-                                                              'kdu-deployment-name': 'p4kdu-core'}),
-            'another member index': lambda: op()['additionalParamsForVnf'][0].update({'member-vnf-index': 'core'}),
+            'requested into another namespace': request(lambda v: v[0]['additionalParamsForKdu'][0].update(
+                {'k8s-namespace': 'c63ff4ec-6bd4-46bc-90a2'})),
+            'requested another release name': request(lambda v: v[0]['additionalParamsForKdu'][1].update(
+                {'kdu-deployment-name': 'du-0010984531'})),
+            'requested an extra KDU': request(lambda v: v[0]['additionalParamsForKdu'].append(
+                {'kdu_name': 'core', 'k8s-namespace': 'p4-kdu-upgrade', 'kdu-deployment-name': 'p4kdu-core'})),
+            'another member index': request(lambda v: v[0].update({'member-vnf-index': 'core'})),
             'no recorded instantiation': lambda: self.instantiate_op().update(lcmOperationType='scale'),
             'two instantiations': lambda: self.target.operations.update(
                 {'dup': dict(self.instantiate_op(), _id='dup')}),
@@ -1026,6 +1034,141 @@ class TeardownSafetyTests(Harness):
         shutil.move(str(self.first.state_path.parent), str(self.work / 'archived-state'))
         summary = self.experiment().run(('preflight',))
         self.assertEqual([c for c in summary['checks'] if c['passed'] is False], [])
+
+
+# OSM v19 instantiate operation recorded on the Dell for the experiment NS (fields as
+# inspected; additionalParamsForVnf is a JSON-encoded string).
+DELL_NS_ID = 'c3cf57ff-d85b-48b9-980d-5c8616b9a66d'
+DELL_NSD_ID = 'ea61f9e3-aba2-46c1-a1fa-60f3547cd4dd'
+DELL_KNF_ID = '5a0b7c1e-3d2f-4e6a-9b8c-7d6e5f4a3b2c'
+DELL_VNF_PARAMS = [{'member-vnf-index': 'p4kdu', 'additionalParamsForKdu': [
+    {'kdu_name': 'cu', 'k8s-namespace': 'p4-kdu-upgrade', 'kdu-deployment-name': 'p4kdu-cu'},
+    {'kdu_name': 'du', 'k8s-namespace': 'p4-kdu-upgrade', 'kdu-deployment-name': 'p4kdu-du'}]}]
+
+
+def dell_instantiate_op(**params):
+    return {'_id': '7e1d2c3b-4a59-4687-9a0b-1c2d3e4f5a6b', 'lcmOperationType': 'instantiate',
+            'operationState': 'COMPLETED', 'nsInstanceId': DELL_NS_ID,
+            'operationParams': dict({'nsInstanceId': DELL_NS_ID, 'nsdId': DELL_NSD_ID, 'nsName': 'p4-kdu-upgrade-test',
+                                     'vimAccountId': 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e',
+                                     'lcmOperationType': 'instantiate',
+                                     'additionalParamsForVnf': json.dumps(DELL_VNF_PARAMS)}, **params)}
+
+
+class DellRecordLifecycle:
+    """Read-only OSM view of the Dell experiment NS as recorded (revision-1 deployment)."""
+    def __init__(self, operations):
+        self.operations = operations
+        self.ns = {'_id': DELL_NS_ID, 'name': 'p4-kdu-upgrade-test', 'nsState': 'READY', 'currentOperation': 'IDLE',
+                   'nsd-id': DELL_NSD_ID, '_admin': {'deployed': {'K8s': [
+                       {'member-vnf-index': 'p4kdu', 'kdu-name': kdu, 'kdu-instance': 'p4kdu-' + kdu,
+                        'namespace': 'p4-kdu-upgrade'} for kdu in ('cu', 'du')]}}}
+
+    def get_ns(self, ns_id):
+        assert ns_id == DELL_NS_ID
+        return self.ns
+
+    def ns_operations(self, ns_id):
+        return list(self.operations)
+
+    def package(self, kind, name):
+        return {'id': DELL_NSD_ID if kind == 'ns' else DELL_KNF_ID, 'revision': 1}
+
+    def vnf_instances(self, ns_id):
+        return [{'_id': 'f1e2d3c4-b5a6-4978-8695-a4b3c2d1e0f9', 'nsr-id-ref': ns_id, 'vnfd-id': DELL_KNF_ID}]
+
+
+class DellInstantiateRecordTests(Harness):
+    def verify(self, *operations):
+        exp = self.experiment()
+        exp.osm.lifecycle = DellRecordLifecycle(operations)
+        return exp.verified_teardown_ns(DELL_NS_ID, {'id': DELL_NSD_ID, 'revision': 1})
+
+    def refused(self, *operations, reason='not the isolated experiment request'):
+        with self.assertRaisesRegex(p4.TargetError, reason):
+            self.verify(*operations)
+
+    def test_real_record_is_the_experiment_ns(self):
+        self.assertIsInstance(dell_instantiate_op()['operationParams']['additionalParamsForVnf'], str)
+        _, identity = self.verify(dell_instantiate_op(), {'_id': 'x', 'lcmOperationType': 'action'})
+        self.assertEqual(identity['problems'], [])
+        self.assertEqual(identity['requested'], [('p4kdu', 'cu', 'p4kdu-cu', 'p4-kdu-upgrade'),
+                                                 ('p4kdu', 'du', 'p4kdu-du', 'p4-kdu-upgrade')])
+
+    def test_native_list_form_is_accepted_with_the_same_checks(self):
+        self.verify(dell_instantiate_op(additionalParamsForVnf=copy.deepcopy(DELL_VNF_PARAMS)))
+
+    def test_operation_identity_fields_must_match(self):
+        for change in ({'nsInstanceId': '00000000-0000-4000-8000-000000000009'}, {'nsdId': DELL_KNF_ID},
+                       {'nsName': 'ran-fran-oai'}):
+            with self.subTest(change=change):
+                self.refused(dell_instantiate_op(**change))
+        for field in ('nsInstanceId', 'nsdId', 'nsName', 'additionalParamsForVnf'):
+            with self.subTest(missing=field):
+                op = dell_instantiate_op()
+                del op['operationParams'][field]
+                self.refused(op)
+        op = dell_instantiate_op()
+        op['operationParams'] = json.dumps(op['operationParams'])
+        self.refused(op)
+
+    def test_duplicated_instantiation_is_refused(self):
+        self.refused(dell_instantiate_op(), dict(dell_instantiate_op(), _id='second'))
+        self.refused({'_id': 'x', 'lcmOperationType': 'action'})
+
+    def test_malformed_or_unexpected_parameters_are_refused(self):
+        def edited(change):
+            value = copy.deepcopy(DELL_VNF_PARAMS)
+            change(value)
+            return json.dumps(value)
+        kdus = lambda v: v[0]['additionalParamsForKdu']
+        cases = {
+            'invalid JSON': json.dumps(DELL_VNF_PARAMS)[:-2],
+            'JSON object, not a list': json.dumps(DELL_VNF_PARAMS[0]),
+            'empty list': '[]',
+            'null': 'null',
+            'double-encoded': json.dumps(json.dumps(DELL_VNF_PARAMS)),
+            'duplicate JSON key': json.dumps(DELL_VNF_PARAMS).replace(
+                '"kdu_name": "cu"', '"kdu_name": "du", "kdu_name": "cu"'),
+            'duplicate member split': json.dumps([
+                {'member-vnf-index': 'p4kdu', 'additionalParamsForKdu': [DELL_VNF_PARAMS[0]['additionalParamsForKdu'][0]]},
+                {'member-vnf-index': 'p4kdu', 'additionalParamsForKdu': [DELL_VNF_PARAMS[0]['additionalParamsForKdu'][1]]}]),
+            'duplicated KDU entry': edited(lambda v: kdus(v).append(dict(kdus(v)[0]))),
+            'KDU entry missing': edited(lambda v: kdus(v).pop()),
+            'extra KDU parameter': edited(lambda v: kdus(v)[0].update(additionalParams={'replicas': 3})),
+            'extra string KDU parameter': edited(lambda v: kdus(v)[0].update({'kdu-model': 'stable/other'})),
+            'extra VNF parameter': edited(lambda v: v[0].update({'k8s-namespace': 'osm'})),
+            'KDU field missing': edited(lambda v: kdus(v)[1].pop('k8s-namespace')),
+            'non-string namespace': edited(lambda v: kdus(v)[0].update({'k8s-namespace': None})),
+            'non-string member index': edited(lambda v: v[0].update({'member-vnf-index': 1})),
+            'KDU list not a list': edited(lambda v: v[0].update(additionalParamsForKdu=kdus(v)[0])),
+            'second VNF member': edited(lambda v: v.append({'member-vnf-index': 'core', 'additionalParamsForKdu': []})),
+            'release renamed': edited(lambda v: kdus(v)[0].update({'kdu-deployment-name': 'cu-0010984531'})),
+            'namespace changed': edited(lambda v: kdus(v)[1].update({'k8s-namespace': 'default'})),
+        }
+        for label, value in cases.items():
+            with self.subTest(label):
+                self.refused(dell_instantiate_op(additionalParamsForVnf=value))
+
+    def test_decoder_reports_the_reason(self):
+        decode = p4.Experiment.requested_kdus
+        for value, reason in (('{', 'Expecting'), ('[]', 'non-empty list'),
+                              ('[{"member-vnf-index": "a", "member-vnf-index": "b", "additionalParamsForKdu": []}]',
+                               'duplicate key'),
+                              ('[{"member-vnf-index": "a", "additionalParamsForKdu": [%s]},'
+                               ' {"member-vnf-index": "a", "additionalParamsForKdu": [%s]}]' % ((json.dumps(
+                                   DELL_VNF_PARAMS[0]['additionalParamsForKdu'][0]),) * 2), 'duplicate member-vnf-index'),
+                              ('[{"member-vnf-index": "a", "additionalParamsForKdu": []}]', 'unexpected VNF entry'),
+                              ([{'member-vnf-index': 'a', 'additionalParamsForKdu': [{'kdu_name': 'cu'}]}],
+                               'unexpected KDU entry'),
+                              ([{'member-vnf-index': 'a', 'additionalParamsForKdu': [
+                                  {'kdu_name': 'cu', 'k8s-namespace': None, 'kdu-deployment-name': 'p4kdu-cu'}]}],
+                               'unexpected KDU entry'),
+                              ([{'member-vnf-index': 'a', 'additionalParamsForKdu': [
+                                  {'kdu_name': 'cu', 'k8s-namespace': 'n', 'kdu-deployment-name': 'r', 'x': 'y'}]}],
+                               'unexpected KDU entry')):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, reason):
+                decode(value)
 
 
 class AdoptLostRequestTests(unittest.TestCase):
