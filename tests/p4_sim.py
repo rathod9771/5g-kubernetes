@@ -6,6 +6,7 @@ installed as revision-pinned storage paths into the requested k8s-namespace unde
 their kdu-deployment-name, KDU upgrade/rollback are NS actions running
 helm --atomic / helm rollback, operations are asynchronous, NS identity is kept.
 """
+import hashlib
 import io
 import json
 import re
@@ -20,6 +21,52 @@ from osm_catalog import OSMHTTPError
 STORAGE = '/app/storage'
 LCM_DIGEST = 'sha256:' + '2a401465ba1eb09a4b2de96c11028de7860b8a66dc763b2f0f245962b6771fbd'
 UPDATED = '2026-10-22T09:14:03.513+00:00'
+
+
+def _uid(*parts):
+    return str(uuid.UUID(hashlib.sha256('/'.join(parts).encode()).hexdigest()[:32]))
+
+
+def kube_root_ca():
+    return {'kind': 'ConfigMap', 'metadata': {
+        'name': 'kube-root-ca.crt', 'uid': _uid('kube-root-ca.crt'),
+        'annotations': {'kubernetes.io/description': 'Contains a CA bundle ...'}}, 'data': {'ca.crt': 'PEM'}}
+
+
+def helm_release_objects(namespace, release, revisions, template_hash, pod_suffix):
+    """Objects of one P4 Helm release as Kubernetes/Helm 3 create them (kubectl get -o json)."""
+    chart = {'app.kubernetes.io/name': 'p4kdu', 'app.kubernetes.io/component': release.rpartition('-')[2],
+             'app.kubernetes.io/instance': release, 'app.kubernetes.io/part-of': 'p4-kdu-upgrade'}
+    helm = {'meta.helm.sh/release-name': release, 'meta.helm.sh/release-namespace': namespace}
+    managed = dict(chart, **{'app.kubernetes.io/managed-by': 'Helm'})
+    pod_labels = {'app.kubernetes.io/name': 'p4kdu', 'app.kubernetes.io/component': chart['app.kubernetes.io/component'],
+                  'app.kubernetes.io/instance': release, 'app.kubernetes.io/part-of': 'p4-kdu-upgrade',
+                  'pod-template-hash': template_hash}
+    deployment, rs = _uid(namespace, release, 'deployment'), _uid(namespace, release, template_hash)
+    replicaset = release + '-' + template_hash
+    items = [
+        {'kind': 'Deployment', 'metadata': {'name': release, 'uid': deployment, 'labels': dict(managed),
+                                            'annotations': dict(helm, **{'deployment.kubernetes.io/revision': '1'})}},
+        {'kind': 'ConfigMap', 'metadata': {'name': release + '-release', 'uid': _uid(namespace, release, 'cm'),
+                                           'labels': dict(managed), 'annotations': dict(helm)}, 'data': {'release': 'rX'}},
+        {'kind': 'ReplicaSet', 'metadata': {
+            'name': replicaset, 'uid': rs, 'labels': dict(pod_labels),
+            'annotations': {'deployment.kubernetes.io/revision': '1', 'meta.helm.sh/release-name': release,
+                            'meta.helm.sh/release-namespace': namespace},
+            'ownerReferences': [{'apiVersion': 'apps/v1', 'kind': 'Deployment', 'name': release, 'uid': deployment,
+                                 'controller': True, 'blockOwnerDeletion': True}]}},
+        {'kind': 'Pod', 'metadata': {
+            'name': replicaset + '-' + pod_suffix, 'uid': _uid(namespace, release, pod_suffix), 'labels': dict(pod_labels),
+            'annotations': {'p4kdu/release': 'rX', 'checksum/config': '0' * 64},
+            'ownerReferences': [{'apiVersion': 'apps/v1', 'kind': 'ReplicaSet', 'name': replicaset, 'uid': rs,
+                                 'controller': True, 'blockOwnerDeletion': True}]}},
+    ]
+    for revision in revisions:
+        items.append({'kind': 'Secret', 'type': 'helm.sh/release.v1', 'metadata': {
+            'name': 'sh.helm.release.v1.{}.v{}'.format(release, revision), 'uid': _uid(namespace, release, str(revision)),
+            'labels': {'modifiedAt': '1792660443', 'name': release, 'owner': 'helm', 'status': 'deployed',
+                       'version': str(revision)}}, 'data': {'release': 'H4sIAAAAAAAA/release-payload'}})
+    return items
 
 
 def dump(value):
@@ -344,12 +391,14 @@ class P4Target:
                     'spec': {'replicas': 1}, 'status': {'observedGeneration': 3, 'replicas': 1, 'updatedReplicas': 1,
                                                         'readyReplicas': ready, 'availableReplicas': ready}}
         if verb == 'get' and args[1].startswith('deployments,'):
-            items = [{'kind': 'ConfigMap', 'metadata': {'name': 'kube-root-ca.crt'}}]
-            for (ns, release) in self.releases:
+            items = [kube_root_ca()]
+            for (ns, release), history in self.releases.items():
                 if ns == namespace:
-                    items += [{'kind': 'Deployment', 'metadata': {'name': release}},
-                              {'kind': 'ConfigMap', 'metadata': {'name': release + '-release'}}]
-            items += [{'kind': kind, 'metadata': {'name': name}} for kind, name in self.extra_objects.get(namespace, [])]
+                    template = hashlib.sha256((release + history[-1]['marker']).encode()).hexdigest()[:10]
+                    items += helm_release_objects(namespace, release, [h['revision'] for h in history],
+                                                  template, 'p' + template[:4])
+            items += [{'kind': kind, 'metadata': {'name': name, 'uid': str(uuid.uuid4())}}
+                      for kind, name in self.extra_objects.get(namespace, [])]
             return {'items': items}
         if args[:2] == ['rollout', 'restart']:
             self.mutations.append(('kubectl', ' '.join(args)))

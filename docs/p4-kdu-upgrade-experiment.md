@@ -77,6 +77,25 @@ missing, duplicated or inconsistent (after one re-read) is recorded in the snaps
 `helm.<kdu>.error` and fails that release's checks; nothing is inferred. The app
 version is the marker (`r1`/`r2`/`r3`) and is checked alongside the ConfigMap.
 
+### Namespace isolation
+
+`validate-baseline` and `teardown` list `p4-kdu-upgrade` (Deployments, ReplicaSets, Pods,
+Services, ConfigMaps, Secrets, StatefulSets, DaemonSets, Jobs, CronJobs, PVCs) and keep
+only identity metadata (kind, name, uid, type, labels, `meta.helm.sh/*` annotations,
+owner references); Secret data never reaches the evidence. Accepted objects:
+
+| Object | Required identity |
+|---|---|
+| ConfigMap `kube-root-ca.crt` | no owner, no labels (published by Kubernetes) |
+| Deployment `R`, ConfigMap `R-release` (R = `p4kdu-cu`/`p4kdu-du`) | P4 chart labels, `app.kubernetes.io/instance=R`, `managed-by=Helm`, `meta.helm.sh/release-name=R`, `release-namespace=p4-kdu-upgrade`, no owner |
+| ReplicaSet `R-<hash>` | sole controller owner = that Deployment (uid), `pod-template-hash=<hash>` |
+| Pod `R-<hash>-<id>` | sole controller owner = an accepted ReplicaSet (uid), same hash and instance |
+| Secret `sh.helm.release.v1.R.vN` | type `helm.sh/release.v1`, labels `owner=helm`, `name=R`, `version=N`, no owner |
+
+Everything else, including objects merely named like an experiment object, is foreign:
+`validate-baseline` fails and `teardown` refuses to delete the namespace (after waiting
+for pods of an uninstalled release to finish terminating).
+
 ## P1 changes made for P4 (on this branch)
 
 - `lifecycle.instance_name(entry)`: NS name from `ns_name` in the registry entry,

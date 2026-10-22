@@ -422,9 +422,10 @@ class Cluster:
         return self._json(self.kubectl('get', 'deployment', release, '-n', NAMESPACE, '-o', 'json'), missing_ok=True)
 
     def inventory(self):
-        value = self._json(self.kubectl('get', 'deployments,replicasets,pods,services,configmaps,secrets',
-                                        '-n', NAMESPACE, '-o', 'json'))
-        return sorted((i['kind'], i['metadata']['name']) for i in value['items'])
+        """Namespace objects reduced to identity metadata (inventory_item); Secret data and
+        object specs are dropped here and never reach the evidence."""
+        value = self._json(self.kubectl('get', INVENTORY_KINDS, '-n', NAMESPACE, '-o', 'json'))
+        return sorted((inventory_item(i) for i in value['items']), key=lambda i: (i['kind'], i['name']))
 
     # mutations (scope-checked)
     def restart_lcm(self):
@@ -455,6 +456,87 @@ def deployment_ready(deployment):
              status.get('availableReplicas', 0) == replicas and status.get('replicas', 0) == replicas)
     return ready, 'ready' if ready else 'not ready: ' + json.dumps(
         {k: status.get(k) for k in ('replicas', 'updatedReplicas', 'readyReplicas', 'availableReplicas')})
+
+
+# Namespaced kinds a workload or leftover could take; all but the expected ones are foreign.
+INVENTORY_KINDS = ('deployments,replicasets,pods,services,configmaps,secrets,statefulsets,daemonsets,jobs,'
+                   'cronjobs,persistentvolumeclaims')
+HELM_SECRET = re.compile(r'sh\.helm\.release\.v1\.(?P<release>[a-z0-9-]+)\.v(?P<revision>[1-9][0-9]*)')
+CHART_LABELS = {'app.kubernetes.io/name': 'p4kdu', 'app.kubernetes.io/part-of': 'p4-kdu-upgrade'}
+
+
+def inventory_item(item):
+    """Identity metadata of one namespace object: never data, spec or other annotations."""
+    metadata = item.get('metadata') or {}
+    annotations = metadata.get('annotations') or {}
+    return {'kind': item.get('kind'), 'name': metadata.get('name'), 'uid': metadata.get('uid'),
+            'type': item.get('type'), 'labels': dict(metadata.get('labels') or {}),
+            'annotations': {k: v for k, v in annotations.items() if k.startswith('meta.helm.sh/')},
+            'owners': [{k: o.get(k) for k in ('kind', 'name', 'uid', 'controller')}
+                       for o in metadata.get('ownerReferences') or []]}
+
+
+def _controller(item):
+    owners = item['owners']
+    return owners[0] if len(owners) == 1 and owners[0].get('controller') is True else None
+
+
+def foreign_objects(inventory):
+    """Objects in the experiment namespace not provably created for the P4 releases.
+
+    Accepted, each by exact identity rather than name prefix:
+    - ConfigMap kube-root-ca.crt (published into every namespace by Kubernetes; no owner)
+    - per release R: Deployment R and ConfigMap R-release rendered by the P4 chart and
+      owned by Helm release R in this namespace (chart labels + meta.helm.sh annotations)
+    - ReplicaSets controlled by such a Deployment (matched by uid, name R-<pod-template-hash>)
+    - Pods controlled by such a ReplicaSet (uid, same pod-template-hash and instance label)
+    - Helm storage Secrets sh.helm.release.v1.R.vN of type helm.sh/release.v1 with
+      owner=helm, name=R, version=N labels
+    Returns [(kind, name, reason)] for everything else.
+    """
+    def helm_owned(item, release):
+        labels = item['labels']
+        return (not item['owners'] and labels.get('app.kubernetes.io/managed-by') == 'Helm' and
+                labels.get('app.kubernetes.io/instance') == release and
+                all(labels.get(k) == v for k, v in CHART_LABELS.items()) and
+                item['annotations'] == {'meta.helm.sh/release-name': release,
+                                        'meta.helm.sh/release-namespace': NAMESPACE})
+
+    releases = set(RELEASES.values())
+    deployments = {i['uid']: i['name'] for i in inventory if i['kind'] == 'Deployment' and i['uid'] and
+                   i['name'] in releases and helm_owned(i, i['name'])}
+    replicasets = {}
+    for i in inventory:
+        owner, template = (_controller(i), i['labels'].get('pod-template-hash')) if i['kind'] == 'ReplicaSet'             else (None, None)
+        if owner and owner.get('kind') == 'Deployment' and deployments.get(owner.get('uid')) == owner.get('name')                 and template and i['name'] == owner['name'] + '-' + template and i['uid'] and                 i['labels'].get('app.kubernetes.io/instance') == owner['name']:
+            replicasets[i['uid']] = (i['name'], owner['name'], template)
+    foreign = []
+    for i in inventory:
+        kind, name, labels = i['kind'], i['name'], i['labels']
+        if kind == 'ConfigMap' and name == 'kube-root-ca.crt':
+            ok = not i['owners'] and not labels
+        elif kind == 'ConfigMap':
+            ok = name[:-len('-release')] in releases and name.endswith('-release') and \
+                helm_owned(i, name[:-len('-release')])
+        elif kind == 'Deployment':
+            ok = i['uid'] in deployments
+        elif kind == 'ReplicaSet':
+            ok = i['uid'] in replicasets
+        elif kind == 'Pod':
+            owner = _controller(i)
+            parent = owner and owner.get('kind') == 'ReplicaSet' and replicasets.get(owner.get('uid'))
+            ok = bool(parent) and parent[0] == owner.get('name') and labels.get('pod-template-hash') == parent[2] \
+                and labels.get('app.kubernetes.io/instance') == parent[1] and name.startswith(parent[0] + '-')
+        elif kind == 'Secret':
+            match = HELM_SECRET.fullmatch(name or '')
+            ok = bool(match) and match['release'] in releases and i['type'] == 'helm.sh/release.v1' and \
+                not i['owners'] and labels.get('owner') == 'helm' and labels.get('name') == match['release'] and \
+                labels.get('version') == match['revision']
+        else:
+            ok = False
+        if not ok:
+            foreign.append((kind, name, 'not an object of the P4 Helm releases'))
+    return foreign
 
 
 class Observer:
@@ -1053,9 +1135,9 @@ class Experiment:
                                 [(o['type'], o['state']) for o in snap['operations']] == [('instantiate', 'COMPLETED')],
                                 snap['operations'])
             inventory = self.cluster.inventory()
-            foreign = [i for i in inventory if not (i[1].startswith(tuple(RELEASES.values())) or
-                                                     i[1] in ('kube-root-ca.crt', 'istio-ca-root-cert'))]
-            self.evidence.check(step, 'namespace holds only experiment objects', not foreign, inventory)
+            foreign = foreign_objects(inventory)
+            self.evidence.check(step, 'namespace holds only experiment objects', not foreign,
+                                {'foreign': foreign, 'inventory': inventory})
             # The runner's P1 state is written at instantiation (active NS, context) and gains
             # active_release only after an upgrade, so a revision-1 baseline must not have one.
             # A missing file does not invalidate the deployment (nothing in OSM, Kubernetes or
@@ -1097,14 +1179,16 @@ class Experiment:
         for kind, name in (('ns', NSD), ('knf', VNFD)):
             self.evidence.record(step, 'deleted-' + name, self.osm.delete_package(kind, name))
         deadline = self.clock.monotonic() + self.timeouts['health_timeout']
-        while self.cluster.namespace() and self.cluster.releases() and self.clock.monotonic() < deadline:
+        # After the uninstall, pods of deleted ReplicaSets may still be terminating; wait for
+        # them too, so only objects that stay are judged foreign.
+        while self.cluster.namespace() and (self.cluster.releases() or foreign_objects(self.cluster.inventory())) \
+                and self.clock.monotonic() < deadline:
             self.clock.sleep(self.timeouts['poll'])
         if self.cluster.namespace():
             releases = self.cluster.releases()
             inventory = self.cluster.inventory()
             self.evidence.record(step, 'namespace-before-delete', {'releases': releases, 'inventory': inventory})
-            foreign = [i for i in inventory if not (i[1].startswith(tuple(RELEASES.values())) or
-                                                     i[1] in ('kube-root-ca.crt', 'istio-ca-root-cert'))]
+            foreign = foreign_objects(inventory)
             if releases or foreign:
                 raise ExperimentError('Namespace holds non-experiment resources; not deleting it: ' + str(foreign or releases))
             self.cluster.delete_namespace()

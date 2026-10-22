@@ -27,7 +27,7 @@ from lifecycle_osm import NbiLifecycle  # noqa: E402
 import p4_experiment as p4  # noqa: E402
 import p4_packages  # noqa: E402
 from osm_nbi_sim import FakeClock  # noqa: E402
-from p4_sim import LCM_DIGEST, P4Target  # noqa: E402
+from p4_sim import LCM_DIGEST, P4Target, helm_release_objects, kube_root_ca  # noqa: E402
 
 HELM = os.environ.get('HELM_BIN', 'helm')
 TARGET = '172.30.0.20'
@@ -342,6 +342,24 @@ class FullRunTests(Harness):
         self.assertEqual(list(self.target.instances), [self.target.other_ns])
         self.assertIn('osm', self.target.namespaces)
 
+    def test_teardown_waits_for_pods_of_an_uninstalled_release(self):
+        self.experiment().run(('preflight', 'onboard', 'instantiate'))
+        original, lingering = self.target._kubectl, [2]
+        def kubectl(args):
+            value = original(args)
+            if args[1].startswith('deployments,') and not self.target.releases and lingering[0]:
+                lingering[0] -= 1      # pod of the deleted ReplicaSet still terminating
+                value['items'].append({'kind': 'Pod', 'metadata': {
+                    'name': 'p4kdu-cu-584b65f7bc-9fn6v', 'uid': 'u', 'deletionTimestamp': '2026-10-22T10:00:00Z',
+                    'ownerReferences': [{'kind': 'ReplicaSet', 'name': 'p4kdu-cu-584b65f7bc', 'uid': 'gone',
+                                         'controller': True}]}})
+            return value
+        self.target._kubectl = kubectl
+        summary = self.experiment().teardown()
+        self.assertEqual([c for c in summary['checks'] if c['passed'] is False], [])
+        self.assertEqual(lingering, [0])
+        self.assertNotIn('p4-kdu-upgrade', self.target.namespaces)
+
     def test_teardown_keeps_a_namespace_with_foreign_objects(self):
         self.experiment().run(('preflight', 'onboard', 'instantiate'))
         self.target.extra_objects['p4-kdu-upgrade'] = [('Deployment', 'someone-else')]
@@ -634,6 +652,147 @@ class BaselineValidationTests(Harness):
         self.assertEqual([c['check'] for c in failed], ['baseline readable'])
         self.assertIn('TargetError', failed[0]['detail'])
         self.assertEqual(self.target.mutations, self.mutations)
+
+
+# Namespace p4-kdu-upgrade on the Dell after the revision-1 instantiation (object names
+# as reported by validate-baseline; metadata as Kubernetes and Helm 3 set it).
+DELL_INVENTORY_NAMES = [
+    ('ConfigMap', 'kube-root-ca.crt'), ('ConfigMap', 'p4kdu-cu-release'), ('ConfigMap', 'p4kdu-du-release'),
+    ('Deployment', 'p4kdu-cu'), ('Deployment', 'p4kdu-du'),
+    ('Pod', 'p4kdu-cu-584b65f7bc-9fn6v'), ('Pod', 'p4kdu-du-67647b8b96-krkqf'),
+    ('ReplicaSet', 'p4kdu-cu-584b65f7bc'), ('ReplicaSet', 'p4kdu-du-67647b8b96'),
+    ('Secret', 'sh.helm.release.v1.p4kdu-cu.v1'), ('Secret', 'sh.helm.release.v1.p4kdu-du.v1')]
+
+
+def dell_items():
+    return ([kube_root_ca()] + helm_release_objects('p4-kdu-upgrade', 'p4kdu-cu', [1], '584b65f7bc', '9fn6v') +
+            helm_release_objects('p4-kdu-upgrade', 'p4kdu-du', [1], '67647b8b96', 'krkqf'))
+
+
+class NamespaceInventoryTests(unittest.TestCase):
+    def inventory(self, items):
+        return [p4.inventory_item(i) for i in items]
+
+    def foreign(self, items):
+        return [(kind, name) for kind, name, _ in p4.foreign_objects(self.inventory(items))]
+
+    def find(self, items, kind, name):
+        return next(i for i in items if i['kind'] == kind and i['metadata']['name'] == name)
+
+    def test_dell_revision_1_namespace_is_accepted(self):
+        items = dell_items()
+        self.assertEqual(sorted((i['kind'], i['metadata']['name']) for i in items), DELL_INVENTORY_NAMES)
+        self.assertEqual(self.foreign(items), [])
+
+    def test_previous_prefix_predicate_rejected_only_the_helm_secrets(self):
+        names = [(i['kind'], i['metadata']['name']) for i in dell_items()]
+        old = [n for n in names if not (n[1].startswith(('p4kdu-cu', 'p4kdu-du')) or n[1] == 'kube-root-ca.crt')]
+        self.assertEqual(old, [('Secret', 'sh.helm.release.v1.p4kdu-cu.v1'), ('Secret', 'sh.helm.release.v1.p4kdu-du.v1')])
+
+    def test_inventory_item_keeps_identity_metadata_only(self):
+        items = dell_items()
+        reduced = json.dumps(self.inventory(items))
+        for leaked in ('H4sI', 'PEM', 'checksum/config', 'kubernetes.io/description', 'p4kdu/release', '"data"'):
+            self.assertNotIn(leaked, reduced)
+        secret = self.inventory([self.find(items, 'Secret', 'sh.helm.release.v1.p4kdu-cu.v1')])[0]
+        self.assertEqual((secret['type'], secret['labels']['owner'], secret['owners']), ('helm.sh/release.v1', 'helm', []))
+
+    def test_cluster_inventory_queries_workload_kinds_and_drops_data(self):
+        cluster = p4.Cluster('/usr/bin/kubectl', '/usr/local/bin/helm', '/k', 'osm', run=lambda argv, **_:
+                             subprocess.CompletedProcess(argv, 0, json.dumps({'items': dell_items()}).encode(), b''))
+        inventory = cluster.inventory()
+        self.assertEqual([(i['kind'], i['name']) for i in inventory], DELL_INVENTORY_NAMES)
+        self.assertNotIn('H4sI', json.dumps(inventory))
+        kinds = cluster.commands[0][2].split(',')
+        for kind in ('pods', 'secrets', 'configmaps', 'services', 'statefulsets', 'daemonsets', 'jobs', 'cronjobs',
+                     'persistentvolumeclaims'):
+            self.assertIn(kind, kinds)
+        self.assertEqual(cluster.commands[0][3:], ['-n', 'p4-kdu-upgrade', '-o', 'json'])
+
+    def test_rollout_with_old_and_new_replicasets_is_accepted(self):
+        items = dell_items() + [i for i in helm_release_objects('p4-kdu-upgrade', 'p4kdu-cu', [1, 2], '7d9c8b6f5a', 'abcde')
+                                if i['kind'] in ('ReplicaSet', 'Pod') or i['metadata']['name'].endswith('.v2')]
+        self.assertEqual(self.foreign(items), [])
+
+    def mutated(self, kind, name, change):
+        items = copy.deepcopy(dell_items())
+        change(self.find(items, kind, name))
+        return self.foreign(items)
+
+    def test_tampered_experiment_objects_are_rejected(self):
+        cu_rs, cu_pod = 'p4kdu-cu-584b65f7bc', 'p4kdu-cu-584b65f7bc-9fn6v'
+        cases = {
+            'root CA with an owner': ('ConfigMap', 'kube-root-ca.crt',
+                                      lambda i: i['metadata'].update(ownerReferences=[{'kind': 'X', 'controller': True}])),
+            'release ConfigMap of another Helm release': ('ConfigMap', 'p4kdu-cu-release', lambda i: i['metadata'][
+                'annotations'].update({'meta.helm.sh/release-name': 'other'})),
+            'release ConfigMap in another release namespace': ('ConfigMap', 'p4kdu-cu-release', lambda i: i['metadata'][
+                'annotations'].update({'meta.helm.sh/release-namespace': 'osm'})),
+            'release ConfigMap not managed by Helm': ('ConfigMap', 'p4kdu-cu-release',
+                                                      lambda i: i['metadata']['labels'].pop('app.kubernetes.io/managed-by')),
+            'release ConfigMap without chart labels': ('ConfigMap', 'p4kdu-cu-release',
+                                                       lambda i: i['metadata']['labels'].pop('app.kubernetes.io/part-of')),
+            'Deployment of another instance': ('Deployment', 'p4kdu-cu', lambda i: i['metadata']['labels'].update(
+                {'app.kubernetes.io/instance': 'p4kdu-du'})),
+            'Deployment without Helm annotations': ('Deployment', 'p4kdu-cu',
+                                                    lambda i: i['metadata']['annotations'].clear()),
+            'ReplicaSet owned by another Deployment uid': ('ReplicaSet', cu_rs, lambda i: i['metadata'][
+                'ownerReferences'][0].update(uid='00000000-0000-4000-8000-000000000000')),
+            'ReplicaSet without controller owner': ('ReplicaSet', cu_rs,
+                                                    lambda i: i['metadata']['ownerReferences'][0].update(controller=False)),
+            'ReplicaSet hash not its name': ('ReplicaSet', cu_rs, lambda i: i['metadata']['labels'].update(
+                {'pod-template-hash': 'ffffffffff'})),
+            'Pod without owner': ('Pod', cu_pod, lambda i: i['metadata'].pop('ownerReferences')),
+            'Pod owned by an unknown ReplicaSet uid': ('Pod', cu_pod, lambda i: i['metadata']['ownerReferences'][0].update(
+                uid='00000000-0000-4000-8000-000000000000')),
+            'Pod with a second owner': ('Pod', cu_pod, lambda i: i['metadata']['ownerReferences'].append(
+                {'kind': 'Job', 'name': 'x', 'uid': 'y', 'controller': False})),
+            'Pod template hash differs': ('Pod', cu_pod, lambda i: i['metadata']['labels'].update(
+                {'pod-template-hash': '0000000000'})),
+            'Helm Secret of wrong type': ('Secret', 'sh.helm.release.v1.p4kdu-cu.v1', lambda i: i.update(type='Opaque')),
+            'Helm Secret for another release': ('Secret', 'sh.helm.release.v1.p4kdu-cu.v1', lambda i: i['metadata'][
+                'labels'].update(name='p4kdu-du')),
+            'Helm Secret version mismatch': ('Secret', 'sh.helm.release.v1.p4kdu-cu.v1', lambda i: i['metadata'][
+                'labels'].update(version='2')),
+            'Helm Secret not owned by helm': ('Secret', 'sh.helm.release.v1.p4kdu-cu.v1', lambda i: i['metadata'][
+                'labels'].update(owner='someone')),
+        }
+        for label, (kind, name, change) in cases.items():
+            with self.subTest(label):
+                self.assertIn((kind, name), self.mutated(kind, name, change))
+
+    def test_pods_of_a_rejected_replicaset_are_rejected(self):
+        foreign = self.mutated('ReplicaSet', 'p4kdu-cu-584b65f7bc', lambda i: i['metadata'].pop('ownerReferences'))
+        self.assertEqual(foreign, [('ReplicaSet', 'p4kdu-cu-584b65f7bc'), ('Pod', 'p4kdu-cu-584b65f7bc-9fn6v')])
+
+    def test_unrelated_objects_are_rejected_even_with_experiment_names(self):
+        cu = self.find(dell_items(), 'Pod', 'p4kdu-cu-584b65f7bc-9fn6v')
+        extra = [
+            {'kind': 'Secret', 'type': 'Opaque', 'metadata': {'name': 'p4kdu-cu-credentials', 'uid': 'a'}},
+            {'kind': 'Secret', 'type': 'helm.sh/release.v1', 'metadata': {
+                'name': 'sh.helm.release.v1.ran-fran-oai.v1', 'uid': 'b',
+                'labels': {'owner': 'helm', 'name': 'ran-fran-oai', 'version': '1'}}},
+            {'kind': 'ConfigMap', 'metadata': {'name': 'p4kdu-cu-extra', 'uid': 'c', 'labels': cu['metadata']['labels']}},
+            {'kind': 'ConfigMap', 'metadata': {'name': 'istio-ca-root-cert', 'uid': 'd'}},
+            {'kind': 'Deployment', 'metadata': {'name': 'p4kdu-cu-shadow', 'uid': 'e'}},
+            {'kind': 'Pod', 'metadata': {'name': 'p4kdu-cu-584b65f7bc-zzzzz', 'uid': 'f', 'labels': cu['metadata']['labels']}},
+            {'kind': 'Service', 'metadata': {'name': 'p4kdu-cu', 'uid': 'g'}},
+            {'kind': 'StatefulSet', 'metadata': {'name': 'p4kdu-du', 'uid': 'h'}},
+            {'kind': 'Job', 'metadata': {'name': 'p4kdu-cu-hook', 'uid': 'i'}},
+            {'kind': 'PersistentVolumeClaim', 'metadata': {'name': 'p4kdu-cu-data', 'uid': 'j'}},
+        ]
+        foreign = self.foreign(dell_items() + extra)
+        self.assertEqual(sorted(foreign), sorted((i['kind'], i['metadata']['name']) for i in extra))
+
+    def test_baseline_fails_on_a_foreign_secret(self):
+        harness = BaselineValidationTests('test_existing_revision_1_deployment_validates_read_only')
+        harness.setUp()
+        self.addCleanup(harness.doCleanups)
+        harness.target.extra_objects['p4-kdu-upgrade'] = [('Secret', 'p4kdu-cu-credentials')]
+        summary, failed = harness.validate()
+        self.assertEqual(failed, ['namespace holds only experiment objects'])
+        detail = next(c['detail'] for c in summary['checks'] if c['check'] == 'namespace holds only experiment objects')
+        self.assertEqual([tuple(f[:2]) for f in detail['foreign']], [('Secret', 'p4kdu-cu-credentials')])
 
 
 class AdoptLostRequestTests(unittest.TestCase):
