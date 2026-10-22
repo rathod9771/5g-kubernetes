@@ -44,7 +44,10 @@ CONTEXT.update(namespace='test', repo_root='/test', workload_kubeconfig='/test/k
 POLICY = {'branch': 'reproducible-installer', 'target': 'hp-lab', 'upgrade_scenarios': {'cran-oai', 'cran-srsran', 'vcran-oai'},
           'lock_timeout': 5, 'op_timeout': 60, 'health_timeout': 30}
 COMMIT_A, COMMIT_B = 'a' * 40, 'b' * 40
-HEADER = 'ASSOC SOCK STY SST ST HBKT ASSOC-ID TX_QUEUE RX_QUEUE UID INODE LPORT RPORT LADDRS <-> RADDRS\n'
+# Test-only P4 approval: the upgrade-path tests exercise the controller as it will
+# behave once P4 is approved. Shipped code keeps the gate closed (P4GateTests).
+P4_TEST_APPROVAL = {'p4_report_sha256': '4' * 64, 'osm_lcm_digest': 'sha256:' + '2' * 64, 'approved_commit': 'c' * 40}
+HEADER ='ASSOC SOCK STY SST ST HBKT ASSOC-ID TX_QUEUE RX_QUEUE UID INODE LPORT RPORT LADDRS <-> RADDRS\n'
 CU_ASSOCS = HEADER + ('a b 2 1 3 0 1 0 0 0 42 43252 38412 10.0.0.2 <-> 10.0.1.1\n'
                       'c d 2 1 3 0 2 0 0 0 43 38472 57335 10.0.0.2 <-> 10.0.0.3\n')
 DU_ASSOCS = HEADER + 'e f 2 1 3 0 3 0 0 0 44 57335 38472 10.0.0.3 <-> 10.0.0.2\n'
@@ -95,9 +98,15 @@ class SimObserver:
 
 
 class LifecycleHarness(unittest.TestCase):
+    p4_approved = True
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        if self.p4_approved:
+            gate = mock.patch.object(lifecycle, 'P4_KDU_UPGRADE_APPROVAL', P4_TEST_APPROVAL)
+            gate.start()
+            self.addCleanup(gate.stop)
         self.state_path = Path(self.temp.name) / 'active-ran.yaml'
         # Write ordering is what these tests check; disk durability is not simulated.
         fsync = mock.patch('local_safety.os.fsync')
@@ -837,6 +846,87 @@ class DashboardSwitchTests(LifecycleHarness):
         # The sequences must really cover switches, upgrades, catalog-only releases and failures.
         for outcome in ('switch', 'upgraded', 'catalog-only', 'UpdateFailed', 'UpdateUncertain'):
             self.assertIn(outcome, seen)
+
+
+class P4GateTests(LifecycleHarness):
+    """The shipped controller: P4 is not approved, so no KDU upgrade can happen."""
+    p4_approved = False
+    OPEN_EVERYTHING = dict(POLICY, upgrade_scenarios={'cran-oai', 'cran-srsran', 'vcran-oai', 'open5gs'},
+                           allow_experimental=True, auto_rollback=True, p4_approved=True,
+                           P4_KDU_UPGRADE_APPROVAL=P4_TEST_APPROVAL, p4_kdu_upgrade_approval=P4_TEST_APPROVAL)
+
+    def assert_untouched_ran(self):
+        self.assertEqual(self.actions(), [])
+        self.assertFalse([m for m in self.sim.mutations if m[1].endswith('/action')])
+        self.assert_no_replacement()
+        state = self.state()
+        self.assertEqual((state['active'], state['osm']['active_instance_id']), ('cran-oai', self.active_id))
+        for field in ('pending_update', 'active_release', 'previous_release'):
+            self.assertNotIn(field, state['osm'])
+        self.assertEqual((self.sim.running_revision(self.active_id, 'cu'), self.sim.running_revision(self.active_id, 'du')),
+                         (1, 1))
+
+    def test_shipped_gate_is_closed(self):
+        self.assertIsNone(lifecycle.P4_KDU_UPGRADE_APPROVAL)
+        with self.assertRaisesRegex(lifecycle.UpgradeNotApproved, 'P4'):
+            lifecycle.require_p4_approval()
+
+    def test_active_release_is_published_but_never_upgraded(self):
+        # Neither caller policy nor the environment can open the gate.
+        env = {'P4_KDU_UPGRADE_APPROVAL': json.dumps(P4_TEST_APPROVAL), 'P4_APPROVED': 'true', 'P4_VALIDATED': '1'}
+        with mock.patch.dict('os.environ', env):
+            result = self.run_release(['cran-oai'], policy=self.OPEN_EVERYTHING)
+        self.assertEqual((result['action'], result['scenario']), ('approval-required', 'cran-oai'))
+        self.assertIn('P4', result['reason'])
+        self.assertEqual(result['published'], ['cran-oai'])
+        self.assertEqual(self.sim.revision('knf', 'cran_oai_knf'), 2)        # catalog-only publication happened
+        self.assert_untouched_ran()
+        events = [e['event'] for e in json.loads((self.state_path.parent / lifecycle.LEDGER_NAME).read_text())]
+        self.assertEqual(events, ['published'])
+
+    def test_inactive_and_core_releases_stay_catalog_only(self):
+        self.assertEqual(self.run_release(['cran-srsran'], policy=self.OPEN_EVERYTHING)['action'], 'catalog-only')
+        result = self.run_release(['open5gs'], commit=COMMIT_B, tag='v2', policy=self.OPEN_EVERYTHING)
+        self.assertEqual(result['action'], 'catalog-only')
+        self.assertEqual(self.sim.instances[self.core]['nsState'], 'READY')
+        self.assert_untouched_ran()
+
+    def test_direct_controller_and_adapter_calls_are_refused(self):
+        before, mutations = self.state_path.read_bytes(), list(self.sim.mutations)
+        entry = ENTRIES['cran-oai']
+        plan = {'instance_id': self.active_id, 'commit': None, 'from_revision': 1, 'to_revision': 2,
+                'kdus': [{'name': 'cu', 'instance': 'cu-1', 'member_index': '1', 'model': '/app/storage/x'}]}
+        with self.assertRaises(lifecycle.UpgradeNotApproved):
+            lifecycle._apply(self.osm, self.observer, self.state_path, self.state(), REGISTRY, CONTEXT, entry, plan,
+                             COMMIT_A, self.OPEN_EVERYTHING, self.clock)
+        for primitive, params in (('upgrade', {'kdu_model': '/app/storage/x', 'kdu_atomic_upgrade': 'true'}),
+                                  ('rollback', {})):
+            with self.subTest(primitive=primitive), self.assertRaises(lifecycle.UpgradeNotApproved):
+                self.osm.kdu_action(self.active_id, '1', 'cu', primitive, params)
+        self.assertEqual(self.state_path.read_bytes(), before)
+        self.assertEqual(self.sim.mutations, mutations)
+        self.assert_untouched_ran()
+
+    def test_malformed_approvals_do_not_open_the_gate(self):
+        good = P4_TEST_APPROVAL
+        for value in (True, 1, 'approved', [], {}, {k: v for k, v in good.items() if k != 'approved_commit'},
+                      dict(good, extra='x'), dict(good, p4_report_sha256='4' * 63), dict(good, osm_lcm_digest='2' * 64),
+                      dict(good, approved_commit='C' * 40), dict(good, approved_commit=None),
+                      dict(good, p4_report_sha256='4' * 64 + '\n')):
+            with self.subTest(value=value), mock.patch.object(lifecycle, 'P4_KDU_UPGRADE_APPROVAL', value):
+                with self.assertRaises(lifecycle.UpgradeNotApproved):
+                    lifecycle.require_p4_approval()
+        with mock.patch.object(lifecycle, 'P4_KDU_UPGRADE_APPROVAL', dict(good)):
+            self.assertEqual(lifecycle.require_p4_approval(), good)
+
+    def test_gate_is_a_reviewed_code_constant_only(self):
+        for name in ('lifecycle.py', 'lifecycle_osm.py'):
+            source = (ROOT / 'scripts' / name).read_text()
+            for read in ('os.environ', 'getenv', 'environ[', 'environ.get'):
+                self.assertFalse(read in source, name + ' reads the environment: ' + read)
+        source = (ROOT / 'scripts/lifecycle.py').read_text()
+        self.assertEqual(source.count('P4_KDU_UPGRADE_APPROVAL ='), 1)
+        self.assertIn('\nP4_KDU_UPGRADE_APPROVAL = None\n', source)
 
 
 if __name__ == '__main__':

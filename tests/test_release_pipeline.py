@@ -718,6 +718,14 @@ class ActiveInactiveContractTests(unittest.TestCase):
         self.assertEqual({ns for _, _, ns in self.harness.actions()}, {self.harness.active_id})
         self.harness.assert_no_replacement()
 
+    def test_active_ran_change_waits_for_the_p4_gate(self):
+        import lifecycle
+        with mock.patch.object(lifecycle, 'P4_KDU_UPGRADE_APPROVAL', None):   # the shipped value
+            result = self.process('cran-oai')
+        self.assertEqual((result['action'], result['scenario']), ('approval-required', 'cran-oai'))
+        self.assertEqual(self.harness.actions(), [])
+        self.harness.assert_no_replacement()
+
 
 class WorkflowSafetyTests(unittest.TestCase):
     workflow = yaml.safe_load((ROOT / '.github/workflows/release-candidate.yml').read_text())

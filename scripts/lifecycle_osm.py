@@ -71,7 +71,10 @@ class NbiLifecycle:
         return dict(after, sha256=digest, uploaded=True)
 
     def kdu_action(self, ns_id, member_index, kdu_name, primitive, params):
-        body = yaml.safe_dump({'member_vnf_index': member_index, 'kdu_name': kdu_name,
+        # Callers bypassing the controller hit the same P4 gate before any request.
+        import lifecycle
+        lifecycle.require_p4_approval()
+        body =yaml.safe_dump({'member_vnf_index': member_index, 'kdu_name': kdu_name,
                                'primitive': primitive, 'primitive_params': params}).encode()
         response = parse_response(self.request('POST', '/nslcm/v1/ns_instances/' + identifier(ns_id) + '/action', body))
         if not isinstance(response, dict):

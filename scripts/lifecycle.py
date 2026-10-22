@@ -6,7 +6,8 @@ one. Catalog publication never deploys. Only the recorded active primary RAN may
 be upgraded, in place, on its existing NS through OSM KDU actions.
 
 Phase P1: exercised only against the offline NBI simulation. No service or
-entry point calls process_release; the OSM KDU upgrade path is unverified live.
+entry point calls process_release; the OSM KDU upgrade path is unverified live,
+so P4_KDU_UPGRADE_APPROVAL keeps every in-place KDU upgrade disabled.
 """
 import contextlib
 import hashlib
@@ -28,6 +29,16 @@ LEDGER_LIMIT = 500
 TERMINAL = ('COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED', 'FAILED_TEMP')
 # CU before DUs so DUs reconnect F1 to the upgraded CU; auxiliary KDUs last.
 KDU_ORDER = {'cu': 0, 'du': 1, 'macro': 1, 'small': 1}
+
+# P4 release gate: in-place RAN/Core KDU upgrades (and the rollbacks that undo them)
+# stay disabled until the isolated P4 experiment has validated OSM v19 KDU upgrades.
+# Opening it is a reviewed code change to this constant, shipped through the attested
+# release pipeline. It is deliberately never read from the environment, the release
+# policy, the runtime state or any configuration file.
+P4_KDU_UPGRADE_APPROVAL = None
+_P4_APPROVAL_FORMAT = {'p4_report_sha256': re.compile(r'[0-9a-f]{64}'),
+                       'osm_lcm_digest': re.compile(r'sha256:[0-9a-f]{64}'),
+                       'approved_commit': re.compile(r'[0-9a-f]{40}')}
 KDU_MODEL = re.compile(r'(?P<root>/[A-Za-z0-9_./-]+)/(?P<id>[0-9a-f-]{36}):(?P<rev>[1-9][0-9]*)/'
                        r'(?P<package>[A-Za-z0-9_-]+)/helm-chart-v3s/(?P<kdu>[A-Za-z0-9_-]+)')
 
@@ -60,6 +71,19 @@ class UpdateFailed(LifecycleError):
 
 class UpdateUncertain(LifecycleError):
     pass
+
+
+class UpgradeNotApproved(LifecycleError):
+    pass
+
+
+def require_p4_approval():
+    """Raise unless the P4 gate in this module has been opened by a reviewed release."""
+    approval = P4_KDU_UPGRADE_APPROVAL
+    if (type(approval) is not dict or set(approval) != set(_P4_APPROVAL_FORMAT) or
+            any(type(approval[k]) is not str or not p.fullmatch(approval[k]) for k, p in _P4_APPROVAL_FORMAT.items())):
+        raise UpgradeNotApproved('In-place KDU upgrades are disabled until P4 validation is approved')
+    return approval
 
 
 def lock_path(state_path):
@@ -314,6 +338,7 @@ def _helm_revisions(observer, instances):
 
 
 def _apply(osm, observer, state_path, state, registry, context, entry, plan, commit, policy, clock):
+    require_p4_approval()               # before any state write or OSM action, whoever the caller is
     key = entry['key']
     instances = {k['name']: k['instance'] for k in plan['kdus']}
     try:
@@ -409,6 +434,11 @@ def process_release(osm, observer, registry, release, blobs, state_path, context
         if active == 'none' or active not in published:
             return dict(result, reason='active primary RAN is not affected')
         entry = entries[active]
+        try:
+            require_p4_approval()
+        except UpgradeNotApproved as error:
+            # Publication above stays; upgrade_scenarios cannot override the gate.
+            return dict(result, action='approval-required', scenario=active, reason=str(error))
         if active not in policy.get('upgrade_scenarios', ()) or (
                 entry.get('experimental') and not policy.get('allow_experimental')):
             return dict(result, action='approval-required', scenario=active)

@@ -124,3 +124,9 @@ Not implemented. The installer is unchanged and must stay usable without CI/CD.
    srsRAN published to an approved registry with a digest, or kept out of
    automatic releases; core chart images pinned.
 7. No self-hosted runner registration; the agent pulls artifacts outbound only.
+8. P4 approval. `scripts/lifecycle.py` ships with `P4_KDU_UPGRADE_APPROVAL = None`:
+   the controller, its `_apply` step and the OSM adapter's `kdu_action` all refuse
+   in-place KDU upgrades (and rollbacks), whatever `upgrade_scenarios`, configuration,
+   environment or state say. An affected active RAN gets `approval-required` after
+   catalog-only publication. Opening the gate is a reviewed commit recording the P4
+   report digest, the validated OSM LCM image digest and the approving commit.
