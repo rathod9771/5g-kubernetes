@@ -286,7 +286,8 @@ class FullRunTests(Harness):
         ops = [o for o in self.target.operations.values() if o['nsInstanceId'] == exp.ns_id]
         upgrades = [o for o in ops if o['operationParams'].get('primitive') == 'upgrade']
         self.assertTrue(all(o['operationParams']['timeout_ns_action'] == 150 for o in upgrades))
-        self.assertEqual({o['operationParams']['primitive_params']['kdu_model'].split(':')[1].split('/')[0]
+        self.assertTrue(all(isinstance(o['operationParams']['primitive_params'], str) for o in upgrades))
+        self.assertEqual({lifecycle.primitive_params(o)['kdu_model'].split(':')[1].split('/')[0]
                           for o in upgrades}, {'2', '3'})
         observed = [c for c in summary['checks'] if c['passed'] is None]
         self.assertTrue(any('kdu-model' in c['check'] for c in observed))
@@ -1171,6 +1172,230 @@ class DellInstantiateRecordTests(Harness):
                 decode(value)
 
 
+class PrimitiveParamsTests(unittest.TestCase):
+    """lifecycle.primitive_params: OSM v19 NBI stores non-empty primitive_params JSON-encoded."""
+    def params(self, value, **extra):
+        return lifecycle.primitive_params({'operationParams': dict({'primitive': 'upgrade'}, primitive_params=value,
+                                                                   **extra)})
+
+    def test_accepted_forms(self):
+        model = {'kdu_model': '/app/storage/x:2/p4kdu_knf/helm-chart-v3s/cu'}
+        self.assertEqual(self.params(json.dumps(model)), model)          # as stored by NBI v19
+        self.assertEqual(self.params(model), model)                      # native mapping
+        self.assertEqual(self.params({}), {})                            # empty: NBI leaves it as is
+        self.assertEqual(lifecycle.primitive_params({'operationParams': {'primitive': 'rollback'}}), {})
+        self.assertEqual(lifecycle.primitive_params({}), {})
+
+    def test_malformed_values_are_rejected(self):
+        for value in ('', '{', '[]', '"{}"', 'null', '1', json.dumps(json.dumps({'kdu_model': 'x'})),
+                      '{"kdu_model": "a", "kdu_model": "b"}', ['kdu_model'], 3, True):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.params(value)
+        with self.assertRaises(ValueError):
+            lifecycle.primitive_params({'operationParams': '{"primitive_params": {}}'})
+
+    def test_snapshot_records_unreadable_parameters_instead_of_failing(self):
+        harness = TeardownCheckTests('test_instantiated_deployment_passes_read_only')
+        harness.setUp()
+        self.addCleanup(harness.doCleanups)
+        op = next(o for o in harness.target.operations.values() if o['nsInstanceId'] == harness.ns_id)
+        harness.target.operations['odd'] = dict(op, _id='odd', lcmOperationType='action',
+                                                operationParams={'primitive': 'upgrade', 'kdu_name': 'cu',
+                                                                 'primitive_params': '{'})
+        exp = harness.experiment()
+        exp.ns_id = harness.ns_id
+        snap = exp.snapshot('s', 'x')
+        odd = next(o for o in snap['operations'] if o['id'] == 'odd')
+        self.assertTrue(odd['kdu_model'].startswith('unreadable primitive_params'))
+
+
+class TeardownCheckTests(Harness):
+    """teardown-check: read-only target, G1, G3 and G4 inspection of the existing deployment."""
+    def setUp(self):
+        super().setUp()
+        self.first = self.experiment()
+        self.first.run(('preflight', 'onboard', 'instantiate'))
+        self.ns_id = self.first.ns_id
+        self.state = self.first.state_path.read_bytes()
+        self.before = list(self.target.mutations)
+
+    def check(self, read_only=True):
+        cluster = p4.Cluster('/usr/bin/kubectl', '/usr/local/bin/helm', self.config['kubeconfig'], 'osm',
+                             run=self.target.run, read_only=read_only)
+        evidence = p4.Evidence(self.work / 'evidence-check', clock=self.clock)
+        exp = p4.Experiment(self.config, p4.read_only_request(self.target.request) if read_only else self.target.request,
+                            cluster, evidence, clock=self.clock, commit=self.COMMIT,
+                            resolver=lambda host: self.resolved[host])
+        summary = exp.teardown_check()
+        self.assertEqual(self.target.mutations, self.before)
+        self.assertEqual(self.first.state_path.read_bytes(), self.state)
+        self.assertIsNone(lifecycle.P4_KDU_UPGRADE_APPROVAL)
+        return summary, {c['check']: c.get('detail') for c in summary['checks'] if c['passed'] is False}
+
+    def test_instantiated_deployment_passes_read_only(self):
+        summary, failed = self.check()
+        self.assertEqual(failed, {})
+        passed = [c['check'] for c in summary['checks'] if c['passed'] is True]
+        for name in ('target is the isolated experiment system', 'NS identity proven from OSM records',
+                     'NS nsd-id is the p4kdu_ns package', 'every VNFR vnfd-id is the p4kdu_knf package',
+                     'namespace holds only experiment objects', 'no other NS uses the experiment NSD',
+                     'NS idle (no operation in progress)', 'committed P4 gate is closed'):
+            self.assertIn(name, passed)
+        operations = json.loads((self.work / 'evidence-check/teardown-check/ns-operations.json').read_text())
+        self.assertEqual([(o['type'], o['state']) for o in operations], [('instantiate', 'COMPLETED')])
+        others = json.loads((self.work / 'evidence-check/teardown-check/other-ns.json').read_text())
+        self.assertEqual([o[0] for o in others], [self.target.other_ns])
+        self.assertTrue(summary['read_only'])
+
+    def test_no_mutating_operation_is_reachable(self):
+        forbidden = [mock.patch.object(p4.Osm, name, side_effect=AssertionError(name))
+                     for name in ('terminate', 'delete_ns', 'delete_package', 'instantiate')]
+        forbidden += [mock.patch.object(p4.Cluster, name, side_effect=AssertionError(name))
+                      for name in ('restart_lcm', 'helm_rollback', 'delete_namespace')]
+        forbidden += [mock.patch.object(NbiLifecycle, name, side_effect=AssertionError(name))
+                      for name in ('kdu_action', 'publish')]
+        forbidden += [mock.patch.object(lifecycle, name, side_effect=AssertionError(name))
+                      for name in ('process_release', 'reconcile_update', 'adopt_lost_request', 'write_state')]
+        mocks = [patch.start() for patch in forbidden]
+        for patch in forbidden:
+            self.addCleanup(patch.stop)
+        _, failed = self.check()
+        self.assertEqual(failed, {})
+        for patched in mocks:
+            patched.assert_not_called()
+
+    def test_read_only_wrappers_refuse_every_mutation(self):
+        request = p4.read_only_request(self.target.request)
+        for method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+            with self.subTest(method=method), self.assertRaisesRegex(p4.ExperimentError, 'Read-only'):
+                request(method, '/nslcm/v1/ns_instances/' + self.ns_id + '/terminate', b'')
+        cluster = p4.Cluster('/usr/bin/kubectl', '/usr/local/bin/helm', '/k', 'osm', run=self.target.run, read_only=True)
+        k, h = cluster.kubectl, cluster.helm
+        for argv in (k('delete', 'namespace', 'p4-kdu-upgrade'), k('rollout', 'restart', 'deployment/lcm', '-n', 'osm'),
+                     k('apply', '-f', 'x'), k('scale', 'deployment/p4kdu-cu', '--replicas=0', '-n', 'p4-kdu-upgrade'),
+                     k('exec', 'x', '-n', 'p4-kdu-upgrade'), k('patch', 'deployment', 'p4kdu-cu', '-n', 'p4-kdu-upgrade'),
+                     h('rollback', 'p4kdu-cu', '-n', 'p4-kdu-upgrade'), h('upgrade', 'p4kdu-cu', 'x', '-n', 'p4-kdu-upgrade'),
+                     h('install', 'x', 'y', '-n', 'p4-kdu-upgrade'), h('uninstall', 'p4kdu-cu', '-n', 'p4-kdu-upgrade')):
+            with self.subTest(argv=argv[1:3]), self.assertRaises(p4.ClusterError):
+                cluster._run(argv)
+        self.assertEqual(self.target.mutations, self.before)
+
+    def run_main(self, command='teardown-check'):
+        path = self.work / 'p4.json'
+        path.write_text(json.dumps(self.config))
+        real = p4.Cluster
+        with mock.patch.object(p4, 'connect', lambda config: self.target.request), \
+                mock.patch.object(p4, 'resolve', lambda host: self.resolved[host]), \
+                mock.patch.object(p4, 'Cluster', lambda *a, **k: real(*a, run=self.target.run, **k)), \
+                mock.patch('sys.stdout', io.StringIO()):
+            return p4.main([command, '--config', str(path)])
+
+    def test_cli_runs_read_only_in_a_separate_evidence_directory(self):
+        self.assertEqual(self.run_main(), 0)
+        directories = sorted(p.name for p in (self.work / 'evidence').iterdir() if p.name.startswith('teardown-check-'))
+        self.assertEqual(len(directories), 1)
+        summary = json.loads((self.work / 'evidence' / directories[0] / 'summary.json').read_text())
+        self.assertEqual((summary['failed'], summary['read_only']), (0, True))
+        self.assertEqual(self.target.mutations, self.before)
+        self.assertEqual(self.first.state_path.read_bytes(), self.state)
+
+    def test_cli_enforces_read_only_access(self):
+        attempts = []
+        def mutate(exp):
+            for attempt in (lambda: exp.osm.terminate(exp.osm.experiment_ns()['_id']),
+                            lambda: exp.osm.delete_package('ns', 'p4kdu_ns'), exp.cluster.delete_namespace,
+                            exp.cluster.restart_lcm, lambda: exp.cluster.helm_rollback('p4kdu-cu')):
+                try:
+                    attempt()
+                    attempts.append('allowed')
+                except p4.ExperimentError as error:
+                    attempts.append(type(error).__name__)
+            return exp.evidence.summary({'read_only': True})
+        with mock.patch.object(p4.Experiment, 'teardown_check', mutate):
+            self.run_main()
+        self.assertEqual(attempts, ['ExperimentError', 'ExperimentError', 'ClusterError', 'ClusterError', 'ClusterError'])
+        self.assertEqual(self.target.mutations, self.before)
+        self.assertIn('teardown-check', p4.READ_ONLY_COMMANDS)
+        self.assertNotIn('teardown', p4.READ_ONLY_COMMANDS)
+
+    def test_identity_and_namespace_problems_are_reported_without_changes(self):
+        ns = self.target.instances[self.ns_id]
+        cases = {
+            'NS nsd-id is the p4kdu_ns package': lambda: ns.update({'nsd-id': '00000000-0000-4000-8000-000000000001'}),
+            'every VNFR vnfd-id is the p4kdu_knf package': lambda: next(
+                v for v in self.target.vnfrs.values() if v['nsr-id-ref'] == self.ns_id).update(
+                {'vnfd-id': '00000000-0000-4000-8000-000000000002'}),
+            'namespace holds only experiment objects': lambda: self.target.extra_objects.update(
+                {'p4-kdu-upgrade': [('Role', 'p4kdu-cu')]}),
+        }
+        for check, change in cases.items():
+            with self.subTest(check):
+                saved = copy.deepcopy((self.target.instances, self.target.vnfrs))
+                change()
+                _, failed = self.check()
+                self.assertIn(check, failed)
+                if check != 'namespace holds only experiment objects':
+                    self.assertIn('NS identity proven from OSM records', failed)
+                self.target.instances, self.target.vnfrs = saved
+                ns = self.target.instances[self.ns_id]
+                self.target.extra_objects.clear()
+
+    def test_busy_ns_is_reported(self):
+        original = self.target._refresh
+        def refresh(ns_id):
+            original(ns_id)
+            if ns_id == self.ns_id:
+                self.target.instances[ns_id]['currentOperation'] = 'ACTION'
+        self.target._refresh = refresh
+        self.target.instances[self.ns_id]['currentOperation'] = 'ACTION'
+        _, failed = self.check()
+        self.assertEqual(failed, {'NS idle (no operation in progress)': 'ACTION'})
+
+    def test_other_ns_using_the_nsd_is_reported(self):
+        self.target.instances[self.target.other_ns]['nsd-id'] = self.target.packages[('ns', 'p4kdu_ns')]['_id']
+        _, failed = self.check()
+        self.assertEqual(failed['no other NS uses the experiment NSD'], [self.target.other_ns])
+
+    def test_terminated_ns_records_are_observed(self):
+        self.target.instances['old'] = {'_id': 'old', 'name': 'earlier-test', 'nsState': 'NOT_INSTANTIATED',
+                                        'currentOperation': 'IDLE', 'operational-status': 'terminated',
+                                        'nsd-id': 'n', '_admin': {'deployed': {'K8s': [{'kdu-name': 'a'}, {'kdu-name': 'b'}]}}}
+        summary, failed = self.check()
+        self.assertEqual(failed, {})
+        observed = next(c['observed'] for c in summary['checks']
+                        if c['check'] == 'terminated NS records and their listed deployed KDUs')
+        self.assertEqual(observed, [{'id': 'old', 'name': 'earlier-test', 'operational-status': 'terminated',
+                                     'nsd_id_present': True, 'deployed_k8s': 2}])
+
+    def test_hp_target_is_refused_before_reading(self):
+        self.resolved['nbi.172.30.0.20.nip.io'] = {'172.30.18.32'}
+        summary, failed = self.check()
+        self.assertIn('TargetError: OSM endpoint does not resolve only', failed['teardown-check readable'])
+        self.assertNotIn('NS identity proven from OSM records', [c['check'] for c in summary['checks']])
+
+
+class OsmV19TerminateTests(Harness):
+    """LCM v19 source: a COMPLETED terminate keeps _admin.deployed.K8s and nsd-id. The current
+    post-termination guard (unchanged pending Dell evidence) then stops teardown safely."""
+    def test_teardown_stops_after_termination_and_keeps_record_and_packages(self):
+        exp = self.experiment()
+        exp.run(('preflight', 'onboard', 'instantiate'))
+        self.target.terminate_keeps_deployed = True
+        before = len(self.target.mutations)
+        summary = self.experiment().teardown()
+        failed = {c['check']: c.get('detail') for c in summary['checks'] if c['passed'] is False}
+        self.assertIn('terminated NS still lists deployed KDUs', failed['teardown completed'])
+        record = self.target.instances[exp.ns_id]
+        self.assertEqual((record['nsState'], record['currentOperation'], len(record['_admin']['deployed']['K8s'])),
+                         ('NOT_INSTANTIATED', 'IDLE', 2))
+        new = self.target.mutations[before:]
+        self.assertEqual([m[0] for m in new], ['POST'])                       # the terminate only
+        self.assertTrue(new[0][1].endswith('/terminate'))
+        self.assertIn(('ns', 'p4kdu_ns'), self.target.packages)
+        self.assertIn('p4-kdu-upgrade', self.target.namespaces)
+        self.assertNotIn('every other OSM NS unchanged', failed)
+
+
 class AdoptLostRequestTests(unittest.TestCase):
     """lifecycle.adopt_lost_request against recorded OSM operations (read-only)."""
     def setUp(self):
@@ -1222,6 +1447,41 @@ class AdoptLostRequestTests(unittest.TestCase):
         self.pending(upgraded=['cu'], operations={'cu': 'op-cu'})
         self.assertEqual(self.adopt([self.op('op-cu', 'cu', 1001, 'COMPLETED')])['action'], 'failed-partial')
         self.assertEqual(self.h.state()['osm']['pending_update']['stage'], 'failed-partial')
+
+    def encoded(self, op):
+        """The record as OSM v19 NBI stores it: non-empty primitive_params JSON-encoded."""
+        op['operationParams']['primitive_params'] = json.dumps(op['operationParams']['primitive_params'])
+        return op
+
+    def test_json_encoded_request_is_adopted(self):
+        self.pending(upgraded=['cu'], operations={'cu': 'op-cu'})
+        result = self.adopt([self.encoded(self.op('op-cu', 'cu', 1001, 'COMPLETED')),
+                             self.encoded(self.op('op-du', 'du', 1005))])
+        self.assertEqual(result, {'action': 'adopted', 'kdu': 'du', 'operation': 'op-du'})
+
+    def test_json_encoded_other_revision_is_not_adopted(self):
+        self.pending()
+        self.assertEqual(self.adopt([self.encoded(self.op('other-rev', 'cu', 1005, revision=3))])['action'],
+                         'confirmed-previous-release')
+
+    def test_unreadable_matching_request_is_not_guessed(self):
+        for value in ('{"kdu_model": ', '["x"]', '{"kdu_model": "a", "kdu_model": "b"}', json.dumps('{}'), 7):
+            with self.subTest(value=value):
+                self.pending()
+                before = self.h.state_path.read_bytes()
+                op = self.op('bad', 'cu', 1005)
+                op['operationParams']['primitive_params'] = value
+                with self.assertRaisesRegex(lifecycle.UpdateUncertain, 'Unreadable upgrade request bad'):
+                    self.adopt([op])
+                self.assertEqual(self.h.state_path.read_bytes(), before)
+
+    def test_unreadable_unrelated_operations_are_ignored(self):
+        self.pending()
+        other = self.op('du-bad', 'du', 1005)
+        other['operationParams']['primitive_params'] = '{'
+        rollback = self.op('rb', 'cu', 1005)
+        rollback['operationParams'].update(primitive='rollback', primitive_params='{')
+        self.assertEqual(self.adopt([other, rollback])['action'], 'confirmed-previous-release')
 
     def test_ambiguous_requests_are_not_guessed(self):
         self.pending()

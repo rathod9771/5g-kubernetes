@@ -186,6 +186,15 @@ class Osm:
         return package
 
 
+def read_only_request(request):
+    """NBI access for read-only commands: anything but GET is refused before it is sent."""
+    def guarded(method, path, *args, **kwargs):
+        if method != 'GET':
+            raise ExperimentError('Read-only command refused OSM ' + str(method) + ' ' + str(path).split('?')[0])
+        return request(method, path, *args, **kwargs)
+    return guarded
+
+
 class TargetLockedOsm:
     """What the P1 controller sees: KDU actions only on the verified experiment NS."""
     def __init__(self, osm, ns_id):
@@ -327,9 +336,10 @@ def release_view(release, status, history, listing):
 
 class Cluster:
     """kubectl/helm on the experiment target. Mutations are limited by _allowed()."""
-    def __init__(self, kubectl, helm, kubeconfig, osm_namespace, run=subprocess.run, timeout=180):
+    def __init__(self, kubectl, helm, kubeconfig, osm_namespace, run=subprocess.run, timeout=180, read_only=False):
         self.kubectl_bin, self.helm_bin, self.kubeconfig = kubectl, helm, kubeconfig
         self.osm_namespace, self.run, self.timeout = osm_namespace, run, timeout
+        self.read_only = read_only      # read-only commands: only get/version/status/history/list
         self.commands = []
 
     def _allowed(self, argv):
@@ -339,6 +349,8 @@ class Cluster:
         if tool == self.kubectl_bin:
             if verb in ('get', 'version'):
                 return True
+            if self.read_only:
+                return False
             if verb == 'delete':
                 return args[1:3] == ['namespace', NAMESPACE]
             if verb == 'rollout':
@@ -346,6 +358,8 @@ class Cluster:
             return False
         if verb in ('status', 'history', 'list', 'version', 'get'):
             return verb == 'version' or scoped == NAMESPACE
+        if self.read_only:
+            return False
         if verb == 'rollback':
             return args[1] in RELEASES.values() and scoped == NAMESPACE
         return False
@@ -729,12 +743,16 @@ class Experiment:
             value['vnfr'] = [{k: v.get(k) for k in ('_id', 'vnfd-id', 'revision')} for v in vnfrs]
             for operation in self.osm.lifecycle.ns_operations(ns['_id']):
                 params = operation.get('operationParams') or {}
+                try:
+                    kdu_model = lifecycle.primitive_params(operation).get('kdu_model')
+                except ValueError as error:     # recorded as such; revision checks then fail
+                    kdu_model = 'unreadable primitive_params: ' + str(error)[:100]
                 value['operations'].append({
                     'id': operation.get('_id'), 'type': operation.get('lcmOperationType'),
                     'state': operation.get('operationState'), 'start': operation.get('startTime'),
                     'entered': operation.get('statusEnteredTime'), 'detail': str(operation.get('detailed-status'))[:200],
                     'primitive': params.get('primitive'), 'kdu': params.get('kdu_name'),
-                    'kdu_model': (params.get('primitive_params') or {}).get('kdu_model'),
+                    'kdu_model': kdu_model,
                     'timeout': params.get('timeout_ns_action')})
         for kdu, release in RELEASES.items():
             try:
@@ -1284,6 +1302,87 @@ class Experiment:
                                   releases=releases)
             self.clock.sleep(self.timeouts['poll'])
 
+    def teardown_check(self):
+        """Read-only: what teardown would verify before removing anything (target, G1, G3, G4).
+
+        Never terminates, deletes, instantiates or changes Helm, Kubernetes or the P1 state;
+        main() also runs it with NBI GET-only and kubectl/helm read-only access. Records the
+        experiment NS operations (deleting the NS deletes them in OSM) and, as evidence of
+        how this OSM represents terminated NSs, every NOT_INSTANTIATED NS's deployed-KDU count.
+        """
+        step = 'teardown-check'
+        started = self.clock.time()
+        try:
+            target = self.verify_target()
+            self.evidence.check(step, 'target is the isolated experiment system', True, target)
+            self.evidence.check(step, 'committed P4 gate is closed', lifecycle.P4_KDU_UPGRADE_APPROVAL is None)
+            nsd, knf = self.osm.lifecycle.package('ns', NSD), self.osm.lifecycle.package('knf', VNFD)
+            self.evidence.record(step, 'packages', {'nsd': nsd, 'knf': knf})
+            listing = self.osm.ns_instances()
+            ns = self.osm.experiment_ns()
+            experiment_id = ns and ns['_id']
+            others = self.other_ns_states(experiment_id)
+            self.evidence.record(step, 'other-ns', others)
+            users = [n.get('_id') for n in listing if nsd and n.get('_id') != experiment_id and
+                     n.get('nsd-id') == nsd['id']]
+            self.evidence.check(step, 'no other NS uses the experiment NSD', not users, users)
+            self.evidence.observe(step, 'terminated NS records and their listed deployed KDUs', [
+                {'id': n.get('_id'), 'name': n.get('name', n.get('nsName')),
+                 'operational-status': n.get('operational-status'), 'nsd_id_present': bool(n.get('nsd-id')),
+                 'deployed_k8s': len((n.get('_admin') or {}).get('deployed', {}).get('K8s') or [])}
+                for n in listing if n.get('nsState') == 'NOT_INSTANTIATED'])
+            if self.cluster.namespace():
+                inventory = self.cluster.inventory()
+                foreign = foreign_objects(inventory)
+                self.evidence.check(step, 'namespace holds only experiment objects', not foreign,
+                                    {'foreign': foreign, 'inventory': inventory})
+            else:
+                self.evidence.observe(step, 'experiment namespace absent', NAMESPACE)
+            if not ns:
+                self.evidence.observe(step, 'no experiment NS', NS_NAME)
+            else:
+                self.ns_id = ns['_id']
+                try:
+                    record, identity = self.verified_teardown_ns(ns['_id'], nsd)
+                    self.evidence.check(step, 'NS identity proven from OSM records', True, identity)
+                except TargetError as error:
+                    record = self.osm.lifecycle.get_ns(ns['_id'])
+                    self.evidence.check(step, 'NS identity proven from OSM records', False, str(error))
+                vnfrs = self.osm.lifecycle.vnf_instances(ns['_id'])
+                instantiated = record.get('nsState') != 'NOT_INSTANTIATED'
+                if instantiated:
+                    self.evidence.check(step, 'NS nsd-id is the p4kdu_ns package', bool(nsd) and
+                                        record.get('nsd-id') == nsd['id'],
+                                        {'nsd-id': record.get('nsd-id'), 'package': nsd and nsd['id']})
+                    self.evidence.check(step, 'every VNFR vnfd-id is the p4kdu_knf package', bool(knf) and bool(vnfrs)
+                                        and all(v.get('vnfd-id') == knf['id'] for v in vnfrs),
+                                        {'vnfd-id': [v.get('vnfd-id') for v in vnfrs], 'package': knf and knf['id']})
+                self.evidence.check(step, 'NS idle (no operation in progress)',
+                                    record.get('currentOperation') in ('IDLE', None), record.get('currentOperation'))
+                operations = []
+                for operation in self.osm.lifecycle.ns_operations(ns['_id']):
+                    params = operation.get('operationParams') or {}
+                    try:
+                        kdu_model = lifecycle.primitive_params(operation).get('kdu_model')
+                    except ValueError as error:
+                        kdu_model = 'unreadable primitive_params: ' + str(error)[:100]
+                    operations.append({'id': operation.get('_id'), 'type': operation.get('lcmOperationType'),
+                                       'state': operation.get('operationState'), 'start': operation.get('startTime'),
+                                       'entered': operation.get('statusEnteredTime'),
+                                       'primitive': params.get('primitive') if isinstance(params, dict) else None,
+                                       'kdu': params.get('kdu_name') if isinstance(params, dict) else None,
+                                       'kdu_model': kdu_model})
+                self.evidence.record(step, 'ns-operations', operations)
+                self.evidence.observe(step, 'teardown would terminate the NS first', instantiated)
+            self.evidence.observe(step, 'P1 runner state present (left untouched)', self.state_path.exists())
+        except Exception as error:          # read-only: report, never repair
+            self.evidence.check(step, 'teardown-check readable', False, type(error).__name__ + ': ' + str(error)[:500])
+        failed = [c for c in self.evidence.checks if c['passed'] is False]
+        self.evidence.steps.append({'step': step, 'result': 'failed' if failed else 'passed',
+                                    'started': started, 'ended': self.clock.time()})
+        return self.evidence.summary({'commit': self.commit, 'ns_id': self.ns_id, 'target': self.config['target_address'],
+                                      'read_only': True})
+
     def teardown(self):
         """Remove only experiment resources: NS, descriptors, Helm releases, namespace.
 
@@ -1374,9 +1473,14 @@ def connect(config):
     return catalog.request
 
 
+# Enforced in main(): NBI GET only, kubectl get/version and helm status/history/list/version only.
+READ_ONLY_COMMANDS = ('preflight', 'validate-baseline', 'teardown-check')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('command', choices=('build-packages', 'preflight', 'validate-baseline', 'run', 'teardown'))
+    parser.add_argument('command', choices=('build-packages', 'preflight', 'validate-baseline', 'teardown-check', 'run',
+                                            'teardown'))
     parser.add_argument('--config', type=Path)
     parser.add_argument('--output', type=Path, help='build-packages: output directory')
     parser.add_argument('--allow-lcm-restart', action='store_true',
@@ -1390,12 +1494,18 @@ def main(argv=None):
     config = load_config(args.config)
     stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
     evidence = Evidence(Path(config['work_dir']) / 'evidence' / (args.command + '-' + stamp))
-    cluster = Cluster(config['kubectl'], config['helm'], config['kubeconfig'], config['osm_namespace'])
-    experiment = Experiment(config, connect(config), cluster, evidence)
+    read_only = args.command in READ_ONLY_COMMANDS
+    cluster = Cluster(config['kubectl'], config['helm'], config['kubeconfig'], config['osm_namespace'],
+                      read_only=read_only)
+    request = connect(config)
+    experiment = Experiment(config, read_only_request(request) if read_only else request, cluster, evidence,
+                            resolver=resolve)
     if args.command == 'teardown':
         summary = experiment.teardown()
     elif args.command == 'validate-baseline':
         summary = experiment.validate_baseline()
+    elif args.command == 'teardown-check':
+        summary = experiment.teardown_check()
     else:
         summary = experiment.run(('preflight',) if args.command == 'preflight' else STEPS, args.allow_lcm_restart)
     print(json.dumps({k: summary[k] for k in ('steps', 'passed', 'failed', 'observations', 'summary_sha256')

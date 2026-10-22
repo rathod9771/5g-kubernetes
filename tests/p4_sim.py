@@ -113,6 +113,9 @@ class P4Target:
         self.mutations = []
         self.lcm_generation = 1
         self.atomic = True          # set False to model a broken helm --atomic
+        # OSM v19 LCM terminate (osm_lcm/ns.py) keeps _admin.deployed.K8s and nsd-id; the
+        # default model clears them. True models the v19 source until observed on the Dell.
+        self.terminate_keeps_deployed = False
         self.rollback_works = True
         if other_ns:
             # An unrelated NS (e.g. left by the old installer) that the experiment must never touch.
@@ -275,9 +278,10 @@ class P4Target:
         record = self.instances[ns_id]
         for kdu in record['_admin']['deployed']['K8s']:
             self.releases.pop((kdu['namespace'], kdu['kdu-instance']), None)
-        record['_admin']['deployed']['K8s'] = []
-        record.update(nsState='NOT_INSTANTIATED', **{'operational-status': 'terminated'})
-        record['vnfd-ids'], record['nsd-id'] = [], None
+        record.update(nsState='NOT_INSTANTIATED', currentOperation='IDLE', **{'operational-status': 'terminated'})
+        if not self.terminate_keeps_deployed:
+            record['_admin']['deployed']['K8s'] = []
+            record['vnfd-ids'], record['nsd-id'] = [], None
         return self._new_op(ns_id, 'terminate', {}, state='COMPLETED')
 
     def _action(self, ns_id, body):
@@ -288,7 +292,9 @@ class P4Target:
         kdu = next(k for k in record['_admin']['deployed']['K8s'] if k['kdu-name'] == body['kdu_name'])
         if body.get('member_vnf_index') != kdu['member-vnf-index']:
             raise OSMHTTPError(422, 'HTTP request', '; member index')
-        op_id = self._new_op(ns_id, 'action', body)
+        # OSM v19 NBI stores non-empty primitive_params JSON-encoded (NsLcmOpTopic.new).
+        params = dict(body, primitive_params=json.dumps(body['primitive_params'])) if body['primitive_params'] else body
+        op_id = self._new_op(ns_id, 'action', params)
         op = self.operations[op_id]
         history = self.releases[(kdu['namespace'], kdu['kdu-instance'])]
         if body['primitive'] == 'upgrade':
@@ -344,7 +350,7 @@ class P4Target:
             kdu = next(k for k in ns['_admin']['deployed']['K8s'] if k['kdu-name'] == params['kdu_name'])
             history = self.releases[(kdu['namespace'], kdu['kdu-instance'])]
             _, package = self._knf(op['nsInstanceId'])
-            revision = int(re.search(r':(\d+)/', params['primitive_params']['kdu_model'])[1])
+            revision = int(re.search(r':(\d+)/', json.loads(params['primitive_params'])['kdu_model'])[1])
             chart = package['charts'][revision][kdu['kdu-name']]
             history.append(dict(chart, revision=history[-1]['revision'] + 1, status='pending-upgrade',
                                 description='Preparing upgrade'))

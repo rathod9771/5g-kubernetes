@@ -119,6 +119,28 @@ Everything else, including objects merely named like an experiment object, is fo
 Any refusal is recorded as the failed check `teardown completed` and leaves the remaining
 resources in place for inspection.
 
+`teardown-check` runs the same target, G1, G3 and G4 inspections without removing
+anything: NBI GET only, `kubectl get/version` and `helm status/history/list/version` only
+(enforced for `preflight`, `validate-baseline` and `teardown-check`), no P1 state access.
+It also records the experiment NS operations (deleting the NS deletes them in OSM), explicit
+`nsd-id`/`vnfd-id` checks, whether any other NS uses the experiment NSD, and every
+NOT_INSTANTIATED NS with the number of KDUs it still lists.
+
+### OSM v19 record formats (v19.0 sources, NBI and LCM)
+
+- `NsLcmOpTopic.new` (`osm_nbi/instance_topics.py`) stores non-empty `primitive_params`
+  JSON-encoded, otherwise `additionalParamsForVnf` JSON-encoded (seen on the Dell).
+  `lifecycle.primitive_params()` and the G1 decoder accept the string or a mapping and
+  reject invalid JSON, duplicate keys and non-mapping/non-list values.
+- `NsLcm.terminate` (`osm_lcm/ns.py`) sets `nsState`/`_admin.nsState` to
+  NOT_INSTANTIATED, `currentOperation` IDLE and `operational-status` terminated, but keeps
+  `_admin.deployed.K8s` and `nsd-id` (reset only by the next instantiation). The current
+  post-termination guard requires an empty KDU list, so on such an OSM teardown stops
+  after a COMPLETED terminate with the NS record and packages kept. The guard is unchanged
+  until Dell evidence (e.g. `teardown-check`'s terminated-NS observation) confirms it.
+- NBI deletes an NS only when `_admin.nsState` is not INSTANTIATED, and deleting it
+  deletes its operation records and VNFRs.
+
 ## P1 changes made for P4 (on this branch)
 
 - `lifecycle.instance_name(entry)`: NS name from `ns_name` in the registry entry,
@@ -185,6 +207,9 @@ python3 -m json.tool ~/p4-run/evidence/run-*/summary.json | less
 #     ready, NS READY/idle with only the instantiate operation, namespace contents,
 #     P1 state bound to this NS with nothing pending. Writes only evidence files.
 python3 scripts/experiments/p4/p4_experiment.py validate-baseline --config ~/.config/p4/p4-dell.json
+
+# 7c. Read-only teardown inspection (target, NS identity, namespace contents, other NSs)
+python3 scripts/experiments/p4/p4_experiment.py teardown-check --config ~/.config/p4/p4-dell.json
 
 # 8. Teardown (NS, descriptors, releases, namespace p4-kdu-upgrade only)
 python3 scripts/experiments/p4/p4_experiment.py teardown --config ~/.config/p4/p4-dell.json

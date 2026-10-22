@@ -43,6 +43,33 @@ KDU_MODEL = re.compile(r'(?P<root>/[A-Za-z0-9_./-]+)/(?P<id>[0-9a-f-]{36}):(?P<r
                        r'(?P<package>[A-Za-z0-9_-]+)/helm-chart-v3s/(?P<kdu>[A-Za-z0-9_-]+)')
 
 
+def _unique_keys(pairs):
+    keys = [k for k, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError('duplicate key in primitive_params')
+    return dict(pairs)
+
+
+def primitive_params(operation):
+    """primitive_params of an OSM action operation record, as a mapping.
+
+    OSM v19 NBI (osm_nbi/instance_topics.py, NsLcmOpTopic.new) stores non-empty
+    primitive_params JSON-encoded; empty ones stay a mapping. Absent means {}. Invalid
+    JSON, duplicate keys or a non-object raise ValueError: never guessed.
+    """
+    params = operation.get('operationParams') or {}
+    if not isinstance(params, dict):
+        raise ValueError('operationParams is not a mapping')
+    value = params.get('primitive_params')
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        value = json.loads(value, object_pairs_hook=_unique_keys)      # JSONDecodeError is a ValueError
+    if not isinstance(value, dict):
+        raise ValueError('primitive_params is not a mapping')
+    return value
+
+
 class LifecycleError(ValueError):
     pass
 
@@ -510,13 +537,19 @@ def adopt_lost_request(osm, registry, state_path, context, policy):
         candidates = []
         for operation in osm.ns_operations(record['instance_id']):
             params = operation.get('operationParams') or {}
-            model = KDU_MODEL.fullmatch(str((params.get('primitive_params') or {}).get('kdu_model', '')))
+            if not (operation.get('lcmOperationType') == 'action' and isinstance(params, dict) and
+                    params.get('primitive') == 'upgrade' and params.get('kdu_name') == kdu):
+                continue
+            try:
+                model = KDU_MODEL.fullmatch(str(primitive_params(operation).get('kdu_model', '')))
+            except ValueError as error:
+                raise UpdateUncertain('Unreadable upgrade request ' + str(operation.get('_id')) + ' for ' + kdu +
+                                      ' in OSM (' + str(error)[:100] + '); inspect manually') from None
             start, entered = operation.get('startTime'), operation.get('statusEnteredTime')
             # An earlier attempt at the same revision that had already ended is not this request.
             ended_before = (operation.get('operationState') in TERMINAL and type(entered) in (int, float)
                             and entered < record['requested_at'])
-            if (operation.get('lcmOperationType') == 'action' and params.get('primitive') == 'upgrade' and
-                    params.get('kdu_name') == kdu and operation.get('_id') not in known and model and
+            if (operation.get('_id') not in known and model and
                     int(model['rev']) == record['knf_revision'] and type(start) in (int, float) and
                     start >= earliest and not ended_before):
                 candidates.append(operation['_id'])
