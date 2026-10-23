@@ -57,6 +57,12 @@ def collect(cfg, state, read_kubernetes, osm_reader, *, alertmanager_url=None,
         status='UNAVAILABLE' if not values or any(v not in ('READY','NOT_READY') for v in values) else 'DEGRADED' if 'NOT_READY' in values else 'WORKLOAD_READY'
         telemetry['services'][role]={'status':status,'provenance':'LIVE' if status!='UNAVAILABLE' else 'UNAVAILABLE','count':len(members)}
     events.extend(ran_events)
+    amf,amf_events=amf_evidence(telemetry['kubernetes'],state,clock)
+    telemetry['amf_evidence']=amf
+    availability=amf['availability']
+    telemetry['services']['amf']={'status':{'READY':'WORKLOAD_READY','NOT_READY':'DEGRADED'}.get(availability,'UNAVAILABLE'),
+        'provenance':amf['provenance'],'availability':availability}
+    events.extend(amf_events)
     # Fog behavior is retained, but unknown readiness is never a failure assertion.
     for pod in telemetry['kubernetes'].get('value') or []:
         role=pod['labels'].get('component')
@@ -157,6 +163,40 @@ def ran_evidence(snapshot, state, protocol_reader=None, clock=time.time):
             events.append({**common,'alarm_type':'NGAPAssociationLost','resource':identity+'/ngap',
                            'status':'resolved' if ngap else 'firing'})
     return result,events
+
+
+
+def amf_evidence(snapshot, state, clock=time.time):
+    """Reference AMF metadata contract; workload health is not NAS acceptance."""
+    context=state.get('context',{});osm=state.get('osm',{});core=osm.get('core_instance_id')
+    at=clock();result={'source':'kubernetes AMF workload','provenance':'UNAVAILABLE',
+        'observed_at':snapshot.get('observed_at',at),'availability':'UNKNOWN',
+        'application_health':'UNAVAILABLE','ue_registration':'UNAVAILABLE'}
+    if (snapshot.get('provenance')!='LIVE' or snapshot.get('truncated') or
+        snapshot.get('namespace')!=context.get('namespace') or
+        not all(isinstance(context.get(k),str) and context[k] for k in ('namespace','namespace_uid','cluster_uid')) or
+        not isinstance(core,str) or not core or core=='unknown' or core==osm.get('active_instance_id') or
+        not 0<=at-snapshot.get('observed_at',0)<=120):return result,[]
+    candidates=[p for p in snapshot.get('value') or [] if p.get('namespace')==context['namespace'] and
+        p['labels'].get('osm.etsi.org/ns-id')==core and
+        p['labels'].get('app.kubernetes.io/name') in ('amf','open5gs-amf')]
+    if not candidates:
+        result.update(availability='MISSING',provenance='LIVE');return result,[]
+    if len(candidates)!=1:return result,[]
+    pod=candidates[0];labels=pod['labels'];release=labels.get('app.kubernetes.io/instance')
+    if (not pod.get('uid') or labels.get('component','amf')!='amf' or
+        not isinstance(release,str) or not 1<=len(release)<=200):return result,[]
+    ready=pod['ready'];availability='READY' if ready is True else 'NOT_READY' if ready is False else 'UNKNOWN'
+    result.update(availability=availability,provenance='LIVE',pod_uid=pod['uid'],
+        namespace=context['namespace'],namespace_uid=context['namespace_uid'],cluster_uid=context['cluster_uid'],
+        ns_id=core,application=labels['app.kubernetes.io/name'],release=release)
+    if type(ready) is not bool:return result,[]
+    event={'alarm_type':'AMFUnavailable','cluster':context['cluster_uid'],'namespace':context['namespace'],
+        'resource':pod['name']+'/'+pod['uid'],'service':core,'node':pod.get('node') or 'unknown',
+        'source':'owned_amf_workload','timestamp':snapshot['observed_at'],'status':'resolved' if ready else 'firing',
+        'observations':{'pod_ready':ready,'metric_present':True,'service_degraded':None,
+            'ownership_verified':True,'namespace_uid':context['namespace_uid'],'resource_uid':pod['uid']}}
+    return result,[event]
 
 
 def monitoring_correlations(telemetry):

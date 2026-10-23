@@ -420,4 +420,87 @@ class P1DetectionTests(unittest.TestCase):
         self.assertEqual(sample['binding']['peers']['f1']['uid'],'du-uid')
         self.assertNotIn('table',sample)
 
+
+
+class P2AMFTests(unittest.TestCase):
+    def setUp(self):
+        self.now=2000000000.
+        self.state={'active':'fran-oai','context':{'namespace':'n','namespace_uid':'namespace-id','cluster_uid':'cluster-id'},
+                    'osm':{'active_instance_id':'ran-id','core_instance_id':'core-id'}}
+        self.pod={'metadata':{'name':'intended-amf','namespace':'n','uid':'amf-uid','labels':{
+            'app.kubernetes.io/name':'open5gs-amf','app.kubernetes.io/instance':'core-release','osm.etsi.org/ns-id':'core-id'}},
+            'spec':{},'status':{'conditions':[{'type':'Ready','status':'True'}]}}
+    def snapshot(self):
+        from assurance.adapters import Kubernetes
+        return Kubernetes(lambda _:{'items':[self.pod]},lambda:self.now).snapshot('n')
+    def detect(self,snapshot=None):
+        from assurance.observe import amf_evidence
+        return amf_evidence(self.snapshot() if snapshot is None else snapshot,self.state,lambda:self.now)
+    def test_healthy_amf_is_workload_ready_only(self):
+        t,e=self.detect();self.assertEqual(t['availability'],'READY');self.assertEqual(e[0]['status'],'resolved')
+        self.assertEqual(t['ue_registration'],'UNAVAILABLE');self.assertIsNone(e[0]['observations']['service_degraded'])
+    def test_unhealthy_amf_emits_existing_alarm(self):
+        self.pod['status']['conditions'][0]['status']='False'
+        t,e=self.detect();self.assertEqual(t['availability'],'NOT_READY');self.assertEqual(e[0]['alarm_type'],'AMFUnavailable')
+        self.assertEqual(e[0]['status'],'firing');self.assertEqual(e[0]['service'],'core-id')
+    def test_missing_amf_no_failure_or_clear(self):
+        s=self.snapshot();s['value']=[];t,e=self.detect(s)
+        self.assertEqual(t['availability'],'MISSING');self.assertEqual(e,[])
+    def test_wrong_owner_or_application_rejected(self):
+        for key in ('osm.etsi.org/ns-id','app.kubernetes.io/name'):
+            with self.subTest(key=key):
+                s=self.snapshot();s['value'][0]['labels'][key]='unrelated';self.assertEqual(self.detect(s)[1],[])
+    def test_ambiguous_identity_no_event(self):
+        import copy
+        s=self.snapshot();s['value'].append(copy.deepcopy(s['value'][0]));self.assertEqual(self.detect(s)[1],[])
+    def test_release_identity_required(self):
+        self.pod['metadata']['labels'].pop('app.kubernetes.io/instance');self.assertEqual(self.detect()[1],[])
+    def test_conflicting_role_rejected(self):
+        self.pod['metadata']['labels']['component']='upf';self.assertEqual(self.detect()[1],[])
+    def test_incomplete_inventory_no_event(self):
+        for key,value in (('truncated',True),('provenance','UNAVAILABLE'),('namespace','other')):
+            s=self.snapshot();s[key]=value;self.assertEqual(self.detect(s)[1],[])
+    def test_api_failure_unknown(self):
+        from assurance.adapters import Kubernetes
+        def failed(*args):raise TimeoutError('private')
+        t,e=self.detect(Kubernetes(failed).snapshot('n'));self.assertEqual(t['availability'],'UNKNOWN');self.assertFalse(e)
+    def test_unknown_or_terminating_not_failure(self):
+        for status in ('Unknown',None):
+            self.pod['status']['conditions'][0]['status']=status;self.assertEqual(self.detect()[1],[])
+        self.pod['status']['conditions'][0]['status']='True';self.pod['metadata']['deletionTimestamp']='now'
+        self.assertEqual(self.detect()[1],[])
+    def test_stale_future_and_simulated_inventory_rejected(self):
+        for delta in (-121,1):
+            s=self.snapshot();s['observed_at']+=delta;self.assertEqual(self.detect(s)[1],[])
+        s=self.snapshot();s['provenance']='SIMULATED';self.assertEqual(self.detect(s)[1],[])
+    def test_unbound_context_no_event(self):
+        self.state['context'].pop('namespace_uid');self.assertEqual(self.detect()[1],[])
+    def test_replacement_does_not_inherit_alarm_key(self):
+        from assurance.model import normalize
+        e=self.detect()[1][0];self.pod['metadata']['uid']='replacement';other=self.detect()[1][0]
+        self.assertNotEqual(normalize(e,self.now)['key'],normalize(other,self.now)['key'])
+    def test_incident_dedup_clear_and_missing_does_not_clear(self):
+        from assurance.store import Store
+        from assurance.engine import Engine
+        from assurance.catalog import load_catalog
+        with tempfile.TemporaryDirectory() as folder:
+            store=Store(Path(folder)/'test.sqlite');engine=Engine(store,load_catalog(),lambda:self.now)
+            self.pod['status']['conditions'][0]['status']='False'
+            for delta in (0,60,0):
+                self.now+=delta;engine.ingest(self.detect()[1][0])
+            self.assertEqual(len(store.snapshot()['incident']),1)
+            s=self.snapshot();s['value']=[];self.assertFalse(self.detect(s)[1])
+            self.assertNotEqual(store.snapshot()['alarm'][0]['state'],'CLEARED')
+            self.pod['status']['conditions'][0]['status']='True'
+            for delta in (1,60):
+                self.now+=delta;engine.ingest(self.detect()[1][0])
+            self.assertEqual(store.snapshot()['incident'][0]['state'],'RESOLVED');self.assertTrue(store.verify_audit())
+    def test_collector_exposes_amf_without_registration_claim(self):
+        def read(args):return {'items':[self.pod] if args[1]=='pods' else []}
+        telemetry,events=collect({'PROMETHEUS_URL':'offline'},self.state,read,None,
+            transport=Mock(side_effect=TimeoutError()),clock=lambda:self.now)
+        self.assertEqual(telemetry['services']['amf']['status'],'WORKLOAD_READY')
+        self.assertEqual(telemetry['services']['ue_registration']['status'],'UNAVAILABLE')
+        self.assertTrue(any(e['alarm_type']=='AMFUnavailable' for e in events))
+
 if __name__=='__main__':unittest.main()
