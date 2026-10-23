@@ -32,7 +32,7 @@ class Prometheus:
             for row in rows:
                 sample_at=timestamp(row['value'][0]); value=float(row['value'][1])
                 if not math.isfinite(value) or sample_at>at+30:raise ValueError('Invalid sample')
-                labels={k:str(v) for k,v in row.get('metric',{}).items() if k in ('job','namespace','pod','container','node','instance','service','condition','status','reason','phase','mode')}
+                labels={k:str(v) for k,v in row.get('metric',{}).items() if k in ('job','cluster','namespace','pod','container','node','instance','service','condition','status','reason','phase','mode')}
                 samples.append({'at':sample_at,'value':value,'labels':labels})
             stale=any(at-s['at']>self.max_age for s in samples)
             return {'source':'prometheus','provenance':'STALE' if stale else 'LIVE',
@@ -56,6 +56,7 @@ class Prometheus:
         freshness=self.query('timestamp('+source_selector+')')
         if freshness['provenance']=='UNAVAILABLE':return unavailable('prometheus',self.clock(),'Source freshness missing')
         times={tuple(sorted(s['labels'].items())):s['value'] for s in freshness['value']}
+        if len(times)!=len(freshness['value']):return unavailable('prometheus',self.clock(),'Ambiguous source timestamps')
         for sample in result['value']:
             at=times.get(tuple(sorted(sample['labels'].items())))
             if at is None or at>self.clock()+30 or at<0:
@@ -74,13 +75,48 @@ class Prometheus:
             values=[]
             for target in rows:
                 last=timestamp(target['lastScrape'])
-                labels={k:v for k,v in target.get('labels',{}).items() if k in ('job','namespace','instance','pod','service')}
+                labels={k:v for k,v in target.get('labels',{}).items() if k in ('job','cluster','namespace','instance','pod','service','node','container')}
                 values.append({'labels':labels,'health':target['health'],'last_scrape':last,
                     'fresh':0<=at-last<=self.max_age,'scrape_duration':target.get('lastScrapeDuration'),
                     'failure_class':'connection_refused' if 'connection refused' in target.get('lastError','') else 'scrape_failed' if target.get('lastError') else None})
             return {'source':'prometheus targets','provenance':'LIVE','observed_at':at,'value':values,
                     'status':'DEGRADED' if any(t['health']!='up' or not t['fresh'] for t in values) else 'AVAILABLE'}
         except Exception:return unavailable('prometheus targets',at,'Target API failed')
+
+def resource_quantity(value, *, cpu=False):
+    """Kubernetes CPU cores / integer bytes, rounded up to scheduler precision."""
+    from decimal import Decimal, ROUND_CEILING
+    import re
+    if type(value) not in (str,int,float) or len(str(value))>64:raise ValueError('Invalid resource quantity')
+    match=re.fullmatch(r'([+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]{1,2})?)([numKMGTPE]|[KMGTPE]i)?',str(value))
+    if not match:raise ValueError('Unsupported resource quantity')
+    suffix=match[2] or ''
+    factors={'':1,'n':Decimal('1e-9'),'u':Decimal('1e-6'),'m':Decimal('.001')}
+    if not cpu:
+        factors.update({c:10**(3*i) for i,c in enumerate('KMGTPE',1)})
+        factors.update({c+'i':1024**i for i,c in enumerate('KMGTPE',1)})
+    if suffix not in factors:raise ValueError('Invalid resource unit')
+    amount=Decimal(match[1])*factors[suffix]
+    if not amount.is_finite() or not 0<=amount<=(Decimal('1e6') if cpu else Decimal('1e24')):raise ValueError('Resource bounds')
+    return float((amount*1000).to_integral_value(rounding=ROUND_CEILING)/1000) if cpu else int(amount.to_integral_value(rounding=ROUND_CEILING))
+
+
+def pod_requests(spec):
+    """Supported regular containers only; unsupported scheduling accounting is unknown."""
+    if (not spec.get('containers') or spec.get('initContainers') or spec.get('overhead') or spec.get('resources')):return None
+    total={'cpu':0.,'memory':0}
+    try:
+        for container in spec['containers']:
+            resources=container.get('resources',{});requests=resources.get('requests',{});limits=resources.get('limits',{})
+            if (set(requests)|set(limits))-{'cpu','memory'}:return None
+            for name in total:
+                # Absent requests/limits are scheduler-defined zero, not a missing usage metric.
+                value=resource_quantity(requests.get(name,limits.get(name,'0')),cpu=name=='cpu')
+                total[name]+=round(value*1000) if name=='cpu' else value
+        total['cpu']/=1000
+        return total
+    except (ValueError,TypeError,KeyError):return None
+
 
 class Kubernetes:
     def __init__(self, read, clock=time.time):
@@ -102,6 +138,9 @@ class Kubernetes:
                     'ready':ready,'namespace':namespace,'pod_ip':status.get('podIP'),
                     'host_network':pod.get('spec',{}).get('hostNetwork',False),
                     'containers':[{'name':c['name'],'image':c.get('image','')} for c in pod.get('spec',{}).get('containers',[])],
+                    'requests':pod_requests(pod.get('spec',{})),
+                    'scheduling':{k:pod.get('spec',{}).get(k) for k in ('nodeSelector','affinity','topologySpreadConstraints','tolerations','volumes','schedulingGates','schedulerName')},
+                    'pod_scheduled':next((c.get('status') for c in status.get('conditions',[]) if c.get('type')=='PodScheduled'),None),
                     'phase':status.get('phase','Unknown'),'restarts':sum(c.get('restartCount',0) for c in containers),
                     'container_restarts':{c['name']:c.get('restartCount',0) for c in containers},
                     'container_identities':[{k:c.get(k) for k in ('name','containerID','imageID','restartCount')} for c in containers],
@@ -118,8 +157,12 @@ class Kubernetes:
             values=[{'name':n['metadata']['name'],'uid':n['metadata']['uid'],
                 'labels':{k:v for k,v in n['metadata'].get('labels',{}).items() if k in ('kubernetes.io/hostname','node-role.kubernetes.io/control-plane')},
                 'conditions':{c['type']:c['status'] for c in n['status'].get('conditions',[])},
-                'allocatable':{k:v for k,v in n['status'].get('allocatable',{}).items() if k in ('cpu','memory','pods')}} for n in data['items'][:32]]
-            return {'source':'kubernetes','provenance':'LIVE','observed_at':at,'value':values}
+                'allocatable':{k:v for k,v in n['status'].get('allocatable',{}).items() if k in ('cpu','memory','pods')},
+                'scheduling_labels':n['metadata'].get('labels',{}) if len(n['metadata'].get('labels',{}))<=128 else None,
+                'taints':n.get('spec',{}).get('taints',[]) if len(n.get('spec',{}).get('taints',[]))<=64 else None,
+                'unschedulable':n.get('spec',{}).get('unschedulable',False),
+                'addresses':[a['address'] for a in n['status'].get('addresses',[]) if a.get('type')=='InternalIP'][:32]} for n in data['items'][:32]]
+            return {'source':'kubernetes','provenance':'LIVE','observed_at':at,'value':values,'truncated':len(data['items'])>32 or bool(data.get('metadata',{}).get('continue'))}
         except Exception:return unavailable('kubernetes',at,'Node API unavailable')
 
     def warnings(self, namespace):
@@ -132,13 +175,18 @@ class Kubernetes:
                 last=event.get('lastTimestamp') or event.get('eventTime') or meta.get('creationTimestamp')
                 sample_at=timestamp(last)
                 if sample_at>at+30:raise ValueError('Future event')
-                values.append({'uid':meta['uid'],'namespace':meta.get('namespace',namespace),
+                import re
+                message=event.get('message','')
+                shortages=[r for r in ('cpu','memory') if re.search(r'\bInsufficient '+r+r'\b',message,re.I)]
+                values.append({'capacity_resources':shortages,
+                    'scheduler':event.get('reportingController') or event.get('source',{}).get('component'),
+                    'uid':meta['uid'],'namespace':meta.get('namespace',namespace),
                     'labels':{k:v for k,v in meta.get('labels',{}).items() if k in ('component','app','osm.etsi.org/ns-id')},
                     'reason':event.get('reason'),'count':event.get('count',1),
                     'resource':{k:obj.get(k) for k in ('kind','name','uid')},
                     'at':sample_at,'provenance':'LIVE' if at-sample_at<=120 else 'STALE'})
             return {'source':'kubernetes warning events','provenance':'LIVE','observed_at':at,
-                    'value':values,'truncated':len(data['items'])>256}
+                    'value':values,'truncated':len(data['items'])>256 or bool(data.get('metadata',{}).get('continue'))}
         except Exception:return unavailable('kubernetes warning events',at,'Warning event API unavailable')
 
 class OSM:

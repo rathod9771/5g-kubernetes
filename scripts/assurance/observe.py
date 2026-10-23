@@ -65,6 +65,10 @@ def collect(cfg, state, read_kubernetes, osm_reader, *, alertmanager_url=None,
         'provenance':amf['provenance'],'availability':availability}
     events.extend(amf_events)
     events.extend(osm_failure_events(telemetry['osm'],state,clock))
+    cpu,cpu_events=cpu_contention_evidence(telemetry,state,clock)
+    capacity,capacity_events=capacity_evidence(telemetry,state,clock)
+    telemetry['cpu_contention']=cpu;telemetry['capacity']=capacity
+    events.extend(cpu_events);events.extend(capacity_events)
     # Fog behavior is retained, but unknown readiness is never a failure assertion.
     for pod in telemetry['kubernetes'].get('value') or []:
         role=pod['labels'].get('component')
@@ -241,3 +245,140 @@ def monitoring_correlations(telemetry):
         group['targets'].append({'job':target['labels'].get('job'),'endpoint':endpoint,
                                 'failure_class':target.get('failure_class')})
     return list(groups.values())
+
+
+def _fresh_evidence(sample, now):
+    return (sample.get('provenance')=='LIVE' and not sample.get('truncated') and
+            type(sample.get('observed_at')) in (int,float) and 0<=now-sample['observed_at']<=120)
+
+
+def _resource_scope(telemetry, state, now):
+    from scenario_registry import load_registry
+    ctx=state.get('context',{});ns=state.get('osm',{}).get('active_instance_id')
+    if not all(isinstance(ctx.get(k),str) and ctx[k] for k in ('namespace','namespace_uid','cluster_uid')) or not isinstance(ns,str) or not ns or ns=='unknown' or ns==state.get('osm',{}).get('core_instance_id'):return []
+    snapshot=telemetry.get('kubernetes',{})
+    if not _fresh_evidence(snapshot,now) or snapshot.get('namespace')!=ctx['namespace']:return []
+    rows=snapshot.get('value') or []
+    if any(not p.get('uid') for p in rows) or len({p['uid'] for p in rows})!=len(rows) or len({p['name'] for p in rows})!=len(rows):return []
+    try:apps={c['release_name']:('du' if c['kdu'] in ('macro','small') else c['kdu']) for s in load_registry()['scenarios'] if s['key']==state['active'] for c in s['charts']}
+    except (ValueError,KeyError):return []
+    return [p for p in snapshot.get('value') or [] if p.get('namespace')==ctx['namespace'] and p.get('uid') and
+            p['labels'].get('osm.etsi.org/ns-id')==ns and p['labels'].get('app') in apps and
+            p['labels'].get('component')==apps[p['labels']['app']]]
+
+
+def _resource_event(kind, resource, uid, state, at, **observations):
+    ctx=state['context']
+    return {'alarm_type':kind,'resource':resource,'cluster':ctx['cluster_uid'],'namespace':ctx['namespace'],
+            'service':state['osm']['active_instance_id'],'timestamp':at,'source':'scoped_resource_observer',
+            'observations':{'resource_uid':uid,'namespace_uid':ctx['namespace_uid'],'ownership_verified':True,
+                            'metric_present':True,'service_degraded':None,**observations}}
+
+
+def cpu_contention_evidence(telemetry, state, clock=time.time):
+    """PSI waiting ratio is contention; utilization/throttling are different evidence."""
+    import math
+    from urllib.parse import urlsplit
+    now=clock();result={'provenance':'UNAVAILABLE','observed_at':now,'value':[],
+        'metric':'node_pressure_cpu_waiting_seconds_total','unit':'ratio','window_seconds':300,
+        'utilization':'NOT_COLLECTED','throttling':'NOT_COLLECTED'};events=[]
+    nodes=telemetry.get('nodes',{});pressure=telemetry.get('cpu_pressure',{});targets=telemetry.get('prometheus_targets',{})
+    owned=_resource_scope(telemetry,state,now)
+    if not owned or not all(_fresh_evidence(s,now) for s in (nodes,pressure,targets)):return result,events
+    inventory=nodes.get('value') or []
+    if len({n.get('uid') for n in inventory})!=len(inventory) or len({n.get('name') for n in inventory})!=len(inventory):return result,events
+    seen=set()
+    for node in inventory:
+        if not node.get('uid') or not any(p.get('node')==node['name'] for p in owned):continue
+        samples=[]
+        for sample in pressure.get('value') or []:
+            labels=sample.get('labels',{});instance=labels.get('instance')
+            if labels.get('job')!='node-exporter' or not instance or labels.get('cluster',state['context']['cluster_uid'])!=state['context']['cluster_uid']:continue
+            host=urlsplit('http://'+instance).hostname
+            if host not in [node['name'],*node.get('addresses',[])]:continue
+            if labels.get('node',node['name'])!=node['name']:continue
+            matching=[t for t in targets.get('value') or [] if t['labels'].get('job')=='node-exporter' and
+                      t['labels'].get('instance')==instance and t.get('health')=='up' and t.get('fresh') and
+                      0<=now-t.get('last_scrape',0)<=120 and t['labels'].get('node',node['name'])==node['name'] and
+                      all(labels.get(k)==t['labels'].get(k) for k in ('cluster','namespace','pod','service','node','container'))]
+            value=sample.get('value');stamp=sample.get('at')
+            if (len(matching)==1 and type(value) in (int,float) and math.isfinite(value) and 0<=value<=1 and
+                type(stamp) in (int,float) and 0<=now-stamp<=120):samples.append(sample)
+        if len(samples)!=1 or node['uid'] in seen:continue
+        seen.add(node['uid']);sample=samples[0]
+        # Threshold is the existing reviewed example rule's laboratory candidate.
+        high=sample['value']>.20
+        result['value'].append({'node':node['name'],'node_uid':node['uid'],'ratio':sample['value'],'at':sample['at'],'high':high})
+        event=_resource_event('HostCPUContentionHigh',node['name']+'/'+node['uid'],node['uid'],state,
+            min(sample['at'],nodes['observed_at'],telemetry['kubernetes']['observed_at']),host_pressure=sample['value'])
+        event.update(status='firing' if high else 'resolved',node=node['name']);events.append(event)
+    if result['value']:result['provenance']='LIVE'
+    return result,events
+
+
+def capacity_evidence(telemetry, state, clock=time.time):
+    """Prove a shortage from requests + fresh scheduler evidence, never aggregate usage.
+
+    Namespace allocations are a lower bound. Their residual is an UPPER bound
+    on headroom; fitting it cannot establish cluster schedulability.
+    """
+    from .adapters import resource_quantity
+    now=clock();result={'provenance':'UNAVAILABLE','observed_at':now,'value':[],
+        'accounting':'requested resources, not usage; namespace allocations are a lower bound'};events=[]
+    snapshot=telemetry.get('kubernetes',{});nodes=telemetry.get('nodes',{});warnings=telemetry.get('kubernetes_warnings',{})
+    owned=_resource_scope(telemetry,state,now)
+    if not owned or not all(_fresh_evidence(s,now) for s in (nodes,warnings)):return result,events
+    inventory=nodes.get('value') or []
+    if any(not n.get('uid') for n in inventory) or len({n['uid'] for n in inventory})!=len(inventory) or len({n['name'] for n in inventory})!=len(inventory):return result,events
+    for pod in owned:
+        row={'pod_uid':pod['uid'],'status':'UNKNOWN'};result['value'].append(row)
+        resource=pod['name']+'/'+pod['uid']
+        common_time=min(snapshot['observed_at'],nodes['observed_at'],warnings['observed_at'])
+        if pod.get('node') and pod.get('pod_scheduled')=='True':
+            if any(n['name']==pod['node'] and n['conditions'].get('Ready')=='True' for n in inventory):
+                row['status']='PLACEMENT_CONFIRMED'
+                event=_resource_event('InsufficientClusterCapacity',resource,pod['uid'],state,common_time)
+                event['status']='resolved';events.append(event)
+            continue
+        if pod.get('phase')!='Pending' or pod.get('node') or pod.get('requests') is None:continue
+        schedule=pod.get('scheduling',{})
+        if (schedule.get('affinity') or schedule.get('topologySpreadConstraints') or schedule.get('schedulingGates') or
+            schedule.get('schedulerName') not in (None,'default-scheduler') or
+            any(v.get('persistentVolumeClaim') for v in schedule.get('volumes') or [])):continue
+        if not inventory or any(n['conditions'].get('Ready')!='True' or
+            any(n['conditions'].get(k)!='False' for k in ('MemoryPressure','DiskPressure','PIDPressure')) for n in inventory):continue
+        eligible=[];unknown=False
+        for node in inventory:
+            if node.get('scheduling_labels') is None or node.get('taints') is None:unknown=True;break
+            if node.get('unschedulable'):continue
+            if any(node['scheduling_labels'].get(k)!=v for k,v in (schedule.get('nodeSelector') or {}).items()):continue
+            def tolerates(taint):
+                return any(t.get('operator','Equal') in ('Equal','Exists') and
+                    (not t.get('effect') or t['effect']==taint.get('effect')) and
+                    (t.get('key')==taint.get('key') or t.get('operator')=='Exists' and not t.get('key')) and
+                    (t.get('operator')=='Exists' or t.get('value','')==taint.get('value','')) for t in schedule.get('tolerations') or [])
+            if any(t.get('effect') in ('NoSchedule','NoExecute') and not tolerates(t) for t in node['taints']):continue
+            try:available={k:resource_quantity(node['allocatable'][k],cpu=k=='cpu') for k in ('cpu','memory')}
+            except (ValueError,KeyError,TypeError):unknown=True;break
+            allocations=[p for p in snapshot.get('value') or [] if p.get('node')==node['name'] and p.get('phase') not in ('Succeeded','Failed')]
+            if any(p.get('requests') is None for p in allocations):unknown=True;break
+            residual={'cpu':(round(available['cpu']*1000)-sum(round(p['requests']['cpu']*1000) for p in allocations))/1000,
+                      'memory':available['memory']-sum(p['requests']['memory'] for p in allocations)}
+            eligible.append({'node':node['name'],'uid':node['uid'],'allocatable':available,'headroom_upper_bound':residual,
+                'shortage':[k for k in available if pod['requests'][k]>0 and pod['requests'][k]>residual[k]]})
+        if unknown:continue
+        if not eligible:row['status']='CONSTRAINTS_UNSATISFIED';continue
+        row.update(eligible_nodes=eligible,requests=pod['requests'])
+        if not all(n['shortage'] for n in eligible):row['status']='FIT_NOT_PROVEN';continue
+        observed=[w for w in warnings.get('value') or [] if w.get('reason')=='FailedScheduling' and
+            w.get('scheduler') in ('default-scheduler','kube-scheduler') and w.get('provenance')=='LIVE' and
+            w.get('namespace')==state['context']['namespace'] and w.get('resource',{}).get('uid')==pod['uid'] and
+            w.get('resource',{}).get('kind')=='Pod' and w['resource'].get('name')==pod['name'] and
+            0<=now-w.get('at',0)<=120 and any(r in w.get('capacity_resources',[]) for n in eligible for r in n['shortage'])]
+        if not observed:continue
+        row['status']='PROVEN_SHORTAGE'
+        event=_resource_event('InsufficientClusterCapacity',resource,pod['uid'],state,
+            min(common_time,max(w['at'] for w in observed)))
+        event['status']='firing';events.append(event)
+    if result['value']:result['provenance']='LIVE'
+    return result,events
