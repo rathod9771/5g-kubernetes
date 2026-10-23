@@ -47,7 +47,59 @@ class KubernetesReader:
             raise KubernetesReadError('Malformed Kubernetes list')
         return result
 
-    def run_json(self, command, stop_event=None):
+    def sctp(self, pod, peers, context, ns_id):
+        """Opt-in scoped kernel read; two observations/six subprocesses maximum.
+
+        Revalidate source and peer pod identities around exact read-only cat.
+        Not enabled by the default CLI. No RBAC or deployment changes here.
+        """
+        import re
+        from .adapters import Kubernetes
+        if self.stats.get('protocol_observations',0)>=2:
+            raise KubernetesReadError('Protocol observation budget exhausted')
+        if (context.get('namespace')!=self.namespace or pod.get('namespace')!=self.namespace or
+                pod.get('labels',{}).get('osm.etsi.org/ns-id')!=ns_id or
+                pod.get('labels',{}).get('component') not in ('cu','du') or not peers):
+            raise KubernetesReadError('Unbound protocol read')
+        candidates=[c['name'] for c in pod.get('containers',[]) if
+                    'oai-gnb' in c.get('image','').lower() or 'srsran' in c.get('image','').lower()]
+        if len(candidates)!=1:raise KubernetesReadError('Ambiguous RAN container')
+        container=candidates[0]
+        if not all(re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}',x) for x in (self.namespace,pod['name'],container)):
+            raise KubernetesReadError('Invalid protocol read identity')
+        if resource.getrlimit(resource.RLIMIT_AS)[0]!=resource.RLIM_INFINITY:
+            raise KubernetesReadError('Finite inherited RLIMIT_AS incompatible with reviewed runner')
+        self.stats['protocol_observations']=self.stats.get('protocol_observations',0)+1
+        def inventory():
+            self.stats['protocol_request_attempts']=self.stats.get('protocol_request_attempts',0)+1
+            return self.run_json([self.executable,'--kubeconfig',self.cfg['OSM_KUBECONFIG_PATH'],
+                '--request-timeout=5s','--chunk-size=0','get','pods','-n',self.namespace,'-o','json'])
+        def same_inventory(data):
+            snap=Kubernetes(lambda _:data).snapshot(self.namespace)
+            if snap['provenance']!='LIVE' or snap.get('truncated'):return False
+            for expected in [pod,*peers.values()]:
+                matches=[p for p in snap['value'] if p['name']==expected['name']]
+                if len(matches)!=1:return False
+                current=matches[0]
+                if any(current.get(k)!=expected.get(k) for k in ('uid','pod_ip','host_network','containers','container_identities','labels','ready','phase')):return False
+                # A terminating pod is not stable identity evidence.
+                raw=next(p for p in data['items'] if p['metadata']['name']==expected['name'])
+                if raw['metadata'].get('deletionTimestamp'):return False
+            return True
+        if not same_inventory(inventory()):raise KubernetesReadError('Protocol identity changed before read')
+        observed_at=time.time()
+        self.stats['protocol_request_attempts']+=1
+        table=self.run_json([self.executable,'--kubeconfig',self.cfg['OSM_KUBECONFIG_PATH'],
+            '--request-timeout=5s','exec','-n',self.namespace,pod['name'],'-c',container,
+            '--','cat','/proc/net/sctp/assocs'],_text=True)
+        if len(table.encode())>65536:raise KubernetesReadError('SCTP output budget exceeded')
+        if not same_inventory(inventory()):raise KubernetesReadError('Protocol identity changed during read')
+        return {**context,'ns_id':ns_id,'pod':pod['name'],'pod_uid':pod['uid'],
+                'pod_ip':pod['pod_ip'],'container':container,'provenance':'LIVE',
+                'observed_at':observed_at,'table':table,
+                'peers':{k:{x:p[x] for x in ('uid','pod_ip')} for k,p in peers.items()}}
+
+    def run_json(self, command, stop_event=None, *, _text=False):
         # Shared process boundary; callers construct commands without user shell input.
         started = time.monotonic(); process = None; selector = selectors.DefaultSelector()
         buffers = {}; total = 0; tracked = {}; stage='startup'; failure=None
@@ -90,6 +142,7 @@ class KubernetesReader:
             if process.wait() != 0:
                 raise KubernetesReadError('Kubernetes read failed; private stderr suppressed')
             stage='decode_output'
+            if _text:return bytes(buffers[process.stdout]).decode('utf-8')
             result = json.loads(buffers[process.stdout])
             if not isinstance(result, dict):
                 raise KubernetesReadError('Malformed JSON object')

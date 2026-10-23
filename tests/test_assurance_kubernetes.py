@@ -147,4 +147,64 @@ class KubernetesEvidenceTests(unittest.TestCase):
                 telemetry=observe(inspect_only=True)
             self.assertEqual(telemetry['policy_classifications'],{'SUPPORTED':8,'PARTIALLY_SUPPORTED':27,'UNAVAILABLE':9})
 
+
+
+class ScopedSCTPReaderTests(unittest.TestCase):
+    def fixtures(self):
+        from types import SimpleNamespace
+        pods=[]
+        for role,ip in (('cu','192.0.2.1'),('du','192.0.2.2'),('amf','192.0.2.3')):
+            pods.append({'metadata':{'name':'fran-oai-'+role,'namespace':'n','uid':role+'-uid',
+                'labels':{'component':role,'app':'fran-oai-'+role,'osm.etsi.org/ns-id':'core-id' if role=='amf' else 'ran-id'}},
+                'spec':{'containers':[{'name':role,'image':'open5gs:fixture' if role=='amf' else 'oai-gnb:fixture'}]},
+                'status':{'phase':'Running','podIP':ip,'conditions':[{'type':'Ready','status':'True'}]}})
+        case=SimpleNamespace(pods=pods,tables={'cu':'ST LPORT RPORT LADDRS <-> RADDRS\n'},
+             state={'context':{'namespace':'n','namespace_uid':'namespace-id','cluster_uid':'cluster-id'}})
+        snap=Kubernetes(lambda _:{'items':pods}).snapshot('n')
+        return case,snap['value'][0],{'f1':snap['value'][1],'ngap':snap['value'][2]}
+    def test_exact_commands_and_identity_readback(self):
+        case,pod,peers=self.fixtures();reader=KubernetesReader({'OSM_KUBECONFIG_PATH':'offline'},'n')
+        with patch.object(reader,'run_json',side_effect=[{'items':case.pods},case.tables['cu'],{'items':case.pods}]) as run:
+            result=reader.sctp(pod,peers,case.state['context'],'ran-id')
+        self.assertEqual(run.call_count,3);self.assertEqual(reader.stats['protocol_request_attempts'],3)
+        command=run.call_args_list[1].args[0]
+        self.assertEqual(command[-3:],['--','cat','/proc/net/sctp/assocs'])
+        self.assertIn('-c',command);self.assertEqual(result['pod_uid'],'cu-uid')
+    def test_replacement_after_read_rejected(self):
+        import copy
+        case,pod,peers=self.fixtures();reader=KubernetesReader({'OSM_KUBECONFIG_PATH':'offline'},'n')
+        changed=copy.deepcopy(case.pods);changed[1]['metadata']['uid']='replacement'
+        with patch.object(reader,'run_json',side_effect=[{'items':case.pods},case.tables['cu'],{'items':changed}]):
+            with self.assertRaisesRegex(KubernetesReadError,'changed during'):reader.sctp(pod,peers,case.state['context'],'ran-id')
+    def test_replacement_before_read_never_executes(self):
+        case,pod,peers=self.fixtures();reader=KubernetesReader({'OSM_KUBECONFIG_PATH':'offline'},'n')
+        with patch.object(reader,'run_json',return_value={'items':[]}) as run:
+            with self.assertRaises(KubernetesReadError):reader.sctp(pod,peers,case.state['context'],'ran-id')
+        self.assertEqual(run.call_count,1)
+    def test_wrong_namespace_denied_before_subprocess(self):
+        case,pod,peers=self.fixtures();reader=KubernetesReader({'OSM_KUBECONFIG_PATH':'offline'},'other')
+        with patch.object(reader,'run_json') as run:
+            with self.assertRaises(KubernetesReadError):reader.sctp(pod,peers,case.state['context'],'ran-id')
+        run.assert_not_called()
+    def test_protocol_budget_no_retry(self):
+        case,pod,peers=self.fixtures();reader=KubernetesReader({'OSM_KUBECONFIG_PATH':'offline'},'n')
+        reader.stats['protocol_observations']=2
+        with patch.object(reader,'run_json') as run:
+            with self.assertRaisesRegex(KubernetesReadError,'budget'):reader.sctp(pod,peers,case.state['context'],'ran-id')
+        run.assert_not_called()
+    def test_sctp_output_limit(self):
+        case,pod,peers=self.fixtures();reader=KubernetesReader({'OSM_KUBECONFIG_PATH':'offline'},'n')
+        with patch.object(reader,'run_json',side_effect=[{'items':case.pods},'x'*65537]):
+            with self.assertRaisesRegex(KubernetesReadError,'output budget'):reader.sctp(pod,peers,case.state['context'],'ran-id')
+    def test_text_mode_uses_existing_process_supervisor(self):
+        reader=KubernetesReader({},'',timeout=1)
+        self.assertEqual(reader.run_json([sys.executable,'-c','print("ST LPORT RPORT")'],_text=True),'ST LPORT RPORT\n')
+        self.assertEqual(reader.stats['processes'],1)
+    def test_container_restart_during_read_rejected(self):
+        import copy
+        case,pod,peers=self.fixtures();reader=KubernetesReader({'OSM_KUBECONFIG_PATH':'offline'},'n')
+        changed=copy.deepcopy(case.pods);changed[0]['status']['containerStatuses']=[{'name':'cu','containerID':'replacement','restartCount':1}]
+        with patch.object(reader,'run_json',side_effect=[{'items':case.pods},case.tables['cu'],{'items':changed}]):
+            with self.assertRaisesRegex(KubernetesReadError,'changed during'):reader.sctp(pod,peers,case.state['context'],'ran-id')
+
 if __name__=='__main__':unittest.main()

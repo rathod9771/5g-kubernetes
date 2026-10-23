@@ -13,7 +13,7 @@ EVIDENCE_KEYS = frozenset(('pod_ready', 'f1_association', 'ngap_association',
     'capacity_sufficient', 'ownership_verified', 'host_pressure', 'service_degraded',
     'fog_latency', 'operation_failed', 'node_ready', 'metric_present',
     'registration_failures', 'pdu_failures', 'packet_loss', 'protected_state', 'configuration_failure',
-    'monitoring_fresh', 'resource_uid', 'operation_id', 'kdu_id', 'vnf_id'))
+    'monitoring_fresh', 'resource_uid', 'operation_id', 'kdu_id', 'vnf_id', 'namespace_uid'))
 
 
 def timestamp(value):
@@ -63,7 +63,9 @@ def normalize(raw, now, *, simulation=False):
     for key, value in observations.items():
         if key not in EVIDENCE_KEYS:
             continue  # Never retain logs, annotations, subscriber IDs or credentials.
-        if value is None or type(value) is bool:
+        if key=='namespace_uid':
+            safe[key]=None if value is None else identity(value)
+        elif value is None or type(value) is bool:
             safe[key] = value
         elif type(value) in (float, int) and math.isfinite(value):
             safe[key] = value

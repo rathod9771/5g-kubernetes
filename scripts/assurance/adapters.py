@@ -93,16 +93,23 @@ class Kubernetes:
             resources=[]
             for pod in data['items'][:256]:
                 status=pod.get('status',{}); meta=pod['metadata']; containers=status.get('containerStatuses',[])
+                if meta.get('namespace',namespace)!=namespace:raise ValueError('Namespace mismatch')
+                condition=next((c.get('status') for c in status.get('conditions',[]) if c.get('type')=='Ready'),None)
+                ready={'True':True,'False':False}.get(condition)
+                if meta.get('deletionTimestamp'):ready=None
                 resources.append({'name':meta['name'],'uid':meta['uid'],
                     'labels':{k:v for k,v in meta.get('labels',{}).items() if k in ('component','app','app.kubernetes.io/name','app.kubernetes.io/instance','osm.etsi.org/ns-id')},
-                    'ready':any(c.get('type')=='Ready' and c.get('status')=='True' for c in status.get('conditions',[])) and not bool(meta.get('deletionTimestamp')),
+                    'ready':ready,'namespace':namespace,'pod_ip':status.get('podIP'),
+                    'host_network':pod.get('spec',{}).get('hostNetwork',False),
+                    'containers':[{'name':c['name'],'image':c.get('image','')} for c in pod.get('spec',{}).get('containers',[])],
                     'phase':status.get('phase','Unknown'),'restarts':sum(c.get('restartCount',0) for c in containers),
                     'container_restarts':{c['name']:c.get('restartCount',0) for c in containers},
+                    'container_identities':[{k:c.get(k) for k in ('name','containerID','imageID','restartCount')} for c in containers],
                     'node':pod.get('spec',{}).get('nodeName'),
                     'crash_loop':any(c.get('state',{}).get('waiting',{}).get('reason')=='CrashLoopBackOff' for c in containers),
                     'oom_killed':any(c.get('lastState',{}).get('terminated',{}).get('reason')=='OOMKilled' for c in containers)})
             return {'source':'kubernetes','provenance':'LIVE','observed_at':at,'value':resources,
-                    'truncated':len(data['items'])>256}
+                    'truncated':len(data['items'])>256 or bool(data.get('metadata',{}).get('continue')),'namespace':namespace}
         except Exception:return unavailable('kubernetes',at,'Kubernetes API unavailable')
     def infrastructure(self):
         at=self.clock()
@@ -167,6 +174,57 @@ class ProtocolEvidence:
                 'ngap_association':established(table,38412,remote_only=True),
                 'f1_setup':None,'ng_setup':None,'cell_active':None,
                 'ue_registered':None,'pdu_established':None,'user_plane_measured':None}}
+
+    @staticmethod
+    def scoped(observation, pod, peers, context, ns_id, clock=time.time, max_age=120):
+        """Trusted provider contract; reject stale/replaced/mis-scoped assertions.
+
+        peers maps f1/ngap to current owned peer pods. Only pod-IP paths are
+        supported; VIP/NAT requires independently verified endpoint mapping.
+        No protocol setup, registration or user-plane success is inferred.
+        """
+        import ipaddress
+        from ran_health import scoped_association
+        at=clock()
+        unknown={'f1_association':None,'ngap_association':None,'f1_setup':None,
+                 'ng_setup':None,'ue_registered':None,'pdu_established':None,'user_plane_measured':None}
+        result={'source':'scoped kernel SCTP','provenance':'UNAVAILABLE','observed_at':at,
+                'value':unknown,'reason':'Missing or invalid scoped protocol evidence'}
+        try:
+            if not isinstance(observation,dict) or observation.get('provenance')!='LIVE':return result
+            stamp=timestamp(observation['observed_at'])
+            if not 0<=at-stamp<=max_age:
+                result['provenance']='STALE';return result
+            binding={'namespace':context['namespace'],'namespace_uid':context['namespace_uid'],
+                     'cluster_uid':context['cluster_uid'],'ns_id':ns_id,'pod':pod['name'],
+                     'pod_uid':pod['uid'],'pod_ip':pod['pod_ip']}
+            if not all(isinstance(v,str) and v and observation.get(k)==v for k,v in binding.items()):return result
+            if pod.get('host_network') is not False:return result
+            ipaddress.ip_address(pod['pod_ip'])
+            container=observation.get('container')
+            if container not in [c['name'] for c in pod['containers']]:return result
+            # A sidecar cannot attest to the intended RAN process namespace.
+            image=next(c['image'].lower() for c in pod['containers'] if c['name']==container)
+            if 'oai-gnb' not in image and 'srsran' not in image:return result
+            table=observation['table']
+            if not isinstance(table,str) or len(table.encode())>65536:return result
+            available=False
+            for protocol,peer in peers.items():
+                if protocol not in ('f1','ngap') or not peer or peer.get('host_network') is not False:continue
+                declared=observation.get('peers',{}).get(protocol,{})
+                expected={k:peer[k] for k in ('uid','pod_ip')}
+                if declared!=expected:continue
+                ipaddress.ip_address(peer['pod_ip'])
+                value=scoped_association(table,38472 if protocol=='f1' else 38412,
+                    pod['pod_ip'],peer['pod_ip'],remote_only=protocol=='ngap' or pod['labels'].get('component')=='du',
+                    local_only=protocol=='f1' and pod['labels'].get('component')=='cu')
+                unknown[protocol+'_association']=value
+                available=available or value is not None
+            result['binding']={**binding,'container':container,'peers':{k:{x:p[x] for x in ('uid','pod_ip')} for k,p in peers.items()}}
+            result.update(provenance='LIVE' if available else 'UNAVAILABLE',observed_at=stamp,
+                          reason=None if available else result['reason'])
+            return result
+        except (KeyError,ValueError,TypeError,AttributeError,StopIteration):return result
 
     @staticmethod
     def from_timestamped_logs(text, clock=time.time, max_age=120):
@@ -246,8 +304,10 @@ def service_health(snapshot, protocols=None, active_ns=None):
             labels=pod['labels']; component=labels.get('component'); name=pod['name']
             if role=='core' and name.startswith('open5gs'):matches.append(pod)
             elif role in ('cu','du','fog') and component==role and (active_ns is None or labels.get('osm.etsi.org/ns-id')==active_ns):matches.append(pod)
-        if matches:result[role]={'status':'WORKLOAD_READY' if all(p['ready'] for p in matches) else 'DEGRADED','provenance':'LIVE','count':len(matches)}
+        if matches:result[role]={'status':'UNAVAILABLE' if any(p['ready'] is None for p in matches) else 'WORKLOAD_READY' if all(p['ready'] for p in matches) else 'DEGRADED','provenance':'LIVE','count':len(matches)}
     if protocols and protocols.get('provenance')=='LIVE':
         v=protocols['value']
-        result['ran_protocol']={'status':'TRANSPORT_ESTABLISHED' if v.get('f1_association') and v.get('ngap_association') else 'DEGRADED','provenance':'LIVE'}
+        known=all(type(v.get(k)) is bool for k in ('f1_association','ngap_association'))
+        result['ran_protocol']={'status':'UNAVAILABLE' if not known else 'TRANSPORT_ESTABLISHED' if v['f1_association'] and v['ngap_association'] else 'DEGRADED',
+                                'provenance':'LIVE' if known else 'UNAVAILABLE'}
     return result

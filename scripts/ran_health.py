@@ -25,6 +25,41 @@ def established(text, port, remote_only=False):
     return False
 
 
+
+def scoped_association(text, port, local_ip, peer_ip, remote_only=False, local_only=False):
+    """Tri-state kernel evidence: malformed is None, valid absence is False.
+
+    Named ports/state are reused from established(); address columns are also
+    checked so an unrelated association never establishes target health.
+    """
+    import ipaddress
+    if not isinstance(text,str) or len(text.encode())>65536:return None
+    lines=text.splitlines()
+    if not lines:return None
+    header=lines[0].split()
+    try:
+        st,lp,rp,la,arrow,ra=(header.index(k) for k in ('ST','LPORT','RPORT','LADDRS','<->','RADDRS'))
+        if not (st<lp<rp<la<arrow<ra):return None
+        local_ip=ipaddress.ip_address(local_ip);peer_ip=ipaddress.ip_address(peer_ip)
+        found=False;ambiguous=False
+        if len(lines)>257:return None
+        for line in lines[1:]:
+            if not line.strip():continue
+            fields=line.split()
+            split=fields.index('<->')
+            if split<=rp or len(fields)<=split+1:return None
+            if not fields[st].isdigit() or not 0<=int(fields[st])<=10:return None
+            if not all(fields[i].isdigit() and 0<int(fields[i])<=65535 for i in (lp,rp)):return None
+            local={ipaddress.ip_address(x) for x in fields[rp+1:split]}
+            remote={ipaddress.ip_address(x) for x in fields[split+1:]}
+            if not local or not remote:return None
+            if local_only and fields[lp]!=str(port):continue
+            if local_ip in local and peer_ip not in remote and established(lines[0]+'\n'+line,port,remote_only):ambiguous=True
+            if local_ip in local and peer_ip in remote and established(lines[0]+'\n'+line,port,remote_only):found=True
+        return None if ambiguous and not found else found
+    except (ValueError,IndexError,TypeError):return None
+
+
 def srsran_pods(pods):
     return [p for p in pods.get('items', []) if any(
         'srsran' in c.get('image', '').lower()
