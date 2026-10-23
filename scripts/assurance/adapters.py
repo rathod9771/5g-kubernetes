@@ -143,23 +143,46 @@ class Kubernetes:
 
 class OSM:
     def __init__(self, client, clock=time.time):self.client,self.clock=client,clock
-    def snapshot(self, ns_id, operation_id=None):
+    def snapshot(self, ns_id, operation_id=None, *, expected_project=None):
         at=self.clock()
         try:
             ns=self.client.get_ns_instance(ns_id)
-            if ns.get('_id',ns.get('id'))!=ns_id:raise ValueError('Identity mismatch')
+            if ns.get('_id',ns.get('id'))!=ns_id or any(ns[k]!=ns_id for k in ('_id','id') if k in ns):
+                raise ValueError('NS identity mismatch')
+            projects=ns.get('_admin',{}).get('projects_read')
+            owned=isinstance(expected_project,str) and bool(expected_project) and isinstance(projects,list) and expected_project in projects
+            if expected_project and projects is not None and not owned:raise ValueError('Project ownership mismatch')
             value={k:ns.get(k) for k in ('nsState','operational-status','config-status','currentOperation','currentOperationID')}
-            # KDU/VNF fields vary by profile; absence remains unknown.
-            value['vnf_state_available']=isinstance(ns.get('vnfr'),list)
+            value.update(ns_id=ns_id,ownership_verified=owned,project_id=expected_project if owned else None,
+                         vnf_state_available=isinstance(ns.get('vnfr'),list))
             if operation_id:
+                if ns.get('currentOperationID') not in (None,'',operation_id):raise ValueError('Conflicting operation identity')
                 op=self.client.get_operation(operation_id)
                 if op.get('nsInstanceId')!=ns_id:raise ValueError('Operation ownership mismatch')
-                value['operation']={k:op.get(k) for k in ('operationState','lcmOperationType','startTime','statusEnteredTime')}
-                value['operation_id']=operation_id
-                entered=value['operation'].get('statusEnteredTime')
-                value['stalled_candidate']=bool(type(entered) in (int,float) and at-entered>900 and op.get('operationState') in ('PROCESSING','STARTING'))
-            return {'source':'osm','provenance':'LIVE','observed_at':at,'value':value,
-                'protocol_health':'UNAVAILABLE','healing':'UNVALIDATED','scaling':'UNVALIDATED'}
+                identifiers=[op[k] for k in ('_id','id') if k in op]
+                if identifiers and any(v!=operation_id for v in identifiers):raise ValueError('Operation identity mismatch')
+                op_projects=op.get('_admin',{}).get('projects_read')
+                if expected_project and op_projects is not None and (not isinstance(op_projects,list) or expected_project not in op_projects):
+                    raise ValueError('Operation project mismatch')
+                state=op.get('operationState')
+                kind=op.get('lcmOperationType')
+                kind=kind if kind in ('INSTANTIATE','TERMINATE','ACTION','SCALE','HEAL','UPDATE') else 'UNKNOWN'
+                operation={'operationState':state if state in ('COMPLETED','FAILED','PROCESSING','STARTING','FAILED_TEMP','PARTIALLY_COMPLETED','ROLLING_BACK') else 'UNKNOWN',
+                           'lcmOperationType':kind,'startTime':None,'statusEnteredTime':None}
+                valid_times=False
+                try:
+                    started=timestamp(op['startTime']);entered=timestamp(op['statusEnteredTime'])
+                    valid_times=started<=entered<=at+30
+                    if valid_times:operation.update(startTime=started,statusEnteredTime=entered)
+                except (KeyError,ValueError,TypeError):pass
+                verified=bool(identifiers) and owned and valid_times
+                value.update(operation=operation,operation_id=operation_id,
+                    operation_provenance='LIVE' if verified else 'UNAVAILABLE',
+                    operation_classification=('COMPLETED' if state=='COMPLETED' else 'FAILED' if state=='FAILED' else
+                        'PROCESSING' if state in ('PROCESSING','STARTING') else 'UNKNOWN') if verified else 'UNKNOWN')
+                value['stalled_candidate']=bool(valid_times and at-entered>900 and state in ('PROCESSING','STARTING'))
+            return {'source':'osm','provenance':'LIVE' if 0<=self.clock()-at<=120 else 'STALE','observed_at':at,'value':value,
+                    'protocol_health':'UNAVAILABLE','healing':'UNVALIDATED','scaling':'UNVALIDATED'}
         except Exception:return unavailable('osm',at,'OSM API unavailable or ownership unverified')
 
 class ProtocolEvidence:

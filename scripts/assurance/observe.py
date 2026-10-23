@@ -20,7 +20,8 @@ def collect(cfg, state, read_kubernetes, osm_reader, *, alertmanager_url=None,
     telemetry['osm']={}
     for role,field in (('ran','active_instance_id'),('core','core_instance_id')):
         ns=state.get('osm',{}).get(field)
-        if ns:telemetry['osm'][role]=OSM(osm_reader,clock).snapshot(ns,state['osm'].get('active_operation_id') if role=='ran' else None)
+        if ns:telemetry['osm'][role]=OSM(osm_reader,clock).snapshot(ns,state['osm'].get('active_operation_id') if role=='ran' else None,
+            expected_project=state['context'].get('project_id'))
     telemetry['kpm']=unavailable('KPM',at,'No live KPM adapter; availability not inferred from workload readiness')
     telemetry['rancher']=unavailable('rancher',at,'Authoritative Kubernetes state used; Rancher API unconfigured')
     telemetry['monitoring_status']='UNAVAILABLE' if telemetry['prometheus']['provenance']!='LIVE' else telemetry['prometheus_targets'].get('status','UNAVAILABLE')
@@ -63,6 +64,7 @@ def collect(cfg, state, read_kubernetes, osm_reader, *, alertmanager_url=None,
     telemetry['services']['amf']={'status':{'READY':'WORKLOAD_READY','NOT_READY':'DEGRADED'}.get(availability,'UNAVAILABLE'),
         'provenance':amf['provenance'],'availability':availability}
     events.extend(amf_events)
+    events.extend(osm_failure_events(telemetry['osm'],state,clock))
     # Fog behavior is retained, but unknown readiness is never a failure assertion.
     for pod in telemetry['kubernetes'].get('value') or []:
         role=pod['labels'].get('component')
@@ -197,6 +199,31 @@ def amf_evidence(snapshot, state, clock=time.time):
         'observations':{'pod_ready':ready,'metric_present':True,'service_degraded':None,
             'ownership_verified':True,'namespace_uid':context['namespace_uid'],'resource_uid':pod['uid']}}
     return result,[event]
+
+
+
+def osm_failure_events(snapshots, state, clock=time.time):
+    """Fresh confirmed FAILED assertions, never API failures or lifecycle writes.
+
+    Only the existing recorded active_operation_id is tracked. Historical source
+    transition time is retained separately from a fresh authenticated read.
+    """
+    context=state.get('context',{});osm=state.get('osm',{});sample=snapshots.get('ran',{})
+    ns= osm.get('active_instance_id');operation_id=osm.get('active_operation_id')
+    if (sample.get('provenance')!='LIVE' or not 0<=clock()-sample.get('observed_at',0)<=120 or
+        not all(isinstance(context.get(k),str) and context[k] for k in ('cluster_uid','namespace','namespace_uid','project_id')) or
+        not ns or not operation_id):return []
+    value=sample.get('value') or {};classification=value.get('operation_classification')
+    if (value.get('ns_id')!=ns or value.get('operation_id')!=operation_id or
+        value.get('ownership_verified') is not True or value.get('project_id')!=context['project_id'] or
+        value.get('operation_provenance')!='LIVE' or classification not in ('FAILED','COMPLETED')):return []
+    operation=value['operation']
+    return [{'alarm_type':'OSMLifecycleOperationFailed','cluster':context['cluster_uid'],'namespace':context['namespace'],
+        'service':ns,'resource':'osm-operation/'+operation_id,'source':'osm','timestamp':sample['observed_at'],
+        'status':'firing' if classification=='FAILED' else 'resolved',
+        'observations':{'operation_failed':classification=='FAILED','osm_trustworthy':True,'ownership_verified':True,
+            'operation_id':operation_id,'namespace_uid':context['namespace_uid'],
+            'operation_started_at':operation['startTime'],'operation_state_entered_at':operation['statusEnteredTime']}}]
 
 
 def monitoring_correlations(telemetry):

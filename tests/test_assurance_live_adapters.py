@@ -503,4 +503,118 @@ class P2AMFTests(unittest.TestCase):
         self.assertEqual(telemetry['services']['ue_registration']['status'],'UNAVAILABLE')
         self.assertTrue(any(e['alarm_type']=='AMFUnavailable' for e in events))
 
+
+
+class P2OSMTests(unittest.TestCase):
+    def setUp(self):
+        self.now=2000000000.
+        self.state={'active':'fran-oai','context':{'namespace':'n','namespace_uid':'namespace-id','cluster_uid':'cluster-id','project_id':'project-id'},
+                    'osm':{'active_instance_id':'ran-id','core_instance_id':'core-id','active_operation_id':'op-id'}}
+        self.ns={'_id':'ran-id','nsState':'READY','_admin':{'projects_read':['project-id']}}
+        self.op={'_id':'op-id','nsInstanceId':'ran-id','operationState':'FAILED','lcmOperationType':'INSTANTIATE',
+                 'startTime':self.now-1000,'statusEnteredTime':self.now-500}
+        self.client=Mock();self.client.get_ns_instance.side_effect=lambda _:self.ns
+        self.client.get_operation.side_effect=lambda _:self.op
+    def snapshot(self):
+        from assurance.adapters import OSM
+        return OSM(self.client,lambda:self.now).snapshot('ran-id','op-id',expected_project='project-id')
+    def events(self,sample=None):
+        from assurance.observe import osm_failure_events
+        return osm_failure_events({'ran':self.snapshot() if sample is None else sample},self.state,lambda:self.now)
+    def test_completed_operation_is_resolved_not_service_health(self):
+        self.op['operationState']='COMPLETED';s=self.snapshot();e=self.events(s)
+        self.assertEqual(e[0]['status'],'resolved');self.assertEqual(s['protocol_health'],'UNAVAILABLE')
+    def test_verified_failed_operation_emits_existing_alarm(self):
+        e=self.events()[0];self.assertEqual(e['alarm_type'],'OSMLifecycleOperationFailed');self.assertEqual(e['status'],'firing')
+        self.assertEqual(e['observations']['operation_id'],'op-id')
+        self.client.get_ns_instance.side_effect=lambda ident:dict(self.ns,_id=ident)
+        def read(args):return {'items':[]}
+        telemetry,events=collect({'PROMETHEUS_URL':'offline'},self.state,read,self.client,
+            transport=Mock(side_effect=TimeoutError()),clock=lambda:self.now)
+        failures=[x for x in events if x['alarm_type']=='OSMLifecycleOperationFailed']
+        self.assertEqual(len(failures),1);self.assertEqual(failures[0]['status'],'firing')
+        self.assertEqual(telemetry['osm']['ran']['value']['operation_id'],'op-id')
+        self.assertTrue(all(call[0] in ('get_ns_instance','get_operation') for call in self.client.mock_calls))
+    def test_processing_is_not_failed_or_cleared(self):
+        for state in ('PROCESSING','STARTING'):
+            self.op['operationState']=state;self.assertEqual(self.snapshot()['value']['operation_classification'],'PROCESSING')
+            self.assertFalse(self.events())
+    def test_ambiguous_statuses_do_not_fail_or_clear(self):
+        for state in ('FAILED_TEMP','PARTIALLY_COMPLETED','ROLLING_BACK','unknown',None):
+            self.op['operationState']=state;self.assertFalse(self.events())
+    def test_api_failure_is_not_operation_failure_and_no_retry(self):
+        self.client.get_operation.side_effect=TimeoutError('secret')
+        s=self.snapshot();self.assertEqual(s['provenance'],'UNAVAILABLE');self.assertFalse(self.events(s))
+        self.assertEqual(self.client.get_operation.call_count,1);self.assertNotIn('secret',str(s))
+    def test_ns_api_failure_no_operation_read(self):
+        self.client.get_ns_instance.side_effect=TimeoutError()
+        self.assertFalse(self.events());self.client.get_operation.assert_not_called()
+    def test_wrong_ns_identity_rejected(self):
+        self.ns['_id']='other';self.assertFalse(self.events());self.client.get_operation.assert_not_called()
+    def test_wrong_operation_id_rejected(self):
+        self.op['_id']='other';self.assertEqual(self.snapshot()['provenance'],'UNAVAILABLE');self.assertFalse(self.events())
+    def test_wrong_operation_ns_rejected(self):
+        self.op['nsInstanceId']='other';self.assertFalse(self.events())
+    def test_conflicting_identifier_aliases_rejected(self):
+        for item in (self.ns,self.op):
+            item['id']='other';self.assertFalse(self.events());item.pop('id')
+    def test_missing_operation_identity_unknown(self):
+        self.op.pop('_id');self.assertFalse(self.events());self.assertEqual(self.snapshot()['value']['operation_classification'],'UNKNOWN')
+    def test_wrong_or_missing_project_ownership_rejected(self):
+        self.ns['_admin']['projects_read']=['other'];self.assertFalse(self.events())
+        self.ns.pop('_admin');self.assertFalse(self.events())
+    def test_operation_project_mismatch_rejected(self):
+        self.op['_admin']={'projects_read':['other']};self.assertFalse(self.events())
+    def test_other_current_operation_is_ambiguous(self):
+        self.ns['currentOperationID']='new-operation';self.assertFalse(self.events())
+    def test_stale_future_or_simulated_observation_rejected(self):
+        for changes in ({'observed_at':self.now-121},{'observed_at':self.now+1},{'provenance':'SIMULATED'}):
+            s=self.snapshot();s.update(changes);self.assertFalse(self.events(s))
+    def test_missing_or_invalid_transition_timestamps_unknown(self):
+        for value in (None,False,float('nan'),self.now+100,self.now-2000):
+            self.op['statusEnteredTime']=value;self.assertFalse(self.events())
+        self.op.pop('statusEnteredTime');self.assertFalse(self.events())
+    def test_historical_transition_retained_separately_from_current_read(self):
+        e=self.events()[0];self.assertEqual(e['timestamp'],self.now)
+        self.assertEqual(e['observations']['operation_state_entered_at'],self.now-500)
+    def test_iso_transition_timestamps_supported(self):
+        self.op['startTime']='2033-05-18T03:00:00Z';self.op['statusEnteredTime']='2033-05-18T03:01:00Z'
+        self.assertTrue(self.events())
+    def test_untracked_operation_not_invented(self):
+        self.state['osm'].pop('active_operation_id');self.assertFalse(self.events())
+    def test_snapshot_binding_cannot_target_different_operation(self):
+        s=self.snapshot();s['value']['operation_id']='other';self.assertFalse(self.events(s))
+    def test_normalization_preserves_safe_source_times(self):
+        from assurance.model import normalize
+        event=self.events()[0];n=normalize(event,self.now)
+        self.assertEqual(n['observations']['operation_started_at'],self.op['startTime'])
+        event['observations']['operation_started_at']=False
+        with self.assertRaises(ValueError):normalize(event,self.now)
+    def test_deduplication_processing_cannot_clear_completed_can(self):
+        from assurance.store import Store
+        from assurance.engine import Engine
+        from assurance.catalog import load_catalog
+        with tempfile.TemporaryDirectory() as folder:
+            store=Store(Path(folder)/'test.sqlite');engine=Engine(store,load_catalog(),lambda:self.now)
+            for delta in (0,60,0):
+                self.now+=delta;engine.ingest(self.events()[0])
+            initial=store.snapshot()['incident'][0]['incident_id'];self.assertEqual(len(store.snapshot()['incident']),1)
+            self.op['operationState']='PROCESSING';self.assertFalse(self.events());engine.refresh()
+            self.assertNotEqual(store.snapshot()['alarm'][0]['state'],'CLEARED')
+            self.op['operationState']='COMPLETED'
+            for delta in (1,60):
+                self.now+=delta;engine.ingest(self.events()[0])
+            out=store.snapshot();self.assertEqual(out['incident'][0]['incident_id'],initial)
+            self.assertEqual(out['incident'][0]['state'],'RESOLVED');self.assertTrue(store.verify_audit())
+    def test_new_operation_does_not_clear_old_failed_identity(self):
+        from assurance.model import normalize
+        before=normalize(self.events()[0],self.now)
+        self.op['_id']='new-operation';self.state['osm']['active_operation_id']='new-operation'
+        from assurance.adapters import OSM
+        s=OSM(self.client,lambda:self.now).snapshot('ran-id','new-operation',expected_project='project-id')
+        after=normalize(self.events(s)[0],self.now);self.assertNotEqual(before['key'],after['key'])
+    def test_production_executor_stays_disabled(self):
+        from assurance.policy import ProductionExecutor
+        with self.assertRaises(PermissionError):ProductionExecutor().execute(self.events()[0])
+
 if __name__=='__main__':unittest.main()
