@@ -144,4 +144,280 @@ class LiveAdapterTests(unittest.TestCase):
             self.assertEqual(len(snap['alarm']),1);self.assertEqual(len([a for a in snap['audit'] if a['kind']=='alarm_observed']),1)
             self.assertTrue(snap['alarm'][0]['stale']);self.assertFalse(snap['live_auto_enabled'])
 
+
+
+class P1DetectionTests(unittest.TestCase):
+    """Scoped synthetic fixtures; no kubectl, OSM or network access."""
+    def setUp(self):
+        import copy
+        self.now=2000000000.
+        self.state={'active':'fran-oai','context':{'namespace':'n','namespace_uid':'namespace-id','cluster_uid':'cluster-id'},
+                    'osm':{'active_instance_id':'ran-id','core_instance_id':'core-id'}}
+        def pod(role,ip,ns='ran-id'):
+            return {'metadata':{'name':'fran-oai-'+role,'namespace':'n','uid':role+'-uid',
+                'labels':{'component':role,'app':'fran-oai-'+role,'osm.etsi.org/ns-id':ns}},
+                'spec':{'containers':[{'name':role,'image':'oai-gnb:fixture' if role!='amf' else 'open5gs:fixture'}]},
+                'status':{'phase':'Running','podIP':ip,'conditions':[{'type':'Ready','status':'True'}]}}
+        self.pods=[pod('cu','192.0.2.1'),pod('du','192.0.2.2'),pod('amf','192.0.2.3','core-id')]
+        self.header='ST LPORT RPORT LADDRS <-> RADDRS\n'
+        self.tables={'cu':self.header+'3 38472 40000 192.0.2.1 <-> 192.0.2.2\n3 40001 38412 192.0.2.1 <-> 192.0.2.3\n',
+                     'du':self.header+'3 40000 38472 192.0.2.2 <-> 192.0.2.1\n'}
+        self.change=lambda value:value
+    def snapshot(self):
+        from assurance.adapters import Kubernetes
+        return Kubernetes(lambda _: {'items':self.pods},lambda:self.now).snapshot('n')
+    def observer(self,pod,peers,context,ns):
+        role=pod['labels']['component']
+        value={**context,'ns_id':ns,'pod':pod['name'],'pod_uid':pod['uid'],'pod_ip':pod['pod_ip'],
+               'container':role,'peers':{k:{x:p[x] for x in ('uid','pod_ip')} for k,p in peers.items()},
+               'provenance':'LIVE','observed_at':self.now,'table':self.tables[role]}
+        return self.change(value)
+    def run_detection(self,observer=True,snapshot=None):
+        from assurance.observe import ran_evidence
+        return ran_evidence(snapshot if snapshot is not None else self.snapshot(),self.state,self.observer if observer else None,lambda:self.now)
+    def alarm(self,events,kind):return [e for e in events if e['alarm_type']==kind]
+    def test_healthy_owned_workloads_and_protocols(self):
+        telemetry,events=self.run_detection()
+        self.assertEqual([x['availability'] for x in telemetry['workloads']],['READY','READY'])
+        self.assertTrue(events);self.assertTrue(all(e['status']=='resolved' for e in events))
+        self.assertEqual(telemetry['associations']['f1']['value'],True)
+        self.assertEqual(telemetry['associations']['ngap']['value'],True)
+    def test_unhealthy_owned_workload_is_not_missing(self):
+        self.pods[1]['status']['conditions'][0]['status']='False'
+        telemetry,events=self.run_detection(False)
+        self.assertEqual(telemetry['workloads'][1]['availability'],'NOT_READY')
+        self.assertEqual(self.alarm(events,'DUUnavailable')[0]['status'],'firing')
+    def test_unknown_condition_no_failure_or_clear(self):
+        self.pods[1]['status']['conditions'][0]['status']='Unknown'
+        telemetry,events=self.run_detection(False)
+        self.assertEqual(telemetry['workloads'][1]['availability'],'UNKNOWN')
+        self.assertFalse(self.alarm(events,'DUUnavailable'))
+    def test_missing_condition_is_unknown(self):
+        self.pods[1]['status']['conditions']=[]
+        self.assertFalse(self.alarm(self.run_detection(False)[1],'DUUnavailable'))
+    def test_missing_expected_workload_is_not_failure(self):
+        self.pods.pop(1);telemetry,events=self.run_detection()
+        self.assertEqual(telemetry['workloads'][1]['availability'],'MISSING')
+        self.assertFalse(self.alarm(events,'DUUnavailable'));self.assertFalse(self.alarm(events,'F1AssociationLost'))
+    def test_incomplete_inventory_suppresses_events(self):
+        snap=self.snapshot();snap['truncated']=True
+        self.assertFalse(self.run_detection(snapshot=snap)[1])
+    def test_continued_inventory_is_incomplete(self):
+        from assurance.adapters import Kubernetes
+        snap=Kubernetes(lambda _: {'items':self.pods,'metadata':{'continue':'next'}},lambda:self.now).snapshot('n')
+        self.assertTrue(snap['truncated']);self.assertFalse(self.run_detection(snapshot=snap)[1])
+    def test_unrelated_ns_workload_not_selected(self):
+        self.pods[1]['metadata']['labels']['osm.etsi.org/ns-id']='other'
+        self.assertFalse(self.alarm(self.run_detection()[1],'DUUnavailable'))
+    def test_unrelated_app_workload_not_selected(self):
+        self.pods[1]['metadata']['labels']['app']='unrelated-du'
+        self.assertFalse(self.alarm(self.run_detection()[1],'DUUnavailable'))
+    def test_namespace_mismatch_is_unavailable(self):
+        self.pods[0]['metadata']['namespace']='other'
+        self.assertEqual(self.snapshot()['provenance'],'UNAVAILABLE')
+        self.assertFalse(self.run_detection()[1])
+    def test_unbound_namespace_identity_is_unknown(self):
+        self.state['context'].pop('namespace_uid')
+        self.assertFalse(self.run_detection()[1])
+    def test_duplicate_candidates_are_unknown(self):
+        import copy
+        extra=copy.deepcopy(self.pods[1]);extra['metadata']['uid']='new';self.pods.append(extra)
+        self.assertFalse(self.alarm(self.run_detection()[1],'DUUnavailable'))
+    def test_replaced_uid_cannot_reuse_protocol_evidence(self):
+        self.change=lambda x:dict(x,pod_uid='previous-uid')
+        t,e=self.run_detection();self.assertIsNone(t['associations']['f1']['value'])
+        self.assertFalse(self.alarm(e,'F1AssociationLost'))
+    def test_wrong_peer_identity_is_unavailable(self):
+        self.change=lambda x:dict(x,peers={})
+        self.assertIsNone(self.run_detection()[0]['associations']['f1']['value'])
+    def test_wrong_peer_address_never_establishes_health(self):
+        self.tables['cu']=self.tables['cu'].replace('192.0.2.2','192.0.2.99')
+        t,e=self.run_detection();self.assertIsNone(t['associations']['f1']['value'])
+        self.assertFalse(self.alarm(e,'F1AssociationLost')) # contradictory ends
+    def test_wrong_ports_never_establish_health(self):
+        self.tables={k:v.replace('38472','9000') for k,v in self.tables.items()}
+        t,e=self.run_detection();self.assertFalse(t['associations']['f1']['value'])
+        self.assertTrue(all(x['status']=='firing' for x in self.alarm(e,'F1AssociationLost')))
+    def test_cu_f1_requires_local_listener_port(self):
+        self.tables['cu']=self.header+'3 40000 38472 192.0.2.1 <-> 192.0.2.2\n'
+        self.assertIsNone(self.run_detection()[0]['associations']['f1']['value'])
+    def test_ngap_requires_remote_port(self):
+        self.tables['cu']=self.tables['cu'].replace('40001 38412','38412 40001')
+        self.assertEqual(self.alarm(self.run_detection()[1],'NGAPAssociationLost')[0]['status'],'firing')
+    def test_missing_associations_in_valid_tables_are_absent(self):
+        self.tables={k:self.header for k in self.tables}
+        t,e=self.run_detection();self.assertFalse(t['associations']['f1']['value']);self.assertFalse(t['associations']['ngap']['value'])
+    def test_non_established_state_not_healthy(self):
+        self.tables={k:v.replace('3 ','2 ') for k,v in self.tables.items()}
+        self.assertFalse(self.run_detection()[0]['associations']['f1']['value'])
+    def test_malformed_sctp_is_unavailable(self):
+        for bad in ('', 'ST LPORT RPORT\n3 38472 40000\n',self.header+'broken\n',self.header+'3 38472 40000 bad <-> bad\n'):
+            with self.subTest(bad=bad):
+                self.tables={'cu':bad,'du':bad}
+                self.assertFalse(self.alarm(self.run_detection()[1],'F1AssociationLost'))
+    def test_stale_and_future_protocol_is_not_failure(self):
+        for delta in (-121,1):
+            self.change=lambda x:dict(x,observed_at=self.now+delta)
+            t,e=self.run_detection();self.assertIsNone(t['associations']['f1']['value'])
+            self.assertFalse(self.alarm(e,'NGAPAssociationLost'))
+    def test_stale_inventory_is_not_failure(self):
+        snap=self.snapshot();snap['observed_at']-=121
+        self.assertFalse(self.run_detection(snapshot=snap)[1])
+    def test_protocol_api_failure_is_not_failure(self):
+        from assurance.observe import ran_evidence
+        def failed(*args):raise TimeoutError('subscriber-secret')
+        t,e=ran_evidence(self.snapshot(),self.state,failed,lambda:self.now)
+        self.assertNotIn('subscriber-secret',str(t));self.assertFalse(self.alarm(e,'F1AssociationLost'))
+    def test_inventory_api_failure_suppresses_events(self):
+        from assurance.adapters import Kubernetes
+        def failed(*args):raise TimeoutError()
+        snap=Kubernetes(failed).snapshot('n');self.assertFalse(self.run_detection(snapshot=snap)[1])
+    def test_default_has_no_live_protocol_reader(self):
+        t,e=self.run_detection(False)
+        self.assertEqual(t['associations']['f1']['status'],'UNKNOWN');self.assertFalse(self.alarm(e,'F1AssociationLost'))
+    def test_simulated_protocol_cannot_become_live(self):
+        self.change=lambda x:dict(x,provenance='SIMULATED')
+        self.assertFalse(self.alarm(self.run_detection()[1],'F1AssociationLost'))
+    def test_wrong_container_or_host_network_unavailable(self):
+        self.change=lambda x:dict(x,container='sidecar')
+        self.assertFalse(self.alarm(self.run_detection()[1],'F1AssociationLost'))
+        self.change=lambda x:x;self.pods[0]['spec']['hostNetwork']=True
+        self.assertFalse(self.alarm(self.run_detection()[1],'F1AssociationLost'))
+    def test_protocol_does_not_prove_higher_states(self):
+        t,_=self.run_detection()
+        for protocol in t['protocols'].values():
+            for key in ('f1_setup','ng_setup','ue_registered','pdu_established','user_plane_measured'):self.assertIsNone(protocol['value'][key])
+    def test_policy_rejects_contradictory_workload_protocol(self):
+        from assurance.model import normalize
+        from assurance.catalog import load_catalog
+        from assurance.policy import Policy
+        self.pods[1]['status']['conditions'][0]['status']='False'
+        e=self.alarm(self.run_detection()[1],'DUUnavailable')[0]
+        self.assertEqual(Policy(load_catalog()).evaluate(normalize(e,self.now))['action'],'observe_notify')
+    def test_existing_du_policy_accepts_corroborated_failure_only(self):
+        from assurance.model import normalize
+        from assurance.catalog import load_catalog
+        from assurance.policy import Policy
+        self.pods[1]['status']['conditions'][0]['status']='False';self.tables={k:self.header for k in self.tables}
+        e=self.alarm(self.run_detection()[1],'DUUnavailable')[0]
+        self.assertEqual(Policy(load_catalog()).evaluate(normalize(e,self.now))['action'],'propose_du_recovery')
+    def test_existing_cu_policy_needs_both_protocol_failures(self):
+        from assurance.model import normalize
+        from assurance.catalog import load_catalog
+        from assurance.policy import Policy
+        self.pods[0]['status']['conditions'][0]['status']='False';self.tables={k:self.header for k in self.tables}
+        e=self.alarm(self.run_detection()[1],'CUUnavailable')[0]
+        self.assertEqual(Policy(load_catalog()).evaluate(normalize(e,self.now))['action'],'propose_cu_recovery')
+    def test_ngap_does_not_invent_core_health(self):
+        from assurance.model import normalize
+        from assurance.catalog import load_catalog
+        from assurance.policy import Policy
+        self.tables['cu']=self.header
+        e=self.alarm(self.run_detection()[1],'NGAPAssociationLost')[0]
+        self.assertEqual(Policy(load_catalog()).evaluate(normalize(e,self.now))['action'],'observe_notify')
+    def test_missing_amf_identity_suppresses_ngap(self):
+        self.pods.pop();self.assertFalse(self.alarm(self.run_detection()[1],'NGAPAssociationLost'))
+    def test_protocol_timestamp_preserved_not_receipt(self):
+        self.change=lambda x:dict(x,observed_at=self.now-10)
+        _,e=self.run_detection();self.assertEqual(e[0]['timestamp'],self.now-10)
+    def test_replacement_does_not_reuse_alarm_key(self):
+        from assurance.model import normalize
+        before=self.alarm(self.run_detection(False)[1],'DUUnavailable')[0]
+        self.pods[1]['metadata']['uid']='replacement'
+        after=self.alarm(self.run_detection(False)[1],'DUUnavailable')[0]
+        self.assertNotEqual(normalize(before,self.now)['key'],normalize(after,self.now)['key'])
+    def test_incident_deduplication_and_production_disabled(self):
+        import tempfile
+        from pathlib import Path
+        from assurance.store import Store
+        from assurance.engine import Engine
+        from assurance.catalog import load_catalog
+        from assurance.policy import ProductionExecutor
+        self.pods[1]['status']['conditions'][0]['status']='False';self.tables={k:self.header for k in self.tables}
+        with tempfile.TemporaryDirectory() as folder:
+            store=Store(Path(folder)/'journal.sqlite');engine=Engine(store,load_catalog(),lambda:self.now)
+            for delta in (0,60,0):
+                self.now+=delta
+                for event in self.run_detection()[1]:engine.ingest(event)
+            self.assertEqual(len(store.snapshot()['incident']),1);self.assertTrue(store.verify_audit())
+        with self.assertRaises(PermissionError):ProductionExecutor().execute()
+
+
+    def test_every_binding_field_must_match_current_context(self):
+        for field in ('namespace','namespace_uid','cluster_uid','ns_id','pod','pod_uid','pod_ip'):
+            with self.subTest(field=field):
+                self.change=lambda x:dict(x,**{field:'wrong'})
+                self.assertFalse(self.alarm(self.run_detection()[1],'F1AssociationLost'))
+    def test_service_vip_without_endpoint_mapping_is_unknown(self):
+        self.tables['cu']=self.tables['cu'].replace('192.0.2.3','192.0.2.99')
+        self.assertFalse(self.alarm(self.run_detection()[1],'NGAPAssociationLost'))
+    def test_provider_cannot_mutate_collector_inventory(self):
+        from assurance.observe import ran_evidence
+        snap=self.snapshot()
+        def mutate(pod,peers,context,ns):
+            pod['uid']='changed';context['namespace']='changed';return None
+        ran_evidence(snap,self.state,mutate,lambda:self.now)
+        self.assertEqual(snap['value'][0]['uid'],'cu-uid');self.assertEqual(self.state['context']['namespace'],'n')
+    def test_full_collector_exposes_and_persists_scoped_events(self):
+        import tempfile
+        from pathlib import Path
+        from assurance.observe import collect
+        from assurance.cli import persist_collection
+        from assurance.store import Store
+        self.pods[1]['status']['conditions'][0]['status']='False'
+        def read(args):return {'items':self.pods if args[1]=='pods' else []}
+        def transport(*args):raise TimeoutError()
+        telemetry,events=collect({'PROMETHEUS_URL':'offline'},self.state,read,None,transport=transport,
+                                 clock=lambda:self.now,protocol_reader=self.observer)
+        self.assertEqual(telemetry['services']['du']['status'],'DEGRADED')
+        self.assertEqual(self.alarm(events,'DUUnavailable')[0]['status'],'firing')
+        with tempfile.TemporaryDirectory() as folder:
+            store=Store(Path(folder)/'journal.sqlite');persist_collection(store,telemetry,events,lambda:self.now)
+            self.assertTrue(store.verify_audit());self.assertEqual(store.snapshot()['telemetry']['ran_evidence'],telemetry['ran_evidence'])
+    def test_deleted_workload_is_unknown(self):
+        self.pods[1]['metadata']['deletionTimestamp']='2026-10-23T00:00:00Z'
+        t,e=self.run_detection(False);self.assertEqual(t['workloads'][1]['availability'],'UNKNOWN')
+        self.assertFalse(self.alarm(e,'DUUnavailable'))
+    def test_replayed_protocol_does_not_advance_persistence(self):
+        from assurance.model import normalize
+        self.change=lambda x:dict(x,observed_at=self.now-10)
+        e=self.run_detection()[1][0];first=normalize(e,self.now)['delivery_id']
+        self.now+=5;self.change=lambda x:dict(x,observed_at=self.now-15)
+        again=self.run_detection()[1][0]
+        self.assertEqual(normalize(again,self.now)['delivery_id'],first)
+    def test_nonfinite_protocol_time_and_oversized_table_rejected(self):
+        for changes in ({'observed_at':float('nan')},{'table':'x'*65537}):
+            self.change=lambda x:dict(x,**changes)
+            self.assertFalse(self.alarm(self.run_detection()[1],'F1AssociationLost'))
+
+
+    def test_partial_unknown_transport_is_not_degraded_service(self):
+        from assurance.adapters import service_health
+        result=service_health(self.snapshot(),{'provenance':'LIVE','value':{'f1_association':None,'ngap_association':True}})
+        self.assertEqual(result['ran_protocol']['status'],'UNAVAILABLE')
+    def test_evidence_expiring_during_second_read_is_unknown(self):
+        from assurance.observe import ran_evidence
+        count=[0]
+        def reader(*args):
+            count[0]+=1
+            if count[0]==2:self.now+=121
+            return self.observer(*args)
+        t,e=ran_evidence(self.snapshot(),self.state,reader,lambda:self.now)
+        self.assertIsNone(t['associations']['f1']['value'])
+        self.assertFalse(self.alarm(e,'F1AssociationLost'))
+
+
+    def test_namespace_uid_normalization_is_bounded_identity(self):
+        from assurance.model import normalize
+        event=self.run_detection()[1][0]
+        self.assertEqual(normalize(event,self.now)['observations']['namespace_uid'],'namespace-id')
+        for bad in (False,1,'x'*201,'bad\nidentity'):
+            event['observations']['namespace_uid']=bad
+            with self.assertRaises(ValueError):normalize(event,self.now)
+    def test_validated_protocol_binding_is_retained_without_table(self):
+        t,_=self.run_detection();sample=t['protocols']['cu-uid']
+        self.assertEqual(sample['binding']['namespace_uid'],'namespace-id')
+        self.assertEqual(sample['binding']['peers']['f1']['uid'],'du-uid')
+        self.assertNotIn('table',sample)
+
 if __name__=='__main__':unittest.main()
