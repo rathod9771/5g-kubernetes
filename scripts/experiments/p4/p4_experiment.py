@@ -49,6 +49,7 @@ RELEASES = {'cu': 'p4kdu-cu', 'du': 'p4kdu-du'}
 CHART_NAMES = {release: 'p4kdu-' + kdu for kdu, release in RELEASES.items()}
 MEMBER_INDEX = p4_packages.VNF_PROFILE
 TERMINAL = lifecycle.TERMINAL
+PENDING_HELM = ('pending-install', 'pending-upgrade', 'pending-rollback')
 EXPECTED_CHART = {1: '0.1.0', 2: '0.2.0', 3: '0.3.0'}
 # Production system that this runner must never reach (HP: original orchestrator).
 HP_ADDRESSES = frozenset({'172.30.18.32'})
@@ -91,6 +92,9 @@ def load_config(path):
     for key, default in (('kdu_timeout', 150), ('op_timeout', 900), ('health_timeout', 300), ('poll', 5),
                          ('clock_skew', 10)):
         config['timeouts'].setdefault(key, default)
+    # Bound for Helm/Kubernetes/OSM convergence after an OSM operation ends (Experiment.converge).
+    config['timeouts'].setdefault('converge_timeout',
+                                  config['timeouts']['kdu_timeout'] + config['timeouts']['health_timeout'])
     for key in ('osm_password_file', 'kubeconfig', 'work_dir'):
         config[key] = str(Path(config[key]).expanduser())
     return config
@@ -853,14 +857,125 @@ class Experiment:
     def read_state(self):
         return lifecycle.read_state(self.state_path, REGISTRY, self.context)
 
-    def operator_discard_pending(self, step, reason):
-        """Operator decision after verifying OSM and Helm: drop the retained update record."""
+    def operator_discard_pending(self, step, reason, expected=None):
+        """Operator decision after verifying OSM and Helm: drop the retained update record.
+
+        With `expected`, the record must hold exactly those field values (checked under the
+        lifecycle lock); otherwise nothing is discarded and ExperimentError is raised."""
         with lifecycle.lifecycle_lock(self.state_path, 'p4-operator', timeout=60):
             state = self.read_state()
-            record = state['osm'].pop('pending_update', None)
+            record = state['osm'].get('pending_update')
+            mismatch = {k: (record or {}).get(k) for k, v in (expected or {}).items() if (record or {}).get(k) != v}
+            if expected is not None and (record is None or mismatch):
+                self.evidence.record(step, 'operator-resolution-refused', {'reason': reason, 'retained': record,
+                                                                           'expected': expected, 'mismatch': mismatch})
+                raise ExperimentError('Retained P1 update is not the expected record; not discarded')
+            state['osm'].pop('pending_update', None)
             self.write_state(state)
         self.evidence.record(step, 'operator-resolution', {'reason': reason, 'discarded': record})
         return record
+
+    def ledger_events(self):
+        """P1 release ledger (append-only record of upgrade outcomes), without timestamps."""
+        path = self.state_path.parent / lifecycle.LEDGER_NAME
+        if not path.exists():
+            return []
+        return [{k: v for k, v in e.items() if k != 'recorded_at'} for e in json.loads(path.read_text())]
+
+    def converge_timeout(self):
+        # OSM ends a KDU upgrade at timeout_ns_action + 10 s while helm --atomic may still be
+        # rolling back (up to another kdu_timeout); then the Deployment must become Ready.
+        return self.timeouts.get('converge_timeout') or self.timeouts['kdu_timeout'] + self.timeouts['health_timeout']
+
+    def convergence_state(self, before, expected, operations):
+        """One read-only observation against `expected` ({kdu: revision, chart, marker, tail}).
+
+        Returns (state, reasons, observed); state is 'converged', 'pending' (still moving
+        towards expected: helm pending-*, revision not reached, Deployment not Ready, OSM
+        operation unfinished) or 'rejected' (cannot become expected: another revision, chart,
+        marker or history, failed release, foreign release, NS identity, OSM operations)."""
+        rejected, pending, observed = [], [], {}
+        ns = self.osm.experiment_ns()
+        if not ns or ns.get('_id') != self.ns_id:
+            return 'rejected', ['experiment NS missing or identity changed'], {'ns': ns and ns.get('_id')}
+        observed['ns'] = {k: ns.get(k) for k in ('nsState', 'currentOperation')}
+        known = {o['id'] for o in before['operations']}
+        records = self.osm.lifecycle.ns_operations(self.ns_id)
+        new = [[(o.get('operationParams') or {}).get('primitive'), (o.get('operationParams') or {}).get('kdu_name'),
+                o.get('operationState')] for o in records if o.get('_id') not in known]
+        observed['operations'] = new
+        if any(o.get('operationState') not in TERMINAL for o in records):
+            pending.append('OSM operation not finished')
+        elif new != [list(o) for o in operations]:
+            rejected.append('OSM operations differ from ' + json.dumps(operations))
+        if ns.get('currentOperation') not in ('IDLE', None) or ns.get('nsState') != 'READY':
+            pending.append('NS not READY and idle')
+        names = sorted(str(r.get('name')) for r in self.cluster.releases())
+        if names != sorted(RELEASES.values()):
+            rejected.append('unexpected Helm releases in ' + NAMESPACE + ': ' + ', '.join(names))
+        for kdu, want in expected.items():
+            release = RELEASES[kdu]
+            try:
+                view = self.cluster.release_view(release)
+            except HelmMetadataError as error:      # e.g. read while helm writes; persists -> deadline
+                pending.append(str(error)[:200])
+                continue
+            if view is None:
+                rejected.append(release + ' missing')
+                continue
+            ready, detail = deployment_ready(self.cluster.deployment(release))
+            marker = self.cluster.configmap_marker(release)
+            tail = [[h['revision'], h['status'], h['chart_version'], h['description']]
+                    for h in view['history'] if h['revision'] > want['revision'] - len(want['tail'])]
+            observed[kdu] = {'revision': view['version'], 'state': view['state'], 'chart': view['chart'],
+                             'app_version': view['app_version'], 'marker': marker, 'deployment': detail}
+            if view['version'] > want['revision']:
+                rejected.append(release + ' at unexpected Helm revision ' + str(view['version']))
+            elif view['state'] in PENDING_HELM or view['version'] < want['revision']:
+                pending.append(release + ' helm ' + view['state'] + ' at revision ' + str(view['version']))
+            elif view['state'] != 'deployed':
+                rejected.append(release + ' helm ' + view['state'])
+            elif view['chart'] != want['chart'] or view['app_version'] != want['marker']:
+                rejected.append(release + ' deployed ' + view['chart'] + '/' + view['app_version'])
+            elif marker != want['marker']:
+                rejected.append(release + ' ConfigMap marker ' + str(marker))
+            elif len(tail) != len(want['tail']) or any(
+                    t[:3] != list(w[:3]) or (w[3] is not None and t[3] != w[3]) for t, w in zip(tail, want['tail'])):
+                rejected.append(release + ' Helm history ' + json.dumps(tail))
+            elif not ready:
+                pending.append(release + ' ' + detail)
+        return ('rejected' if rejected else 'pending' if pending else 'converged'), rejected or pending, observed
+
+    def converge(self, step, label, before, expected, operations):
+        """Poll convergence_state until converged, rejected or converge_timeout (bounded)."""
+        timeout = self.converge_timeout()
+        start = self.clock.monotonic()
+        transitions, polls = [], 0
+        while True:
+            state, reasons, observed = self.convergence_state(before, expected, operations)
+            polls += 1
+            if not transitions or transitions[-1]['observed'] != observed:
+                transitions.append({'at': self.clock.monotonic() - start, 'state': state, 'reasons': reasons,
+                                    'observed': observed})
+            if state != 'pending' or self.clock.monotonic() - start >= timeout:
+                break
+            self.clock.sleep(self.timeouts['poll'])
+        result = {'label': label, 'result': state, 'reasons': reasons, 'polls': polls, 'timeout': timeout,
+                  'elapsed': self.clock.monotonic() - start, 'expected': expected, 'operations': operations,
+                  'transitions': transitions}
+        self.evidence.record(step, 'convergence-' + label.replace(' ', '-'), result)
+        self.evidence.check(step, label + ': Helm, Kubernetes and OSM converged within ' + str(timeout) + ' s',
+                            state == 'converged', {'result': state, 'reasons': reasons, 'polls': polls})
+        return state == 'converged'
+
+    def wait_helm_settled(self, release):
+        """Latest view of a release once it is not pending-*, or at converge_timeout."""
+        deadline = self.clock.monotonic() + self.converge_timeout()
+        while True:
+            view = self.cluster.release_view(release) or {}
+            if view.get('state') not in PENDING_HELM or self.clock.monotonic() >= deadline:
+                return view
+            self.clock.sleep(self.timeouts['poll'])
 
     def reconcile_until_settled(self, step, policy):
         results = []
@@ -889,7 +1004,7 @@ class Experiment:
         """Bring every KDU back to revision-2 content through OSM rollback actions (bounded)."""
         for kdu, release in RELEASES.items():
             for _ in range(3):
-                view = self.cluster.release_view(release) or {}
+                view = self.wait_helm_settled(release)
                 if view.get('chart') == EXPECTED_CHART[2] and view.get('state') == 'deployed':
                     break
                 operation = osm.kdu_action(self.ns_id, MEMBER_INDEX, kdu, 'rollback', {}, self.timeouts['kdu_timeout'])
@@ -1053,30 +1168,87 @@ class Experiment:
         self.expect_identity(step, after)
 
     def partial_failure_operator_resolution(self, step):
+        """CU upgraded to revision 3, DU upgrade fails; the operator rolls the CU back.
+
+        OSM v19 ends the DU upgrade (asyncio.wait_for at timeout_ns_action + 10 s) while the
+        helm --atomic process it started keeps rolling back, so the DU can still be
+        pending-rollback and not Ready when OSM reports FAILED (observed on the Dell). Every
+        assertion is therefore made only after converge() has seen Helm, Kubernetes and OSM
+        reach the expected state, and nothing further is done if they do not."""
         before = self.snapshot(step, 'before')
+        base = {kdu: (before['helm'][kdu]['status'] or {}).get('version') for kdu in RELEASES}
+        if not all(type(v) is int for v in base.values()):
+            raise ExperimentError('Helm revisions before the partial failure are unknown')
+        p1_before, ledger_before = before['state']['osm'], self.ledger_events()
         policy = self.policy(auto_rollback=False)
+        failed_du = [base['du'] + 1, 'failed', EXPECTED_CHART[3], None]
+        du_restored = [base['du'] + 2, 'deployed', EXPECTED_CHART[2], 'Rollback to ' + str(base['du'])]
+        mixed = {'cu': {'revision': base['cu'] + 1, 'chart': EXPECTED_CHART[3], 'marker': 'r3',
+                        'tail': [[base['cu'] + 1, 'deployed', EXPECTED_CHART[3], None]]},
+                 'du': {'revision': base['du'] + 2, 'chart': EXPECTED_CHART[2], 'marker': 'r2',
+                        'tail': [failed_du, du_restored]}}
+        resolved = {'cu': {'revision': base['cu'] + 2, 'chart': EXPECTED_CHART[2], 'marker': 'r2',
+                           'tail': [[base['cu'] + 1, 'superseded', EXPECTED_CHART[3], None],
+                                    [base['cu'] + 2, 'deployed', EXPECTED_CHART[2], 'Rollback to ' + str(base['cu'])]]},
+                    'du': mixed['du']}
+        upgrades = [['upgrade', 'cu', 'COMPLETED'], ['upgrade', 'du', 'FAILED']]
         with self.gate() as osm:
             outcome = self.run_release(step, 3, policy, osm)
-            mid = self.snapshot(step, 'after-failure')
-            pending = mid['state']['osm'].get('pending_update') or {}
+            early = self.snapshot(step, 'after-failure')
+            self.evidence.observe(step, 'Helm and Deployment state when OSM reported the DU upgrade FAILED', {
+                kdu: {'helm': {k: (early['helm'][kdu]['status'] or {}).get(k) for k in ('version', 'state', 'chart')},
+                      'deployment': early['deployments'][kdu]} for kdu in RELEASES})
+            pending = early['state']['osm'].get('pending_update') or {}
             self.evidence.check(step, 'partial failure retained as failed-partial',
                                 outcome.get('error') == 'UpdateFailed' and pending.get('stage') == 'failed-partial'
-                                and pending.get('upgraded') == ['cu'], {'outcome': outcome, 'pending': pending})
+                                and pending.get('upgraded') == ['cu'] and pending.get('knf_revision') == 3
+                                and sorted(pending.get('operations', {})) == ['cu', 'du'],
+                                {'outcome': outcome, 'pending': pending})
+            self.evidence.check(step, 'failed upgrade not recorded as the active release',
+                                early['state']['osm'].get('active_release') == p1_before.get('active_release') and
+                                early['state']['osm'].get('previous_release') == p1_before.get('previous_release'),
+                                early['state']['osm'].get('active_release'))
+            outcomes = [e for e in self.ledger_events()[len(ledger_before):] if e.get('event') != 'published']
+            self.evidence.check(step, 'P1 ledger records only the failed DU upgrade',
+                                outcomes == [{'commit': self.commit, 'event': 'upgrade-failed', 'kdu': 'du'}], outcomes)
+            converged = self.converge(step, 'mixed release', before, mixed, upgrades)
+            mid = self.snapshot(step, 'after-convergence')
             self.expect_release(step, mid, 'cu', EXPECTED_CHART[3], 'r3', 'mixed release')
             self.expect_release(step, mid, 'du', EXPECTED_CHART[2], 'r2', 'mixed release')
+            if not converged:
+                raise ExperimentError('Mixed release did not converge; no operator action taken, pending update retained')
             result = self.reconcile_until_settled(step, policy)
-            self.evidence.check(step, 'reconciliation requires an operator decision',
-                                result['action'] == 'operator-decision-required', result)
+            if not self.evidence.check(step, 'reconciliation requires an operator decision',
+                                       result['action'] == 'operator-decision-required', result):
+                raise ExperimentError('Reconciliation did not require an operator decision; pending update retained')
             operation = osm.kdu_action(self.ns_id, MEMBER_INDEX, 'cu', 'rollback', {}, self.timeouts['kdu_timeout'])
             self.evidence.check(step, 'operator rollback of the CU COMPLETED', self.wait_operation(operation) == 'COMPLETED')
-        self.operator_discard_pending(step, 'CU rolled back to revision 2 content after a partial failure')
+            converged = self.converge(step, 'resolved', before, resolved, upgrades + [['rollback', 'cu', 'COMPLETED']])
+        if not converged:
+            raise ExperimentError('Operator resolution did not converge; pending update retained')
+        # Only the record of this failed revision-3 update, with OSM's own operation ids, is dropped.
+        discarded = self.operator_discard_pending(
+            step, 'CU rolled back to revision 2 content after a partial failure; DU restored by helm --atomic',
+            expected={'stage': 'failed-partial', 'knf_revision': 3, 'upgraded': ['cu'],
+                      'operations': pending.get('operations'), 'previous_release': pending.get('previous_release')})
         after = self.snapshot(step, 'after')
         for kdu in RELEASES:
             self.expect_release(step, after, kdu, EXPECTED_CHART[2], 'r2', 'resolved')
         self.expect_identity(step, after)
+        new = self.new_operations(before, after)
         self.evidence.check(step, 'no new upgrade of the DU succeeded', not any(
-            o['primitive'] == 'upgrade' and o['kdu'] == 'du' and o['state'] == 'COMPLETED'
-            for o in self.new_operations(before, after)))
+            o['primitive'] == 'upgrade' and o['kdu'] == 'du' and o['state'] == 'COMPLETED' for o in new))
+        state = after['state']['osm']
+        self.evidence.check(step, 'P1 has no pending update after resolution', 'pending_update' not in state, state)
+        self.evidence.check(step, 'P1 active release still the revision-2 release (failed upgrade never active)',
+                            state.get('active_release') == p1_before.get('active_release') and
+                            state.get('previous_release') == p1_before.get('previous_release') and
+                            (state.get('active_release') or {}).get('knf_revision') == 2, state)
+        du_upgrade = [o for o in new if o['id'] == discarded['operations']['du']]
+        self.evidence.check(step, 'failed DU upgrade preserved as FAILED (OSM, ledger and resolution record)',
+                            [o['state'] for o in du_upgrade] == ['FAILED'] and discarded['stage'] == 'failed-partial'
+                            and {'commit': self.commit, 'event': 'upgrade-failed', 'kdu': 'du'} in
+                            self.ledger_events()[len(ledger_before):], du_upgrade)
 
     def lost_before_send(self, step):
         before = self.snapshot(step, 'before')
@@ -1126,8 +1298,10 @@ class Experiment:
                 with contextlib.suppress(lifecycle.LifecycleError):
                     recovery.append(('reconcile', self.reconcile_until_settled(step, policy)))
             for kdu, release in RELEASES.items():
-                view = self.cluster.release_view(release) or {}
-                if str(view.get('state', '')).startswith('pending-'):
+                # A helm process started by LCM can outlive its OSM operation: roll back only
+                # what is still pending after converge_timeout, never a release still moving.
+                view = self.wait_helm_settled(release)
+                if view.get('state') in PENDING_HELM:
                     self.cluster.helm_rollback(release)
                     recovery.append(('helm-rollback', release))
             self.restore_rev2(step, osm)

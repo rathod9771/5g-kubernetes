@@ -53,13 +53,48 @@ no host access, no cluster-scoped objects.
 | `upgrade_rev2_lost_response` | P1 `process_release` to revision 2: CU then DU, `timeout_ns_action` sent, kdu_model `/app/storage/<id>:2/…`; the DU response is dropped after OSM accepted it → `UpdateUncertain` → `adopt_lost_request` finds the operation → `reconcile_update` confirms; both releases revision 2 / chart 0.2.0 / `r2`; **same NS id, same NS count**; DU started after CU completed; P1 records active=2, previous=1; NSR `kdu-model` and VNFR revision recorded as observations |
 | `explicit_rollback` | OSM `rollback` action on du twice: 0.1.0/`r1`, then 0.2.0/`r2`; each a new Helm revision; cu untouched |
 | `failed_upgrade_auto_rollback` | revision 3 with `auto_rollback`: CU upgrade COMPLETED, DU FAILED (`helm --atomic`: failed revision + "Rollback to …"), CU rolled back by P1; both back on `r2`; no pending update |
-| `partial_failure_operator_resolution` | revision 3 without auto rollback: `failed-partial` (CU `r3`, DU `r2`); reconcile → operator decision; operator rollback of CU; pending update discarded with a receipt |
+| `partial_failure_operator_resolution` | revision 3 without auto rollback: `failed-partial` (OSM ids of both upgrades, `knf_revision` 3); active release unchanged; ledger records only `upgrade-failed` du; Helm/Deployment state when OSM reported FAILED recorded as an observation; **convergence** to the mixed release (CU `r3`, DU `r2`); reconcile → operator decision; operator rollback of CU; **convergence** to CU and DU `r2`; only then the expected pending record is discarded with a receipt; active release still revision 2, the failed DU upgrade still FAILED in OSM, ledger and receipt |
 | `lost_before_send` | CU request lost before reaching OSM → adoption finds nothing → previous release confirmed; no new OSM action, Helm revisions unchanged |
 | `lcm_restart_recovery` (opt-in) | OSM LCM restarted while the CU upgrade is PROCESSING; outcome, OSM operation state and Helm state recorded as observations; recovery (adopt, reconcile, `helm rollback` of a pending release in `p4-kdu-upgrade` only, OSM rollback actions) must end with both KDUs on `r2`, nothing pending, NS READY/idle |
 
 The run stops at the first failed or broken step; evidence collected so far is kept. Each command writes a
 new timestamped evidence directory and refuses an existing one; a file recorded twice gets a
 numbered sibling, so evidence is never overwritten.
+
+### Convergence after an OSM operation ends
+
+OSM v19 runs a KDU upgrade as `helm upgrade --atomic --timeout <timeout_ns_action>s`
+inside `asyncio.wait_for(..., timeout_ns_action + 10)` (`osm_lcm/ns.py`), and the helm
+process runs in a task that cancelling the wait does not stop
+(`n2vc/k8s_helm_base_conn.py`, `asyncio.wait([exec_task])`). With a DU that never
+becomes Ready, helm waits `timeout_ns_action`, then `--atomic` starts a rollback that
+waits again; OSM marks the operation FAILED in between, so the DU can still be
+`pending-rollback` and not Ready when OSM reports the failure. The first Dell run
+(`run-20261023T040758Z`) saw exactly this: DU revision 8 pending-rollback at the check,
+deployed `r2` shortly after. The simulator reproduces it by default
+(`atomic_rollback_delay`).
+
+`Experiment.converge()` therefore re-reads, every `poll` seconds up to
+`converge_timeout` (default `kdu_timeout + health_timeout`; configurable), until:
+
+- each release is at the exact expected Helm revision, `deployed`, with the expected
+  chart, app version, ConfigMap marker and history since the step began (status,
+  chart and `Rollback to N` description of every new revision);
+- each Deployment is Ready;
+- only `p4kdu-cu` and `p4kdu-du` exist in the namespace;
+- the NS is the experiment NS, READY and idle, all its operations are terminal and the
+  operations since the step began are exactly the expected (primitive, KDU, state) list.
+
+Still moving (helm `pending-*`, revision not yet reached, Deployment not Ready, OSM
+operation unfinished) is waited for. Anything that cannot become the expected state
+(higher revision, another chart, app version, marker or history, a `failed` release,
+a foreign release, another NS, other OSM operations) stops at once. Every distinct
+observation is kept in `convergence-<label>.json`. Without convergence the step stops
+before the next action and the P1 pending update is kept. The operator discards the
+record only if it is still exactly the expected failed-partial record (stage, revision,
+OSM operation ids, previous release); otherwise `operator-resolution-refused.json` is
+written and nothing is discarded. The LCM-restart recovery waits the same bound for a
+`pending-*` release to settle before any `helm rollback` or OSM rollback.
 
 ### Helm release observation
 
@@ -162,6 +197,9 @@ NOT_INSTANTIATED NS with the number of KDUs it still lists.
   defaulting to the dashboard's `ran-<key>` (unchanged for every existing scenario).
 - `NbiLifecycle.kdu_action(..., timeout=None)` → OSM v19 `timeout_ns_action`
   (policy `kdu_timeout`); omitted when unset, so existing payloads are unchanged.
+- `_apply`: when the first KDU's upgrade fails, the previous release is declared
+  preserved only after `wait_healthy` (OSM can report FAILED while helm --atomic still
+  rolls back); otherwise the update is kept as `uncertain` for `reconcile_update`.
 - `NbiLifecycle.ns_operations()` and `lifecycle.adopt_lost_request()`: lost-response
   reconciliation from OSM's operation records (P1 review item D3). Read-only towards
   OSM; ambiguous matches are never guessed; operations that ended before the request

@@ -132,6 +132,20 @@ class P4Target:
         # default model clears them. True models the v19 source until observed on the Dell.
         self.terminate_keeps_deployed = False
         self.rollback_works = True
+        # OSM v19 ends a KDU upgrade at timeout_ns_action + 10 s (asyncio.wait_for) while the
+        # helm --atomic process keeps rolling back, as observed on the Dell: the restored
+        # revision stays pending-rollback (Deployment not Ready) for this long after OSM reports
+        # FAILED, then becomes atomic_rollback_result ('deployed', 'failed'; None: never).
+        self.atomic_rollback_delay = 60
+        self.atomic_rollback_result = 'deployed'
+        self.atomic_rollback_override = {}  # fields of the restored revision (e.g. a wrong chart)
+        self.settling = []                  # [due time, history entry]
+        self.marker_override = {}           # release -> ConfigMap marker
+        self.unready_until = {}             # release -> clock time before which its Deployment is not Ready
+        self.stuck_primitives = set()       # (primitive, kdu) whose OSM operations never finish
+        # OSM rollback actions run helm rollback --wait inside asyncio.wait_for as well: >0 makes
+        # OSM report FAILED (timeout) while the rollback revision is pending-rollback this long.
+        self.rollback_delay = 0
         if other_ns:
             # An unrelated NS (e.g. left by the old installer) that the experiment must never touch.
             self.other_ns = str(uuid.uuid4())
@@ -139,7 +153,14 @@ class P4Target:
                                              'currentOperation': 'IDLE', '_admin': {'deployed': {'K8s': []}}}
 
     # -- NBI ------------------------------------------------------------------------------------------
+    def _settle(self):
+        for pair in list(self.settling):
+            if self.clock.time() >= pair[0] and self.atomic_rollback_result:
+                pair[1]['status'] = self.atomic_rollback_result
+                self.settling.remove(pair)
+
     def request(self, method, path, data=None, content_type='application/yaml'):
+        self._settle()
         if method != 'GET':
             self.mutations.append((method, path))
         path, _, query = path.partition('?')
@@ -238,7 +259,7 @@ class P4Target:
         return op
 
     def _op_record(self, op):
-        return {k: v for k, v in op.items() if k not in ('polls', 'effect')}
+        return {k: v for k, v in op.items() if k not in ('polls', 'effect', 'stuck')}
 
     def _refresh(self, ns_id):
         busy = any(o['nsInstanceId'] == ns_id and o['operationState'] == 'PROCESSING' for o in self.operations.values())
@@ -312,6 +333,7 @@ class P4Target:
         params = dict(body, primitive_params=json.dumps(body['primitive_params'])) if body['primitive_params'] else body
         op_id = self._new_op(ns_id, 'action', params)
         op = self.operations[op_id]
+        op['stuck'] = (body['primitive'], body['kdu_name']) in self.stuck_primitives
         history = self.releases[(kdu['namespace'], kdu['kdu-instance'])]
         if body['primitive'] == 'upgrade':
             op['effect'] = lambda: self._upgrade(op, ns_id, kdu, history, body['primitive_params']['kdu_model'])
@@ -338,8 +360,13 @@ class P4Target:
             history.append(dict(chart, revision=current + 1, status='failed', description='Upgrade "x" failed'))
             if self.atomic:
                 previous = next(h for h in reversed(history) if h['status'] == 'superseded')
-                history.append(dict(previous, revision=current + 2, status='deployed',
-                                    description='Rollback to ' + str(previous['revision'])))
+                restored = dict(previous, revision=current + 2, status='deployed',
+                                description='Rollback to ' + str(previous['revision']))
+                restored.update(self.atomic_rollback_override)
+                if self.atomic_rollback_delay:
+                    restored['status'] = 'pending-rollback'
+                    self.settling.append([self.clock.time() + self.atomic_rollback_delay, restored])
+                history.append(restored)
             return self._finish(op, 'FAILED', 'Error: release failed, and has been rolled back due to atomic being set')
         history.append(dict(chart, revision=current + 1, status='deployed', description='Upgrade complete'))
         self._finish(op, 'COMPLETED', current + 1)
@@ -351,7 +378,12 @@ class P4Target:
             for entry in history:
                 if entry['status'] == 'deployed':
                     entry['status'] = 'superseded'
-            history.append(dict(target, revision=current + 1, status='deployed', description='Rollback to ' + str(current - 1)))
+            restored = dict(target, revision=current + 1, status='deployed', description='Rollback to ' + str(current - 1))
+            history.append(restored)
+            if self.rollback_delay:
+                restored['status'] = 'pending-rollback'
+                self.settling.append([self.clock.time() + self.rollback_delay, restored])
+                return self._finish(op, 'FAILED', 'Timeout')
         self._finish(op, 'COMPLETED', current + 1)
 
     def restart_lcm(self):
@@ -378,6 +410,7 @@ class P4Target:
 
     # -- kubectl / helm executor ---------------------------------------------------------------------------
     def run(self, argv, capture_output=True, env=None, timeout=None, check=False):
+        self._settle()
         tool, args = argv[0].rsplit('/', 1)[-1], argv[1:]
         try:
             value = self._kubectl(args) if tool == 'kubectl' else self._helm(args)
@@ -431,10 +464,12 @@ class P4Target:
                                'status': {'containerStatuses': [{'imageID': 'docker.io/opensourcemano/lcm@' + LCM_DIGEST}]}}]}
         if args[:2] == ['get', 'configmap']:
             live = self._live(namespace, args[2][:-len('-release')])
-            return {'data': {'release': live['marker'], 'chart': live['version']}}
+            release = args[2][:-len('-release')]
+            return {'data': {'release': self.marker_override.get(release, live['marker']), 'chart': live['version']}}
         if args[:2] == ['get', 'deployment']:
             live = self._live(namespace, args[2])
-            ready = 1 if live['status'] == 'deployed' and not live['broken'] else 0
+            ready = 1 if live['status'] == 'deployed' and not live['broken'] and \
+                self.clock.time() >= self.unready_until.get(args[2], 0) else 0
             return {'metadata': {'name': args[2], 'generation': 3},
                     'spec': {'replicas': 1}, 'status': {'observedGeneration': 3, 'replicas': 1, 'updatedReplicas': 1,
                                                         'readyReplicas': ready, 'availableReplicas': ready}}

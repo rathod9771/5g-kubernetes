@@ -418,9 +418,14 @@ def _apply(osm, observer, state_path, state, registry, context, entry, plan, com
             update.save()
             continue
         if outcome in ('FAILED', 'FAILED_TEMP'):
-            # helm --atomic restored this KDU; never retry automatically.
+            # helm --atomic restores this KDU, but OSM v19 can end the operation (its own
+            # timeout) while that rollback is still running; never retry automatically.
             _ledger(state_path, {'commit': commit, 'event': 'upgrade-failed', 'kdu': kdu['name']})
             if not update.record['upgraded']:
+                healthy, detail = wait_healthy(observer, entry, plan, since, policy, clock)
+                if not healthy:
+                    _uncertain(update, 'Upgrade of ' + kdu['name'] + ' failed and the previous release has not '
+                                       'recovered: ' + detail)
                 update.finish()
                 raise UpdateFailed('Upgrade of ' + kdu['name'] + ' failed; previous release preserved')
             if policy.get('auto_rollback'):

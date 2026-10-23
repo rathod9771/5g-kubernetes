@@ -374,6 +374,342 @@ class FullRunTests(Harness):
         self.assertIn('p4-kdu-upgrade', self.target.namespaces)
 
 
+class PartialFailureConvergenceTests(Harness):
+    """partial_failure_operator_resolution after the first Dell run (run-20261023T040758Z): OSM
+    reported the DU upgrade FAILED while helm --atomic still had DU revision 8 pending-rollback
+    and the DU Deployment not Ready; both later converged to r2."""
+    STEP = 'partial_failure_operator_resolution'
+
+    def setUp(self):
+        super().setUp()
+        self.exp = self.experiment()
+        summary = self.exp.run(p4.STEPS[:p4.STEPS.index(self.STEP)])
+        self.assertEqual([c for c in summary['checks'] if c['passed'] is False], [])
+        self.base = {kdu: self.target.releases[('p4-kdu-upgrade', r)][-1]['revision'] for kdu, r in p4.RELEASES.items()}
+
+    def run_step(self):
+        self.started = self.clock.monotonic()
+        summary = self.exp.run((self.STEP,))
+        self.checks = {c['check']: c for c in summary['checks'] if c['step'] == self.STEP}
+        return summary['steps'][-1]['result']
+
+    def evidence(self, name):
+        return json.loads((self.work / 'evidence' / self.STEP / (name + '.json')).read_text())
+
+    def failed(self):
+        return sorted(name for name, c in self.checks.items() if c['passed'] is False)
+
+    def cu_rollbacks(self):
+        return [o for o in self.target.operations.values() if o['nsInstanceId'] == self.exp.ns_id and
+                o['startTime'] >= self.started and o['operationParams'].get('primitive') == 'rollback'
+                and o['operationParams'].get('kdu_name') == 'cu']
+
+    def assert_stopped_with_pending_retained(self, reason, operator_rollback=False):
+        state = self.exp.read_state()['osm']
+        self.assertEqual(state['pending_update']['stage'], 'failed-partial')
+        self.assertEqual(state['active_release']['knf_revision'], 2)
+        self.assertFalse((self.work / 'evidence' / self.STEP / 'operator-resolution.json').exists())
+        self.assertEqual(bool(self.cu_rollbacks()), operator_rollback)
+        self.assertIn(reason, self.checks['step completed']['detail'])
+
+    def test_du_pending_rollback_then_deployed(self):
+        self.assertEqual(self.run_step(), 'passed')
+        early = [c for c in self.checks.values() if c['passed'] is None][0]['observed']
+        self.assertEqual(early['du']['helm'], {'version': self.base['du'] + 2, 'state': 'pending-rollback',
+                                               'chart': '0.2.0'})
+        self.assertTrue(early['du']['deployment'].startswith('not ready'))
+        mixed = self.evidence('convergence-mixed-release')
+        self.assertEqual((mixed['result'], mixed['transitions'][0]['state']), ('converged', 'pending'))
+        self.assertIn('p4kdu-du helm pending-rollback at revision ' + str(self.base['du'] + 2),
+                      mixed['transitions'][0]['reasons'])
+        self.assertGreaterEqual(mixed['elapsed'], 40)
+        self.assertLess(mixed['elapsed'], mixed['timeout'])
+
+    def test_eventual_recovery_keeps_the_failed_upgrade_record(self):
+        self.assertEqual(self.run_step(), 'passed')
+        resolution = self.evidence('operator-resolution')['discarded']
+        self.assertEqual((resolution['stage'], resolution['knf_revision'], resolution['upgraded']),
+                         ('failed-partial', 3, ['cu']))
+        self.assertEqual(self.target.operations[resolution['operations']['du']]['operationState'], 'FAILED')
+        state = self.exp.read_state()['osm']
+        self.assertNotIn('pending_update', state)
+        self.assertEqual(state['active_release']['knf_revision'], 2)
+        self.assertIn({'commit': self.COMMIT, 'event': 'upgrade-failed', 'kdu': 'du'}, self.exp.ledger_events())
+        self.assertNotIn('upgraded', [e['event'] for e in self.exp.ledger_events()[-3:]])
+        for kdu, release in p4.RELEASES.items():
+            history = self.target.releases[('p4-kdu-upgrade', release)]
+            self.assertEqual((history[-1]['status'], history[-1]['marker']), ('deployed', 'r2'))
+        self.assertEqual(self.target.releases[('p4-kdu-upgrade', 'p4kdu-du')][-2]['status'], 'failed')
+
+    def test_temporary_deployment_unavailability(self):
+        self.target.atomic_rollback_delay = 0
+        self.target.unready_until['p4kdu-du'] = self.clock.time() + 400
+        self.assertEqual(self.run_step(), 'passed')
+        reasons = self.evidence('convergence-mixed-release')['transitions'][0]['reasons']
+        self.assertTrue(any(r.startswith('p4kdu-du not ready') for r in reasons), reasons)
+
+    def test_rollback_that_never_converges(self):
+        self.target.atomic_rollback_result = None
+        self.assertEqual(self.run_step(), 'error')
+        mixed = self.evidence('convergence-mixed-release')
+        self.assertEqual(mixed['result'], 'pending')
+        self.assertGreaterEqual(mixed['elapsed'], mixed['timeout'])        # bounded, not indefinite
+        self.assertLess(mixed['elapsed'], mixed['timeout'] + 2 * self.config['timeouts']['poll'])
+        self.assertEqual(mixed['timeout'], 150 + 300)
+        self.assert_stopped_with_pending_retained('Mixed release did not converge')
+
+    def rejected(self, reason):
+        self.assertEqual(self.run_step(), 'error')
+        mixed = self.evidence('convergence-mixed-release')
+        self.assertEqual(mixed['result'], 'rejected')
+        self.assertTrue(any(reason in r for r in mixed['reasons']), mixed['reasons'])
+        self.assertLess(mixed['elapsed'], mixed['timeout'])                  # rejected without waiting it out
+        self.assert_stopped_with_pending_retained('Mixed release did not converge')
+
+    def test_wrong_chart_after_rollback(self):
+        self.target.atomic_rollback_override = {'chart': 'p4kdu-du-0.3.0', 'version': '0.3.0'}
+        self.rejected('p4kdu-du deployed 0.3.0/r2')
+
+    def test_wrong_configmap_marker(self):
+        self.target.marker_override['p4kdu-du'] = 'r3'
+        self.rejected('p4kdu-du ConfigMap marker r3')
+
+    def test_unexpected_helm_revision(self):
+        self.target.atomic_rollback_override = {'revision': self.base['du'] + 3}
+        self.rejected('p4kdu-du at unexpected Helm revision ' + str(self.base['du'] + 3))
+
+    def test_failed_rollback(self):
+        self.target.atomic_rollback_result = 'failed'
+        self.rejected('p4kdu-du helm failed')
+
+    def test_unrelated_release_in_the_namespace(self):
+        self.target.releases[('p4-kdu-upgrade', 'intruder')] = [dict(
+            self.target.releases[('p4-kdu-upgrade', 'p4kdu-cu')][-1], revision=1)]
+        self.rejected('unexpected Helm releases in p4-kdu-upgrade: intruder, p4kdu-cu, p4kdu-du')
+
+    def test_ns_identity_change(self):
+        original = self.exp.run_release
+        def run_release(*args):
+            outcome = original(*args)
+            self.target.instances[self.exp.ns_id]['name'] = 'renamed'
+            return outcome
+        self.exp.run_release = run_release
+        self.rejected('experiment NS missing or identity changed')
+
+    def test_osm_operation_remaining_pending(self):
+        self.target.stuck_primitives = {('rollback', 'cu')}
+        self.assertEqual(self.run_step(), 'error')
+        self.assertIn('operator rollback of the CU COMPLETED', self.failed())
+        resolved = self.evidence('convergence-resolved')
+        self.assertEqual(resolved['result'], 'pending')
+        self.assertIn('OSM operation not finished', resolved['reasons'])
+        self.assert_stopped_with_pending_retained('Operator resolution did not converge', operator_rollback=True)
+
+    def test_unexpected_p1_record_is_not_discarded(self):
+        original = self.exp.reconcile_until_settled
+        def reconcile(*args):
+            result = original(*args)
+            state = self.exp.read_state()
+            state['osm']['pending_update']['operations']['du'] = 'another-operation'
+            self.exp.write_state(state)
+            return result
+        self.exp.reconcile_until_settled = reconcile
+        self.assertEqual(self.run_step(), 'error')
+        refused = self.evidence('operator-resolution-refused')
+        self.assertEqual(list(refused['mismatch']), ['operations'])
+        self.assertEqual(self.exp.read_state()['osm']['pending_update']['operations']['du'], 'another-operation')
+        self.assertIn('not the expected record', self.checks['step completed']['detail'])
+
+    def test_history_not_produced_by_the_atomic_rollback(self):
+        # Revision, chart and marker right, but revision base+2 is an upgrade (another
+        # client), not helm --atomic restoring the previous release.
+        self.target.atomic_rollback_override = {'description': 'Upgrade complete'}
+        self.rejected('p4kdu-du Helm history')
+
+    def test_failed_revision_missing_from_history(self):
+        original = self.target._upgrade
+        def upgrade(op, ns_id, kdu, history, model):
+            original(op, ns_id, kdu, history, model)
+            for entry in history:
+                if entry['status'] == 'failed':
+                    entry['status'] = 'superseded'      # the failed DU revision is not what Helm reports
+        self.target._upgrade = upgrade
+        self.rejected('p4kdu-du Helm history')
+
+    def test_other_osm_operation_on_the_ns(self):
+        original = self.exp.run_release
+        def run_release(*args):
+            outcome = original(*args)       # another OSM client acts on the NS (finished)
+            self.target._new_op(self.exp.ns_id, 'action', {'primitive': 'rollback', 'kdu_name': 'du'},
+                                state='COMPLETED')
+            return outcome
+        self.exp.run_release = run_release
+        self.rejected('OSM operations differ from')
+
+    def test_ns_replaced_under_the_same_name(self):
+        original = self.exp.run_release
+        def run_release(*args):
+            outcome = original(*args)
+            record = self.target.instances.pop(self.exp.ns_id)
+            self.target.instances['00000000-0000-4000-8000-000000000000'] = dict(
+                record, _id='00000000-0000-4000-8000-000000000000')
+            return outcome
+        self.exp.run_release = run_release
+        self.rejected('experiment NS missing or identity changed')
+
+    def busy_ns(self, until):
+        original = self.target._refresh
+        def refresh(ns_id):
+            original(ns_id)
+            if ns_id == self.exp.ns_id and self.clock.time() < until[0]:
+                self.target.instances[ns_id]['currentOperation'] = 'ACTION'
+        self.target._refresh = refresh
+
+    def test_ns_busy_until_osm_finishes(self):
+        until = [0]
+        original = self.exp.run_release
+        def run_release(*args):
+            outcome = original(*args)
+            until[0] = self.clock.time() + 120      # OSM still finishing the operation
+            return outcome
+        self.exp.run_release = run_release
+        self.busy_ns(until)
+        self.assertEqual(self.run_step(), 'passed')
+        reasons = self.evidence('convergence-mixed-release')['transitions'][0]['reasons']
+        self.assertIn('NS not READY and idle', reasons)
+
+    def test_ns_that_stays_busy(self):
+        original = self.exp.run_release
+        def run_release(*args):
+            outcome = original(*args)
+            self.busy_ns([float('inf')])
+            return outcome
+        self.exp.run_release = run_release
+        self.assertEqual(self.run_step(), 'error')
+        mixed = self.evidence('convergence-mixed-release')
+        self.assertEqual((mixed['result'], mixed['reasons']), ('pending', ['NS not READY and idle']))
+        self.assert_stopped_with_pending_retained('Mixed release did not converge')
+
+    # P1 regressions the step must expose (it validates P1, not only OSM and Helm).
+    def test_failed_upgrade_missing_from_the_ledger(self):
+        original = lifecycle._ledger
+        def ledger(path, record):
+            if record.get('event') != 'upgrade-failed':
+                original(path, record)
+        with mock.patch.object(lifecycle, '_ledger', ledger):
+            self.run_step()
+        self.assertIn('P1 ledger records only the failed DU upgrade', self.failed())
+        self.assertIn('failed DU upgrade preserved as FAILED (OSM, ledger and resolution record)', self.failed())
+
+    def test_failed_upgrade_recorded_as_active(self):
+        original = self.exp.run_release
+        def run_release(*args):
+            outcome = original(*args)
+            state = self.exp.read_state()
+            state['osm']['active_release'] = dict(state['osm']['active_release'], knf_revision=3)
+            self.exp.write_state(state)
+            return outcome
+        self.exp.run_release = run_release
+        self.run_step()
+        self.assertIn('failed upgrade not recorded as the active release', self.failed())
+        self.assertIn('P1 active release still the revision-2 release (failed upgrade never active)', self.failed())
+
+    def test_pending_update_recreated_after_resolution(self):
+        original = self.exp.operator_discard_pending
+        def discard(step, reason, expected=None):
+            state = self.exp.read_state()
+            record = original(step, reason, expected)
+            self.exp.write_state(state)         # a stale writer puts the record back
+            return record
+        self.exp.operator_discard_pending = discard
+        self.assertEqual(self.run_step(), 'failed')
+        self.assertEqual(self.failed(), ['P1 has no pending update after resolution'])
+
+    def test_failed_du_operation_record_lost(self):
+        original = self.exp.operator_discard_pending
+        def discard(step, reason, expected=None):
+            record = original(step, reason, expected)
+            self.target.operations.pop(record['operations']['du'])
+            return record
+        self.exp.operator_discard_pending = discard
+        self.assertEqual(self.run_step(), 'failed')
+        self.assertEqual(self.failed(), ['failed DU upgrade preserved as FAILED (OSM, ledger and resolution record)'])
+
+    def test_p1_pending_state_that_remains_unresolved(self):
+        with mock.patch.object(lifecycle, 'reconcile_update', return_value={'action': 'unhealthy', 'detail': 'x'}):
+            self.assertEqual(self.run_step(), 'error')
+        self.assertIn('reconciliation requires an operator decision', self.failed())
+        self.assert_stopped_with_pending_retained('did not require an operator decision')
+
+
+class LcmRecoveryConvergenceTests(Harness):
+    """lcm_restart_recovery never rolls back a release whose helm process is still running."""
+    STEP = 'lcm_restart_recovery'
+
+    def setUp(self):
+        super().setUp()
+        self.exp = self.experiment()
+        summary = self.exp.run(p4.STEPS[:-1])
+        self.assertEqual([c for c in summary['checks'] if c['passed'] is False], [])
+        self.started = self.clock.time()
+
+    def run_step(self):
+        summary = self.exp.run((self.STEP,), allow_lcm_restart=True)
+        return [c['check'] for c in summary['checks'] if c['step'] == self.STEP and c['passed'] is False]
+
+    def rollbacks(self, kdu):
+        return [o for o in self.target.operations.values() if o['startTime'] >= self.started and
+                o['operationParams'].get('primitive') == 'rollback' and o['operationParams'].get('kdu_name') == kdu]
+
+    def test_interrupted_upgrade_still_finishing_is_not_rolled_back_by_helm(self):
+        # LCM restart fails the CU operation; its helm process still finishes a minute later,
+        # and P1 cannot tell whether the request exists (reconcile raises immediately).
+        self.target.lcm_restart_mode = 'fails'
+        original = self.target.restart_lcm
+        def restart_lcm():
+            original()
+            entry = self.target.releases[('p4-kdu-upgrade', 'p4kdu-cu')][-1]
+            self.assertEqual(entry['status'], 'pending-upgrade')
+            self.target.settling.append([self.clock.time() + 60, entry])
+        self.target.restart_lcm = restart_lcm
+        with mock.patch.object(lifecycle, 'reconcile_update',
+                               side_effect=lifecycle.UpdateUncertain('request may or may not exist')):
+            self.assertEqual(self.run_step(), [])
+        recovery = json.loads((self.work / 'evidence' / self.STEP / 'recovery.json').read_text())
+        self.assertNotIn(['helm-rollback', 'p4kdu-cu'], recovery)
+        self.assertFalse([m for m in self.target.mutations if m[0] == 'helm'])
+        self.assertEqual(len(self.rollbacks('cu')), 1)      # the OSM rollback of the finished r3 upgrade
+
+    def test_release_still_pending_after_p1_gives_up_is_not_rolled_back_by_helm(self):
+        # helm --atomic can run for up to two kdu_timeouts (upgrade wait, then rollback wait):
+        # here it outlasts P1's own health wait, but settles before converge_timeout, and P1
+        # reconciliation is unavailable, so only the runner's own wait protects the release.
+        self.target.lcm_restart_mode = 'fails'
+        delay = self.exp.timeouts['health_timeout'] + 30
+        self.assertLess(delay, self.exp.converge_timeout())
+        original = self.target.restart_lcm
+        def restart_lcm():
+            original()
+            entry = self.target.releases[('p4-kdu-upgrade', 'p4kdu-cu')][-1]
+            self.target.settling.append([self.clock.time() + delay, entry])
+        self.target.restart_lcm = restart_lcm
+        with mock.patch.object(lifecycle, 'reconcile_update',
+                               side_effect=lifecycle.UpdateUncertain('request may or may not exist')):
+            self.assertEqual(self.run_step(), [])
+        recovery = json.loads((self.work / 'evidence' / self.STEP / 'recovery.json').read_text())
+        self.assertNotIn(['helm-rollback', 'p4kdu-cu'], recovery)
+        self.assertFalse([m for m in self.target.mutations if m[0] == 'helm'])
+
+    def test_osm_rollback_ending_before_helm_is_not_repeated(self):
+        # OSM ends the restore rollback (timeout) while helm rollback --wait is still running;
+        # a second rollback now would roll the CU back from r2 to r3.
+        self.target.rollback_delay = 60
+        self.assertEqual(self.run_step(), [])
+        self.assertEqual([o['operationState'] for o in self.rollbacks('cu')], ['FAILED'])
+        cu = self.target.releases[('p4-kdu-upgrade', 'p4kdu-cu')][-1]
+        self.assertEqual((cu['status'], cu['marker']), ('deployed', 'r2'))
+
+
 # Helm 3 `-o json` output for the revision-1 deployment on the Dell (p4kdu-cu-0.1.0 / r1,
 # p4kdu-du-0.1.0 / r1). helm status there carries no chart object, which broke the
 # original status['chart']['metadata']['version'] read.
