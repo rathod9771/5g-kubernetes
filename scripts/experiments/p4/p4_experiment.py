@@ -39,6 +39,7 @@ import lifecycle  # noqa: E402
 from lifecycle_osm import NbiLifecycle  # noqa: E402
 from osm_catalog import Catalog, CatalogError, identifier, parse_response  # noqa: E402
 import p4_packages  # noqa: E402
+from p4_vim import diagnose_vim, read_ro  # noqa: E402
 
 NAMESPACE = 'p4-kdu-upgrade'
 VNFD, NSD = p4_packages.KNF, p4_packages.NSD
@@ -723,6 +724,7 @@ class Experiment:
         clusters = [k for k in self.osm.k8sclusters() if k.get('name') == self.config['k8s_cluster']]
         if len(projects) != 1 or len(vims) != 1 or len(clusters) != 1:
             raise ExperimentError('OSM project, VIM or K8s cluster registration is missing or ambiguous')
+        self.vim_diagnostic = diagnose_vim(vims[0])
         cluster = clusters[0]
         if cluster.get('vim_account') != vims[0]['_id'] or not (cluster.get('deployment_methods') or {}).get('helm-chart-v3'):
             raise ExperimentError('OSM K8s cluster is not a helm-chart-v3 cluster of the configured VIM')
@@ -1015,6 +1017,16 @@ class Experiment:
     def preflight(self, step):
         target = self.verify_target()
         ids = self.discover()
+        ro = read_ro(self.config, ids['vim'], self.clock.time())
+        self.evidence.record(step, 'ro-vim-health', ro)
+        if self.vim_diagnostic['status'] != 'FAILED' and ro['status'] in ('FAILED', 'HEALTHY'):
+            self.vim_diagnostic = ro
+        self.evidence.record(step, 'vim-health', self.vim_diagnostic)
+        if self.vim_diagnostic['status'] == 'FAILED':
+            self.evidence.check(step, 'required VIM has no confirmed status failure', False, self.vim_diagnostic)
+            raise ExperimentError('Required VIM connector is known broken: ' + self.vim_diagnostic['reason'] +
+                                  '; operator investigation required; no automatic credential changes')
+        self.evidence.observe(step, 'VIM connector diagnostic (not workload health)', self.vim_diagnostic)
         self.lcm_digest = self.cluster.lcm_image_digest()
         versions = {'kubectl': self.cluster._json(self.cluster.kubectl('version', '-o', 'json')),
                     'helm': self.cluster._run(self.cluster.helm('version', '--short')).stdout}
