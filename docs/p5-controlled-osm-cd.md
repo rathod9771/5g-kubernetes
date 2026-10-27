@@ -272,7 +272,8 @@ P4 credentials and state remain untouched.
 read-only live inventory observer**. It first reruns the Phase 1B Kubernetes
 and Helm baseline check and rejects a wrong host/context/API server before
 opening an NBI connection. It then resolves the **single hardcoded** NBI
-hostname `nbi.172.30.0.20.nip.io` and requires it to resolve only to
+hostname `nbi.osm.172.30.0.20.nip.io` (observed on 27 October 2026
+in `osm/nbi-ingress`) and requires it to resolve only to
 `172.30.0.20`. Its HTTPS connection requires normal certificate
 verification (optionally with a user-provided trusted CA); redirects,
 proxies and plaintext HTTP are disabled. Each response is bounded, and
@@ -326,3 +327,31 @@ This stage is testable without credentials or network with:
 The code must be separately reviewed before manual live use; the active
 P4 test NS is deliberately preserved.
 
+
+
+### TLS and read-only identity preflight (Dell operator)
+
+The `osm/nbi-ingress` TLS secret is named `nbi-cert`. Its presence
+does **not** mean that the Helm release's leaf certificate is a trusted
+CA, or that the system trusts its issuer. Check the actually presented
+certificate **without copying private keys or tokens**:
+
+```bash
+getent ahostsv4 nbi.osm.172.30.0.20.nip.io | awk '{print $1}' | sort -u
+openssl s_client -connect 172.30.0.20:30843 \
+  -servername nbi.osm.172.30.0.20.nip.io -showcerts </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+```
+
+The certificate chain must authenticate the **exact** ingress host.
+If this NBI uses a private CA, obtain that issuer's actual trusted
+public CA certificate using an independently verified administrator
+source; do not automatically trust an arbitrary leaf certificate from
+the wire. The observer's `--ca-file` option is optional when the system
+trust store already verifies the ingress certificate.
+
+The live observer cannot execute successfully until the operator has
+a **real** project-scoped, least-privilege read-only OSM bearer token
+in a private (`0600`) file **outside** Git. Placeholder paths are
+not actual files. Do not substitute the administrator's login password
+for a bearer token, bypass TLS verification, or upload credential files.
