@@ -159,8 +159,14 @@ def evaluate(snapshot):
         else:
             for name, (revision, chart, version) in EXPECTED_HELM.items():
                 h = named[name]
+                # Helm list JSON encodes revision as a decimal string in some
+                # versions, while other consumers use an integer. Accept only
+                # the exact expected value, never a float, bool or padded text.
+                observed = h.get("revision")
+                exact_revision = ((type(observed) is int and observed == revision) or
+                                  (type(observed) is str and observed == str(revision)))
                 if (h.get("namespace") != P4_NAMESPACE or h.get("status") != "deployed" or
-                        h.get("revision") != revision or h.get("chart") != chart or
+                        not exact_revision or h.get("chart") != chart or
                         h.get("app_version") != version):
                     problems.append("HELM_BASELINE_MISMATCH")
                     break
