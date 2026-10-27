@@ -90,6 +90,51 @@ GitHub push
 8. **Production isolation:** No route, credential, or automation that can
    mutate the HP production target from Dell testing.
 
+
+## Phase 1 — Offline release-plan inspection (implemented)
+
+`scripts/experiments/p5/p5_plan.py` reads a **locally downloaded**, bounded
+P2 release-candidate directory without contacting GitHub, OSM, Kubernetes,
+Rancher, or any host. It reuses P3's strict layout/SHA256SUMS checking and
+P2's independent manifest and package-identity verification against the
+scenario registry. The operator must provide the **expected full Git SHA and
+branch** independently; they are never taken from the artifact as authority.
+
+Example after downloading a *real P2 release candidate* into an isolated
+local directory (the previous P4 offline-test workflow produces **no**
+release-candidate artifact):
+
+```bash
+python3 scripts/experiments/p5/p5_plan.py \
+  --candidate-dir /path/to/downloaded/release-candidate \
+  --expected-commit <full-40-character-commit-sha> \
+  --expected-branch reproducible-installer
+```
+
+A valid input returns a JSON **proposal** with package hashes, RAN/Core
+scenarios, registry KDU order, and blockers, always `BLOCKED`,
+`trust: UNVERIFIED`, `target_observed: false`,
+`catalog_publication_authorized: false`, and
+`deployment_authorized: false`. The output is *not* an executable plan,
+operator approval, a signed GitHub attestation, a Dell target observation,
+or a lifecycle-controller input. It does not read any existing RAN
+instance, change OSM descriptors, upload packages, or alter Kubernetes.
+
+Rejection is fail-closed for missing, tampered, extra, symlinked, or
+inconsistent artifact files; changed approval protections; mismatched
+expected source identity; malformed manifests; or unsupported identities.
+Run local Phase-1 regression tests:
+
+```bash
+python3 -m pip install 'PyYAML>=6.0,<7'
+python3 -m unittest discover -s tests -p 'test_p5_*.py' -v
+```
+
+P5's GitHub Actions safety workflow runs these tests automatically.
+A genuine Dell-specific signed release workflow, independently pinned
+Dell trust policy, live target identity observer, and human authorization
+remain **unimplemented**. Keep the HP verifier and P4 gate intact.
+
 ## Phase-0 acceptance criteria
 
 - GitHub Actions reports a successful *P5 CD Safety Gate (no deployment)* run.
