@@ -45,7 +45,7 @@ def parse_strict(blob):
         raise SnapshotError("SNAPSHOT_TOO_LARGE")
     try:
         return json.loads(blob.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
-    except (UnicodeError, ValueError, RecursionError):
+    except (UnicodeError, json.JSONDecodeError, RecursionError):
         raise SnapshotError("INVALID_JSON") from None
 
 
