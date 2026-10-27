@@ -1,0 +1,105 @@
+# P5: controlled OSM CD — phase 0, Dell-only safety foundation
+
+## Current result
+
+This change introduces a **read-only, offline CD readiness check**, seven unit tests,
+and a GitHub-hosted workflow. It **does not** implement or authorize unattended
+deployment. It deliberately leaves the P1/P4 controller, production approvals,
+GitHub release-candidate workflow, P3 verifier policy, OSM catalog, and running
+Kubernetes clusters unchanged.
+
+Run locally from the repository root:
+
+```bash
+python3 scripts/experiments/p5/p5_readiness.py --assert-locked
+python3 -m unittest discover -s tests -p 'test_p5_readiness.py' -v
+```
+
+A successful exit means the **existing protection is still closed**, not that P5
+deployment can proceed. The JSON output reports `status: BLOCKED` and
+`deployment_authorized: false`. No OSM credentials, kubeconfig, runtime release
+state, or runner secrets are required; no network or cluster calls are made.
+The P5 CI workflow runs on `ubuntu-latest`, with read-only repository access.
+
+## Why deployment is blocked
+
+- The P2 `.github/workflows/release-candidate.yml` creates immutable package
+  candidates and provenance, never a deployment. It triggers on
+  `reproducible-installer` and `feature/**`, not P4's `p4/**` branch.
+- The P3 release verifier's committed policy
+  (`config/release-verification.json`) is pinned to `hp-lab`, branch
+  `reproducible-installer`, and a trusted GitHub-hosted attestation.
+  That identity **must not be silently reused for Dell**.
+- `scripts/lifecycle.py` has `P4_KDU_UPGRADE_APPROVAL = None`. The P4
+  runner temporarily opened an experiment-only, in-process gate for a
+  disposable CU/DU application. That is not production approval.
+- P1 `process_release()` can publish a previously verified package and
+  conditionally upgrade the active RAN, but no authorized target-side agent
+  presently joins verified release records, operator approval, exact live
+  state, and that controller. Publication alone cannot guarantee a live
+  KDU rollout; OSM's `CHANGE_VNFPKG` was previously observed as a no-op
+  for same-package revisions.
+- The confirmed P4 79-check test used two synthetic busybox KDU workloads,
+  *not* a real srsRAN/OAI gNB or Open5GS traffic-path qualification.
+- The old HP production system and its runner are strictly out of scope.
+
+## P5 deployment contract (future implementation)
+
+```
+GitHub push
+  → offline CI (fail closed)
+  → immutable RAN/Core candidate + manifest + hashes
+  → GitHub-hosted provenance attestation
+  → Dell agent pulls candidate outbound (never GitHub runner → OSM)
+  → Dell-specific trust policy + independent attestation verification
+  → operator-authorized, target/NS/namespace-allowlisted plan
+  → acquire the existing P1 .lifecycle.lock
+  → re-evaluate active NS, OSM revisions, Helm and image readiness
+  → catalog publish under the P1 shared lock, never delete in-use entries
+  → explicitly approved CU/DU or Core KDU upgrade sequence
+  → health checks and bounded rollback/reconciliation
+  → immutable evidence, operator escalation on unknown outcomes
+```
+
+### Work remaining before enabling CD
+
+1. **Dell trust root:** Add a *separate* Dell release policy and a real
+   GitHub-hosted release workflow for approved Dell test artifacts. Pin
+   repository id, branch, signer workflow, architecture and artifact digests.
+   Do not weaken or repurpose HP's verifier policy.
+2. **Artifact and user-package contract:** Versioned RAN/Core descriptors,
+   charts, image digests, namespace restrictions, user-supplied package
+   validation, immutable original blobs and deterministic provenance.
+3. **Operator-controlled target agent:** Outbound polling, no GitHub Actions
+   self-hosted runner on HP, no GitHub-to-OSM secrets. Use a dedicated Dell
+   service identity with least-privilege OSM rights; user consent before
+   any catalog publication or KDU action.
+4. **Durable state:** Reuse P1's `.lifecycle.lock`, `active-ran.yaml`, release
+   ledger and recovery states. Do not build a second, independent controller.
+5. **P4 signoff:** Review P4 evidence, LCM digest and approval provenance,
+   require an explicit reviewed approval mechanism. Never enable this by
+   environment variable or by a GitHub workflow alone.
+6. **Safe rollout:** Match the exact NS UUID, target namespace, Helm releases,
+   registered VIM/K8s cluster and active topology. Do not delete old OSM
+   entries before proving unreferenced; for in-use packages, record revision
+   and use verified in-place KDU actions.
+7. **Fault testing:** Repeat lost-response, no-op, partial failure, rollback,
+   LCM-restart and sustained load tests in a *disposable Dell NS* before
+   admitting real RAN/Core upgrades. An OSM terminal FAILED can precede
+   Helm's completion of atomic rollback.
+8. **Production isolation:** No route, credential, or automation that can
+   mutate the HP production target from Dell testing.
+
+## Phase-0 acceptance criteria
+
+- GitHub Actions reports a successful *P5 CD Safety Gate (no deployment)* run.
+- `p5_readiness.py --assert-locked` returns exit 0 with
+  `existing_policy_locked: true`, `status: BLOCKED` and
+  `deployment_authorized: false`.
+- Unit tests reject attempts to silently change the P4 gate, the P3 target,
+  or P3 release branch.
+- No catalog publication, NS action, rollback, image push, credential update,
+  namespace mutation, or automatic live upgrade is performed.
+
+**Important:** A green safety-check workflow is not completed CD. Subsequent
+P5 phases need separate reviewed implementation and real Dell-only evidence.
