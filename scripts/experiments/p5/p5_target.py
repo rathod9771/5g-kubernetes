@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """P5 phase 1B: read-only, Dell-only Kubernetes baseline observation.
 
-Never reads Kubernetes Secrets, OSM credentials, or the NS inventory. Does not
+Never explicitly retrieves or prints Secret contents, OSM credentials, or NS inventory.\nHelm list may internally read Kubernetes Secrets used as release storage. Does not
 authorize release publication or deployment. Operator must explicitly choose
 --observe to run allowlisted kubectl/helm READ commands. --snapshot is offline.
 """
