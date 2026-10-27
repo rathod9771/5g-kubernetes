@@ -172,6 +172,12 @@ environment override checks pass. Once permitted, only `kubectl get`,
 `kubectl exec`, `get secrets`, OSM tokens, namespace modifications,
 catalog uploads, action primitives, or GitHub deployments are issued.
 
+**Read-only access caveat:** Helm 3 may internally read Kubernetes Secret-backed
+release records while running `helm list`; the script never prints those
+contents. The operator's current Kubernetes admin context is not an
+acceptable unattended CD agent identity. A separate least-privilege
+read-only identity is required before automation.
+
 Dell operator execution, after verifying the currently active context:
 
 ```bash
