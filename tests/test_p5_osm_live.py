@@ -60,6 +60,12 @@ def resolver(host, port, *, type):
 
 
 class OSMClientTests(unittest.TestCase):
+    def test_nbi_origin_is_pinned_to_actual_dell_ingress(self):
+        # Observed via kubectl get ingress nbi-ingress -n osm on the Dell.
+        self.assertEqual(live.NBI_HOST, "nbi.osm.172.30.0.20.nip.io")
+        self.assertEqual(live.NBI, "https://nbi.osm.172.30.0.20.nip.io:30843")
+        self.assertEqual(live.NBI_IP, "172.30.0.20")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
