@@ -200,3 +200,67 @@ The next phase must authenticate to OSM using a tightly scoped,
 read-only service identity and independently validate the exact disposable
 NS UUID, registered K8s cluster/VIM identity and absence of pending LCM
 operations. A healthy Kubernetes namespace alone is insufficient.
+
+
+## Phase 1C foundation — sanitized OSM metadata review (offline)
+
+`scripts/experiments/p5/p5_osm_identity.py` checks an **operator-sanitized**
+JSON metadata snapshot against the disposable P4 identities recorded by the
+successful experiment. It accepts a strict, allowlisted schema and rejects
+raw/extra fields such as VIM configuration or credentials. It does not
+contact OSM, read tokens or config files, or authorize deployment.
+
+It checks the fixed P4 NS UUID `57fd4942-6c44-4da4-8297-1a29d101286e`,
+NS name `p4-kdu-upgrade-test`, VNFD `p4kdu_knf`, NSD
+`p4kdu_ns`, CU/DU KDU instance names, namespace, revision-pinned
+`kdu-model` references at package revision 2, expected VNFR binding,
+and terminal NS LCM operations. It checks uniquely named project
+`admin`, dummy VIM `dummyvim`, K8s cluster `lab-cluster`,
+matching VIM registration and Helm-v3 support.
+
+Input uses these exact top-level fields:
+`schema` (`5g-kubernetes/p5-sanitized-osm-snapshot`),
+`schema_version` (1), `target` (`dell-p4`), `projects`,
+`vims`, `clusters`, `ns_instances`, `vnf_instances`,
+`operations`, `knf_packages`, `nsd_packages`.
+Each list accepts **only** the following metadata keys:
+
+| List | Keys |
+| --- | --- |
+| projects | name, id |
+| vims | name, id, diagnostic |
+| clusters | name, id, vim_id, helm_v3, state |
+| ns_instances | name, id, ns_state, operation, status, nsd_id, vim_id, kdus |
+| ns_instances[].kdus | name, release, namespace, model |
+| vnf_instances | id, ns_id, vnfd_id |
+| operations | id, ns_id, state |
+| knf_packages | name, id, revision |
+| nsd_packages | name, id, vnfd_ids |
+
+The KDU `model` strings are the P4 NBI deployed paths
+`/app/storage/<knf-uuid>:2/p4kdu_knf/helm-chart-v3s/cu|du`.
+The `diagnostic` value is a *sanitized* `HEALTHY`,
+`INCONCLUSIVE`, or `FAILED` classification, **never** a raw RO
+error, password, endpoint configuration or token. Do not hand-edit values
+to make the snapshot pass; missing data is a reason to stop.
+
+```bash
+cd ~/5g-kubernetes-p5
+python3 -m unittest discover -s tests -p 'test_p5_*.py' -v
+# Only after a properly sanitized snapshot has been collected:
+python3 scripts/experiments/p5/p5_osm_identity.py --snapshot /private/path/p5-sanitized-osm.json
+```
+
+`CONSISTENT_SNAPSHOT` is **not** proof of current live OSM identity:
+the input has no authenticated provenance or freshness. It always
+returns `live_osm_identity_verified: false`,
+`live_vim_health_verified: false`, and
+`deployment_authorized: false`. A snapshot with malformed/extra fields
+is rejected without echoing private contents.
+
+**Next stage:** a separately reviewed, credential-minimal **read-only
+live NBI collector** with pinned Dell endpoint identity, authenticated
+metadata reads, NBI NS/VIM binding and operation checks, sanitization
+*before* output, and positive proof of observation. Until that exists,
+do not copy full NBI responses or export VIM configuration. Existing
+P4 credentials and state remain untouched.
