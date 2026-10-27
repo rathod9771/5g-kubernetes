@@ -106,6 +106,25 @@ class TargetTests(unittest.TestCase):
                 self.assertIn(problem, result["blockers"])
                 self.assertFalse(result["deployment_authorized"])
 
+    def test_helm_revision_decimal_strings_are_accepted(self):
+        state = snapshot()
+        for release in state["helm"]:
+            release["revision"] = str(release["revision"])
+        result = target.evaluate(state)
+        self.assertEqual(result["status"], "OBSERVED")
+        self.assertEqual(result["helm_revisions"], {"p4kdu-cu": 6, "p4kdu-du": 8})
+        self.assertFalse(result["deployment_authorized"])
+
+    def test_helm_revision_noncanonical_or_wrong_type_rejected(self):
+        for value in ("06", "6.0", 6.0, True, None, 7):
+            state = snapshot()
+            state["helm"][0]["revision"] = value
+            with self.subTest(revision=value):
+                result = target.evaluate(state)
+                self.assertEqual(result["status"], "BLOCKED")
+                self.assertIn("HELM_BASELINE_MISMATCH", result["blockers"])
+                self.assertFalse(result["deployment_authorized"])
+
     def test_revision_drift_blocks(self):
         state = snapshot()
         state["helm"][0]["revision"] += 1
