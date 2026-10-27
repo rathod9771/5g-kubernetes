@@ -25,8 +25,10 @@ import p5_target
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "p4"))
 from p4_vim import diagnose_vim
 
-NBI = "https://nbi.172.30.0.20.nip.io:30843"
-NBI_HOST = "nbi.172.30.0.20.nip.io"
+# The Kubernetes nbi-ingress.spec.rules[0].host observed on the Dell.
+# Keep TLS SNI/HTTP Host and DNS verification bound to that exact ingress.
+NBI_HOST = "nbi.osm.172.30.0.20.nip.io"
+NBI = "https://" + NBI_HOST + ":30843"
 NBI_IP = "172.30.0.20"
 MAX_RESPONSE = 2 << 20
 TOKEN_FORMAT = re.compile(r"[A-Za-z0-9._~-]{16,4096}\Z")
