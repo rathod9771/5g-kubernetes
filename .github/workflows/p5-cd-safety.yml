@@ -26,5 +26,7 @@ jobs:
           python-version: '3.12'
       - name: Verify existing policy and upgrade gate remain closed
         run: python3 scripts/experiments/p5/p5_readiness.py --assert-locked
-      - name: Offline P5 readiness regression tests
-        run: python3 -m unittest discover -s tests -p 'test_p5_readiness.py' -v
+      - name: Install read-only verification dependencies
+        run: python3 -m pip install 'PyYAML>=6.0,<7'
+      - name: Offline P5 safety and planning regression tests
+        run: python3 -m unittest discover -s tests -p 'test_p5_*.py' -v
