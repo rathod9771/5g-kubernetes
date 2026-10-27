@@ -148,3 +148,49 @@ remain **unimplemented**. Keep the HP verifier and P4 gate intact.
 
 **Important:** A green safety-check workflow is not completed CD. Subsequent
 P5 phases need separate reviewed implementation and real Dell-only evidence.
+
+
+## Phase 1B — Read-only Dell target observation
+
+`scripts/experiments/p5/p5_target.py` is an *optional, explicit* read-only
+observer. It tests the P4 baseline already confirmed by the operator on
+27 October 2026:
+
+- Local hostname must be `Precision-3680`.
+- Current Kubernetes context must be `kubernetes-admin@kubernetes`.
+- Kubernetes API URL must exactly match `https://172.30.0.20:6443`.
+- P4 namespace `p4-kdu-upgrade` Active; exactly two ready deployments
+  `p4kdu-cu`, `p4kdu-du`; two ready 0-restart pods.
+- Helm CU revision 6 and DU revision 8, both `deployed`, chart
+  `p4kdu-{cu,du}-0.2.0`, app version `r2`.
+- The OSM Kubernetes namespace has ready pods, including NBI/LCM/RO,
+  and internal NBI (9999/TCP) and RO (9090/TCP) services.
+
+No cluster commands run until the hostname, context, API server and Helm
+environment override checks pass. Once permitted, only `kubectl get`,
+`kubectl config` and `helm list` with fixed arguments run. No
+`kubectl exec`, `get secrets`, OSM tokens, namespace modifications,
+catalog uploads, action primitives, or GitHub deployments are issued.
+
+Dell operator execution, after verifying the currently active context:
+
+```bash
+cd ~/5g-kubernetes-p5
+python3 scripts/experiments/p5/p5_target.py --observe
+```
+
+An `OBSERVED` result reports a **Kubernetes-and-Helm baseline match only**,
+never deployment authority. Revisions are pinned to the successful P4
+baseline, so planned future changes will intentionally require a separately
+reviewed observation policy. No OSM NBI NS state or OSM VIM-to-cluster
+binding is inferred from pod readiness.
+
+For offline analysis of a previously collected JSON snapshot, use
+`--snapshot <path>`; untrusted snapshots are **not proof of live host
+identity** and cannot authorize deployment. Output contains reason codes
+and fixed summary fields, not kubeconfig or OSM credentials.
+
+The next phase must authenticate to OSM using a tightly scoped,
+read-only service identity and independently validate the exact disposable
+NS UUID, registered K8s cluster/VIM identity and absence of pending LCM
+operations. A healthy Kubernetes namespace alone is insufficient.
