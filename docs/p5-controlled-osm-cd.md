@@ -264,3 +264,65 @@ metadata reads, NBI NS/VIM binding and operation checks, sanitization
 *before* output, and positive proof of observation. Until that exists,
 do not copy full NBI responses or export VIM configuration. Existing
 P4 credentials and state remain untouched.
+
+
+## Phase 1C live NBI observer (implemented, not exercised on the Dell)
+
+`scripts/experiments/p5/p5_osm_live.py` implements a separate **opt-in
+read-only live inventory observer**. It first reruns the Phase 1B Kubernetes
+and Helm baseline check and rejects a wrong host/context/API server before
+opening an NBI connection. It then resolves the **single hardcoded** NBI
+hostname `nbi.172.30.0.20.nip.io` and requires it to resolve only to
+`172.30.0.20`. Its HTTPS connection requires normal certificate
+verification (optionally with a user-provided trusted CA); redirects,
+proxies and plaintext HTTP are disabled. Each response is bounded, and
+each request is an allowlisted **GET** against Dell's OSM NBI.
+
+The collector reads an **already issued bearer token** from a regular
+owner-only `0600` file via `--token-file`; it never performs a login
+POST or writes a new token. For manual use, this must be a dedicated
+least-privilege **read-only OSM project identity**, not a production
+admin credential. Provisioning and authorization for such an identity
+have **not** been verified. Do not copy an existing P4 admin password,
+token or kubeconfig into the repository, logs, chat, or GitHub Actions.
+Keep any token file outside all Git working trees.
+
+Allowed OSM reads are exclusively the project, VIM, K8s cluster, NS,
+VNFR, KNF and NSD inventories, plus operations filtered by the exact
+disposable P4 NS UUID. Only known identifier, readiness, revision and
+KDU-model fields are retained in memory for evaluation. **No raw VIM
+config/credential fields, returned NBI documents, or token values are
+printed or persisted.** OSM GET responses may nevertheless contain
+sensitive fields inside process memory; restrict execution and token
+scope accordingly. There is no OSM catalog publication, NS action, Helm
+upgrade, Kubernetes change or CD approval code path.
+
+**After** a Dell-only read-only OSM identity and private token exist, the
+operator may run (the CA path is only an example; use the real trusted
+Dell NBI CA certificate):
+
+```bash
+cd ~/5g-kubernetes-p5
+python3 scripts/experiments/p5/p5_osm_live.py --observe \
+  --token-file /secure/operator-owned/read-only-osm-token \
+  --ca-file /secure/path/to/trusted-dell-osm-ca.crt
+```
+
+A successful result reports `OBSERVED`,
+`live_osm_identity_verified: true` and
+`osm_vim_registration_verified: true`, while
+`live_vim_health_verified: false`,
+`deployment_authorized: false` and
+`catalog_publication_authorized: false`.
+A registered connector is not sufficient evidence of a functioning VIM.
+Even a successful live observation is **not** proof of RAN performance or
+an upgrade authorization. A failed/missing token, certificate, NS/VIM
+binding or KDU revision returns only fixed reason codes and exits nonzero.
+The collector only records a momentary read of multiple resources,
+not an atomic transaction or signed, freshness-bound attestation.
+
+This stage is testable without credentials or network with:
+`python3 -m unittest discover -s tests -p 'test_p5_*.py' -v`.
+The code must be separately reviewed before manual live use; the active
+P4 test NS is deliberately preserved.
+
