@@ -1,0 +1,428 @@
+# P5: controlled OSM CD — phase 0, Dell-only safety foundation
+
+## Current result
+
+This change introduces a **read-only, offline CD readiness check**, seven unit tests,
+and a GitHub-hosted workflow. It **does not** implement or authorize unattended
+deployment. It deliberately leaves the P1/P4 controller, production approvals,
+GitHub release-candidate workflow, P3 verifier policy, OSM catalog, and running
+Kubernetes clusters unchanged.
+
+Run locally from the repository root:
+
+```bash
+python3 scripts/experiments/p5/p5_readiness.py --assert-locked
+python3 -m unittest discover -s tests -p 'test_p5_readiness.py' -v
+```
+
+A successful exit means the **existing protection is still closed**, not that P5
+deployment can proceed. The JSON output reports `status: BLOCKED` and
+`deployment_authorized: false`. No OSM credentials, kubeconfig, runtime release
+state, or runner secrets are required; no network or cluster calls are made.
+The P5 CI workflow runs on `ubuntu-latest`, with read-only repository access.
+
+## Why deployment is blocked
+
+- The P2 `.github/workflows/release-candidate.yml` creates immutable package
+  candidates and provenance, never a deployment. It triggers on
+  `reproducible-installer` and `feature/**`, not P4's `p4/**` branch.
+- The P3 release verifier's committed policy
+  (`config/release-verification.json`) is pinned to `hp-lab`, branch
+  `reproducible-installer`, and a trusted GitHub-hosted attestation.
+  That identity **must not be silently reused for Dell**.
+- `scripts/lifecycle.py` has `P4_KDU_UPGRADE_APPROVAL = None`. The P4
+  runner temporarily opened an experiment-only, in-process gate for a
+  disposable CU/DU application. That is not production approval.
+- P1 `process_release()` can publish a previously verified package and
+  conditionally upgrade the active RAN, but no authorized target-side agent
+  presently joins verified release records, operator approval, exact live
+  state, and that controller. Publication alone cannot guarantee a live
+  KDU rollout; OSM's `CHANGE_VNFPKG` was previously observed as a no-op
+  for same-package revisions.
+- The confirmed P4 79-check test used two synthetic busybox KDU workloads,
+  *not* a real srsRAN/OAI gNB or Open5GS traffic-path qualification.
+- The old HP production system and its runner are strictly out of scope.
+
+## P5 deployment contract (future implementation)
+
+```
+GitHub push
+  → offline CI (fail closed)
+  → immutable RAN/Core candidate + manifest + hashes
+  → GitHub-hosted provenance attestation
+  → Dell agent pulls candidate outbound (never GitHub runner → OSM)
+  → Dell-specific trust policy + independent attestation verification
+  → operator-authorized, target/NS/namespace-allowlisted plan
+  → acquire the existing P1 .lifecycle.lock
+  → re-evaluate active NS, OSM revisions, Helm and image readiness
+  → catalog publish under the P1 shared lock, never delete in-use entries
+  → explicitly approved CU/DU or Core KDU upgrade sequence
+  → health checks and bounded rollback/reconciliation
+  → immutable evidence, operator escalation on unknown outcomes
+```
+
+### Work remaining before enabling CD
+
+1. **Dell trust root:** Add a *separate* Dell release policy and a real
+   GitHub-hosted release workflow for approved Dell test artifacts. Pin
+   repository id, branch, signer workflow, architecture and artifact digests.
+   Do not weaken or repurpose HP's verifier policy.
+2. **Artifact and user-package contract:** Versioned RAN/Core descriptors,
+   charts, image digests, namespace restrictions, user-supplied package
+   validation, immutable original blobs and deterministic provenance.
+3. **Operator-controlled target agent:** Outbound polling, no GitHub Actions
+   self-hosted runner on HP, no GitHub-to-OSM secrets. Use a dedicated Dell
+   service identity with least-privilege OSM rights; user consent before
+   any catalog publication or KDU action.
+4. **Durable state:** Reuse P1's `.lifecycle.lock`, `active-ran.yaml`, release
+   ledger and recovery states. Do not build a second, independent controller.
+5. **P4 signoff:** Review P4 evidence, LCM digest and approval provenance,
+   require an explicit reviewed approval mechanism. Never enable this by
+   environment variable or by a GitHub workflow alone.
+6. **Safe rollout:** Match the exact NS UUID, target namespace, Helm releases,
+   registered VIM/K8s cluster and active topology. Do not delete old OSM
+   entries before proving unreferenced; for in-use packages, record revision
+   and use verified in-place KDU actions.
+7. **Fault testing:** Repeat lost-response, no-op, partial failure, rollback,
+   LCM-restart and sustained load tests in a *disposable Dell NS* before
+   admitting real RAN/Core upgrades. An OSM terminal FAILED can precede
+   Helm's completion of atomic rollback.
+8. **Production isolation:** No route, credential, or automation that can
+   mutate the HP production target from Dell testing.
+
+
+## Phase 1 — Offline release-plan inspection (implemented)
+
+`scripts/experiments/p5/p5_plan.py` reads a **locally downloaded**, bounded
+P2 release-candidate directory without contacting GitHub, OSM, Kubernetes,
+Rancher, or any host. It reuses P3's strict layout/SHA256SUMS checking and
+P2's independent manifest and package-identity verification against the
+scenario registry. The operator must provide the **expected full Git SHA and
+branch** independently; they are never taken from the artifact as authority.
+
+Example after downloading a *real P2 release candidate* into an isolated
+local directory (the previous P4 offline-test workflow produces **no**
+release-candidate artifact):
+
+```bash
+python3 scripts/experiments/p5/p5_plan.py \
+  --candidate-dir /path/to/downloaded/release-candidate \
+  --expected-commit <full-40-character-commit-sha> \
+  --expected-branch reproducible-installer
+```
+
+A valid input returns a JSON **proposal** with package hashes, RAN/Core
+scenarios, registry KDU order, and blockers, always `BLOCKED`,
+`trust: UNVERIFIED`, `target_observed: false`,
+`catalog_publication_authorized: false`, and
+`deployment_authorized: false`. The output is *not* an executable plan,
+operator approval, a signed GitHub attestation, a Dell target observation,
+or a lifecycle-controller input. It does not read any existing RAN
+instance, change OSM descriptors, upload packages, or alter Kubernetes.
+
+Rejection is fail-closed for missing, tampered, extra, symlinked, or
+inconsistent artifact files; changed approval protections; mismatched
+expected source identity; malformed manifests; or unsupported identities.
+Run local Phase-1 regression tests:
+
+```bash
+python3 -m pip install 'PyYAML>=6.0,<7'
+python3 -m unittest discover -s tests -p 'test_p5_*.py' -v
+```
+
+P5's GitHub Actions safety workflow runs these tests automatically.
+A genuine Dell-specific signed release workflow, independently pinned
+Dell trust policy, live target identity observer, and human authorization
+remain **unimplemented**. Keep the HP verifier and P4 gate intact.
+
+## Phase-0 acceptance criteria
+
+- GitHub Actions reports a successful *P5 CD Safety Gate (no deployment)* run.
+- `p5_readiness.py --assert-locked` returns exit 0 with
+  `existing_policy_locked: true`, `status: BLOCKED` and
+  `deployment_authorized: false`.
+- Unit tests reject attempts to silently change the P4 gate, the P3 target,
+  or P3 release branch.
+- No catalog publication, NS action, rollback, image push, credential update,
+  namespace mutation, or automatic live upgrade is performed.
+
+**Important:** A green safety-check workflow is not completed CD. Subsequent
+P5 phases need separate reviewed implementation and real Dell-only evidence.
+
+
+## Phase 1B — Read-only Dell target observation
+
+`scripts/experiments/p5/p5_target.py` is an *optional, explicit* read-only
+observer. It tests the P4 baseline already confirmed by the operator on
+27 October 2026:
+
+- Local hostname must be `Precision-3680`.
+- Current Kubernetes context must be `kubernetes-admin@kubernetes`.
+- Kubernetes API URL must exactly match `https://172.30.0.20:6443`.
+- P4 namespace `p4-kdu-upgrade` Active; exactly two ready deployments
+  `p4kdu-cu`, `p4kdu-du`; two ready 0-restart pods.
+- Helm CU revision 6 and DU revision 8, both `deployed`, chart
+  `p4kdu-{cu,du}-0.2.0`, app version `r2`.
+- The OSM Kubernetes namespace has ready pods, including NBI/LCM/RO,
+  and internal NBI (9999/TCP) and RO (9090/TCP) services.
+
+No cluster commands run until the hostname, context, API server and Helm
+environment override checks pass. Once permitted, only `kubectl get`,
+`kubectl config` and `helm list` with fixed arguments run. No
+`kubectl exec`, `get secrets`, OSM tokens, namespace modifications,
+catalog uploads, action primitives, or GitHub deployments are issued.
+
+**Read-only access caveat:** Helm 3 may internally read Kubernetes Secret-backed
+release records while running `helm list`; the script never prints those
+contents. The operator's current Kubernetes admin context is not an
+acceptable unattended CD agent identity. A separate least-privilege
+read-only identity is required before automation.
+
+Dell operator execution, after verifying the currently active context:
+
+```bash
+cd ~/5g-kubernetes-p5
+python3 scripts/experiments/p5/p5_target.py --observe
+```
+
+An `OBSERVED` result reports a **Kubernetes-and-Helm baseline match only**,
+never deployment authority. Revisions are pinned to the successful P4
+baseline, so planned future changes will intentionally require a separately
+reviewed observation policy. No OSM NBI NS state or OSM VIM-to-cluster
+binding is inferred from pod readiness.
+
+For offline analysis of a previously collected JSON snapshot, use
+`--snapshot <path>`; untrusted snapshots are **not proof of live host
+identity** and cannot authorize deployment. Output contains reason codes
+and fixed summary fields, not kubeconfig or OSM credentials.
+
+The next phase must authenticate to OSM using a tightly scoped,
+read-only service identity and independently validate the exact disposable
+NS UUID, registered K8s cluster/VIM identity and absence of pending LCM
+operations. A healthy Kubernetes namespace alone is insufficient.
+
+
+## Phase 1C foundation — sanitized OSM metadata review (offline)
+
+`scripts/experiments/p5/p5_osm_identity.py` checks an **operator-sanitized**
+JSON metadata snapshot against the disposable P4 identities recorded by the
+successful experiment. It accepts a strict, allowlisted schema and rejects
+raw/extra fields such as VIM configuration or credentials. It does not
+contact OSM, read tokens or config files, or authorize deployment.
+
+It checks the fixed P4 NS UUID `57fd4942-6c44-4da4-8297-1a29d101286e`,
+NS name `p4-kdu-upgrade-test`, VNFD `p4kdu_knf`, NSD
+`p4kdu_ns`, CU/DU KDU instance names, namespace, revision-pinned
+`kdu-model` references at package revision 2, expected VNFR binding,
+and terminal NS LCM operations. It checks uniquely named project
+`admin`, dummy VIM `dummyvim`, K8s cluster `lab-cluster`,
+matching VIM registration and Helm-v3 support.
+
+Input uses these exact top-level fields:
+`schema` (`5g-kubernetes/p5-sanitized-osm-snapshot`),
+`schema_version` (1), `target` (`dell-p4`), `projects`,
+`vims`, `clusters`, `ns_instances`, `vnf_instances`,
+`operations`, `knf_packages`, `nsd_packages`.
+Each list accepts **only** the following metadata keys:
+
+| List | Keys |
+| --- | --- |
+| projects | name, id |
+| vims | name, id, diagnostic |
+| clusters | name, id, vim_id, helm_v3, state |
+| ns_instances | name, id, ns_state, operation, status, nsd_id, vim_id, kdus |
+| ns_instances[].kdus | name, release, namespace, model |
+| vnf_instances | id, ns_id, vnfd_id |
+| operations | id, ns_id, state |
+| knf_packages | name, id, revision |
+| nsd_packages | name, id, vnfd_ids |
+
+The KDU `model` strings are the P4 NBI deployed paths
+`/app/storage/<knf-uuid>:2/p4kdu_knf/helm-chart-v3s/cu|du`.
+The `diagnostic` value is a *sanitized* `HEALTHY`,
+`INCONCLUSIVE`, or `FAILED` classification, **never** a raw RO
+error, password, endpoint configuration or token. Do not hand-edit values
+to make the snapshot pass; missing data is a reason to stop.
+
+```bash
+cd ~/5g-kubernetes-p5
+python3 -m unittest discover -s tests -p 'test_p5_*.py' -v
+# Only after a properly sanitized snapshot has been collected:
+python3 scripts/experiments/p5/p5_osm_identity.py --snapshot /private/path/p5-sanitized-osm.json
+```
+
+`CONSISTENT_SNAPSHOT` is **not** proof of current live OSM identity:
+the input has no authenticated provenance or freshness. It always
+returns `live_osm_identity_verified: false`,
+`live_vim_health_verified: false`, and
+`deployment_authorized: false`. A snapshot with malformed/extra fields
+is rejected without echoing private contents.
+
+**Next stage:** a separately reviewed, credential-minimal **read-only
+live NBI collector** with pinned Dell endpoint identity, authenticated
+metadata reads, NBI NS/VIM binding and operation checks, sanitization
+*before* output, and positive proof of observation. Until that exists,
+do not copy full NBI responses or export VIM configuration. Existing
+P4 credentials and state remain untouched.
+
+
+## Phase 1C live NBI observer (implemented, not exercised on the Dell)
+
+`scripts/experiments/p5/p5_osm_live.py` implements a separate **opt-in
+read-only live inventory observer**. It first reruns the Phase 1B Kubernetes
+and Helm baseline check and rejects a wrong host/context/API server before
+opening an NBI connection. It then resolves the **single hardcoded** NBI
+hostname `nbi.osm.172.30.0.20.nip.io` (observed on 27 October 2026
+in `osm/nbi-ingress`) and requires it to resolve only to
+`172.30.0.20`. Its **default HTTPS** connection requires normal certificate
+verification (optionally with a user-provided trusted CA); redirects and
+proxies are disabled. An explicit separate local-only port-forward mode
+uses HTTP exclusively over its owned localhost tunnel (see below). Each response is bounded, and
+each request is an allowlisted **GET** against Dell's OSM NBI.
+
+The collector reads an **already issued bearer token** from a regular
+owner-only `0600` file via `--token-file`; it never performs a login
+POST or writes a new token. For manual use, this must be a dedicated
+least-privilege **read-only OSM project identity**, not a production
+admin credential. Provisioning and authorization for such an identity
+have **not** been verified. Do not copy an existing P4 admin password,
+token or kubeconfig into the repository, logs, chat, or GitHub Actions.
+Keep any token file outside all Git working trees.
+
+Allowed OSM reads are exclusively the project, VIM, K8s cluster, NS,
+VNFR, KNF and NSD inventories, plus operations filtered by the exact
+disposable P4 NS UUID. Only known identifier, readiness, revision and
+KDU-model fields are retained in memory for evaluation. **No raw VIM
+config/credential fields, returned NBI documents, or token values are
+printed or persisted.** OSM GET responses may nevertheless contain
+sensitive fields inside process memory; restrict execution and token
+scope accordingly. There is no OSM catalog publication, NS action, Helm
+upgrade, Kubernetes change or CD approval code path.
+
+**After** a Dell-only read-only OSM identity and private token exist, the
+operator may run (the CA path is only an example; use the real trusted
+Dell NBI CA certificate):
+
+```bash
+cd ~/5g-kubernetes-p5
+python3 scripts/experiments/p5/p5_osm_live.py --observe \
+  --token-file /secure/operator-owned/read-only-osm-token \
+  --ca-file /secure/path/to/trusted-dell-osm-ca.crt
+```
+
+A successful result reports `OBSERVED`,
+`live_osm_identity_verified: true` and
+`osm_vim_registration_verified: true`, while
+`live_vim_health_verified: false`,
+`deployment_authorized: false` and
+`catalog_publication_authorized: false`.
+A registered connector is not sufficient evidence of a functioning VIM.
+Even a successful live observation is **not** proof of RAN performance or
+an upgrade authorization. A failed/missing token, certificate, NS/VIM
+binding or KDU revision returns only fixed reason codes and exits nonzero.
+The collector only records a momentary read of multiple resources,
+not an atomic transaction or signed, freshness-bound attestation.
+
+This stage is testable without credentials or network with:
+`python3 -m unittest discover -s tests -p 'test_p5_*.py' -v`.
+The code must be separately reviewed before manual live use; the active
+P4 test NS is deliberately preserved.
+
+
+
+### Phase 1C local-only Dell NBI observation (opt-in transport)
+
+The dedicated Dell `p5-traefik` TLS proxy was deployed in
+`p5-ingress` on 29 October 2026 as **ClusterIP only**. Verified via
+localhost-only port-forward: the NBI GET returned HTTP 401 with
+`ssl_verify_result=0`. Its service account has no token automount
+or OSM Secret listing permission. P4 CU/DU remained at Helm revisions
+6/8 with the P5 Kubernetes baseline `OBSERVED`. These results
+validate an **unauthenticated** proxy pathway, *not* permission to send
+OSM bearer tokens, because Traefik currently forwards to the NBI Pod
+over plaintext HTTP within the cluster.
+
+A separate, explicitly selected `--transport kubernetes-port-forward`
+mode has been added to `p5_osm_live.py` for **manual** authenticated
+observation. It is not the original HTTPS/Traefik transport. It
+reruns the pinned Dell hostname, Kubernetes context/API and P4/OSM
+read-only baseline and the DNS Dell-identity check **before** launching
+its own short-lived subprocess:
+
+```text
+kubectl --context kubernetes-admin@kubernetes --namespace osm \
+  port-forward --address 127.0.0.1 service/nbi :9999
+```
+
+`kubectl` chooses a new local ephemeral port; the observer requires
+the exact `Forwarding from 127.0.0.1:<port> -> 9999` banner and
+refuses any other address or port. It never accepts a user-controlled
+remote URL or a separately established local listener. After the
+tunnel is ready, the observer reads the owner-only token file and uses
+GET-only `http://127.0.0.1:<ephemeral>/osm/...` calls on localhost.
+The Kubernetes port-forward stream runs over the Dell API server's
+authenticated TLS connection; **the local HTTP leg is not HTTPS**.
+The subprocess is terminated when observation completes or fails.
+No bearer token is intentionally forwarded through the Traefik
+HTTP-to-NBI backend hop. A trusted local OS is required: local root
+and other privileged processes can still inspect connections and process
+memory. The temporary port-forward uses the operator's Kubernetes
+context, which must not be reused for unattended automation.
+
+**Prerequisite**: a separately approved, least-privilege OSM
+*read-only* project token whose GET permissions cover the fixed
+allowlist, stored in a private `0600` regular file outside any
+repository. The observer neither creates nor requests a token.
+Do not use old P4 administrator credentials, a production credential,
+or a placeholder token. Do not send a token in chat or GitHub.
+
+After that credential has actually been provisioned and reviewed:
+
+```bash
+cd ~/5g-kubernetes-p5
+python3 scripts/experiments/p5/p5_osm_live.py \
+  --observe \
+  --transport kubernetes-port-forward \
+  --token-file "$HOME/.config/p5/osm-readonly-token"
+```
+
+**Do not supply** `--ca-file` with this mode: it uses the Kubernetes
+API's existing TLS-verified transport, not the Traefik serving
+certificate. The default `--transport https` retains the existing
+strictly validated fixed NBI HTTPS URL, optional `--ca-file`, and
+DNS pin; it cannot currently reach the Dell's ClusterIP-only Traefik
+via `172.30.0.20:30843` without a separately reviewed change.
+
+Both modes fail closed on invalid baseline, DNS, tunnel, token, GET,
+metadata, NS state, or VIM/cluster binding. They print only sanitized
+summary/status and never grant catalog, KDU, NS action or deployment
+authorization. The original P4 upgrade gate remains closed.
+Tests use synthetic fixtures and mocks; they do not establish a live
+OSM identity or provision credentials.
+
+### TLS and read-only identity preflight (Dell operator)
+
+The `osm/nbi-ingress` TLS secret is named `nbi-cert`. Its presence
+does **not** mean that the Helm release's leaf certificate is a trusted
+CA, or that the system trusts its issuer. Check the actually presented
+certificate **without copying private keys or tokens**:
+
+```bash
+getent ahostsv4 nbi.osm.172.30.0.20.nip.io | awk '{print $1}' | sort -u
+openssl s_client -connect 172.30.0.20:30843 \
+  -servername nbi.osm.172.30.0.20.nip.io -showcerts </dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+```
+
+The certificate chain must authenticate the **exact** ingress host.
+If this NBI uses a private CA, obtain that issuer's actual trusted
+public CA certificate using an independently verified administrator
+source; do not automatically trust an arbitrary leaf certificate from
+the wire. The observer's `--ca-file` option is optional when the system
+trust store already verifies the ingress certificate.
+
+The live observer cannot execute successfully until the operator has
+a **real** project-scoped, least-privilege read-only OSM bearer token
+in a private (`0600`) file **outside** Git. Placeholder paths are
+not actual files. Do not substitute the administrator's login password
+for a bearer token, bypass TLS verification, or upload credential files.
