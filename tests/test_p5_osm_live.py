@@ -253,7 +253,7 @@ class OSMClientTests(unittest.TestCase):
             proc.terminate.assert_called_once()
 
     def test_loopback_getter_is_fixed_http_localhost_get_only(self):
-        fake = mock.Mock()
+        fake = mock.MagicMock()
         fake_response = fake.open.return_value.__enter__.return_value
         fake_response.status = 200
         fake_response.headers = {}
