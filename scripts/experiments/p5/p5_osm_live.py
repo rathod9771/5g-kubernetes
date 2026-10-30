@@ -7,11 +7,14 @@ records. Raw responses can contain credentials: only a sanitized, fixed-field
 summary reaches stdout. Does not publish, mutate, or authorize deployment.
 """
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
 import re
+import select
 import socket
+import subprocess
 import ssl
 import stat
 import sys
@@ -31,6 +34,8 @@ NBI_HOST = "nbi.osm.172.30.0.20.nip.io"
 NBI = "https://" + NBI_HOST + ":30843"
 NBI_IP = "172.30.0.20"
 MAX_RESPONSE = 2 << 20
+PORT_FORWARD_TIMEOUT = 12
+LOOPBACK_FORWARD_LINE = re.compile(r"Forwarding from 127\\.0\\.0\\.1:([0-9]{1,5}) -> 9999\\Z")
 TOKEN_FORMAT = re.compile(r"[A-Za-z0-9._~-]{16,4096}\Z")
 PATHS = (
     "/admin/v1/projects",
@@ -78,31 +83,88 @@ def _dns_check(resolve=socket.getaddrinfo):
         raise LiveObservationError("OSM_ENDPOINT_NOT_DELL")
 
 
+@contextmanager
+def dell_nbi_tunnel():
+    """Own a short-lived API-server port-forward: random localhost port, no shared listener.
+
+    kubectl connects to the already pinned Dell API using the current context.
+    HTTP bearer-token bytes travel only over the local loopback leg and the
+    kubectl API-server tunnel; no Traefik-to-NBI plaintext network hop.
+    """
+    command = [
+        "kubectl", "--context", p5_target.EXPECTED_CONTEXT,
+        "--namespace", p5_target.OSM_NAMESPACE, "port-forward",
+        "--address", "127.0.0.1", "service/nbi", ":9999",
+    ]
+    try:
+        proc = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, bufsize=1,
+        )
+    except OSError:
+        raise LiveObservationError("PORT_FORWARD_UNAVAILABLE") from None
+    try:
+        ready, _, _ = select.select([proc.stdout], [], [], PORT_FORWARD_TIMEOUT)
+        if not ready:
+            raise LiveObservationError("PORT_FORWARD_UNAVAILABLE")
+        line = proc.stdout.readline().strip()
+        match = LOOPBACK_FORWARD_LINE.fullmatch(line)
+        if not match or proc.poll() is not None:
+            raise LiveObservationError("PORT_FORWARD_UNAVAILABLE")
+        port = int(match.group(1))
+        if not (1024 <= port <= 65535):
+            raise LiveObservationError("PORT_FORWARD_UNAVAILABLE")
+        yield port
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        if proc.stdout:
+            proc.stdout.close()
+
+
 class _NoRedirect(http_request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
 
 
-def make_client(token, ca_file=None):
-    """No proxies/redirects, verified TLS, bounded response, strict GET allowlist."""
-    context = ssl.create_default_context()
-    if ca_file:
-        path = Path(ca_file)
-        try:
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > 1048576:
-                raise LiveObservationError("CA_FILE_UNAVAILABLE")
-            context.load_verify_locations(cafile=str(path))
-        except (OSError, ssl.SSLError):
-            raise LiveObservationError("CA_FILE_UNAVAILABLE") from None
+def make_client(token, ca_file=None, *, loopback_port=None):
+    """GET-only client: pinned verified HTTPS, or own loopback-only API port-forward.
+
+    Local HTTP is permitted only after dell_nbi_tunnel() has selected a port.
+    No configurable hosts, redirects, proxy forwarding, or non-GET calls.
+    """
+    if loopback_port is not None:
+        if ca_file is not None or type(loopback_port) is not int or not (1024 <= loopback_port <= 65535):
+            raise LiveObservationError("PORT_FORWARD_UNAVAILABLE")
+        origin = "http://127.0.0.1:" + str(loopback_port)
+        handler = http_request.HTTPHandler()
+    else:
+        origin = NBI
+        context = ssl.create_default_context()
+        if ca_file:
+            path = Path(ca_file)
+            try:
+                if path.is_symlink() or not path.is_file() or path.stat().st_size > 1048576:
+                    raise LiveObservationError("CA_FILE_UNAVAILABLE")
+                context.load_verify_locations(cafile=str(path))
+            except (OSError, ssl.SSLError):
+                raise LiveObservationError("CA_FILE_UNAVAILABLE") from None
+        handler = http_request.HTTPSHandler(context=context)
     opener = http_request.build_opener(
-        http_request.ProxyHandler({}), http_request.HTTPSHandler(context=context), _NoRedirect())
+        http_request.ProxyHandler({}), handler, _NoRedirect())
 
     def get(path):
         if path not in PATH_SET:
             raise LiveObservationError("OSM_ENDPOINT_NOT_ALLOWLISTED")
-        _dns_check()
+        if loopback_port is None:
+            _dns_check()
         req = http_request.Request(
-            NBI + "/osm" + path, headers={
+            origin + "/osm" + path, headers={
                 "Accept": "application/yaml", "Authorization": "Bearer " + token,
                 "User-Agent": "5g-kubernetes-p5-dell-read-only"
             }, method="GET")
@@ -123,7 +185,6 @@ def make_client(token, ca_file=None):
             raise LiveObservationError("OSM_RESPONSE_MALFORMED") from None
 
     return get
-
 
 def _list(value):
     if not isinstance(value, list) or len(value) > 128 or any(not isinstance(x, dict) for x in value):
@@ -228,16 +289,28 @@ def sanitize(get):
     }
 
 
-def observe(token_file, ca_file=None, *, collect=p5_target.collect, evaluate_target=p5_target.evaluate,
-            resolve=socket.getaddrinfo, client_factory=make_client):
+def observe(token_file, ca_file=None, *, transport="https", collect=p5_target.collect,
+            evaluate_target=p5_target.evaluate, resolve=socket.getaddrinfo,
+            client_factory=make_client, tunnel_factory=dell_nbi_tunnel):
     """Check Dell Kubernetes baseline first; then exact, authenticated NBI GETs."""
     baseline = evaluate_target(collect())
     if baseline.get("status") != "OBSERVED" or baseline.get("deployment_authorized") is not False:
         raise LiveObservationError("KUBERNETES_BASELINE_BLOCKED")
     _dns_check(resolve)
-    token = private_token(token_file)
-    get = client_factory(token, ca_file)
-    snapshot = sanitize(get)
+    if transport not in ("https", "kubernetes-port-forward"):
+        raise LiveObservationError("TRANSPORT_NOT_ALLOWED")
+    if transport == "kubernetes-port-forward":
+        if ca_file is not None:
+            raise LiveObservationError("CA_FILE_WITH_LOOPBACK_UNSUPPORTED")
+        # No token read or NBI GET until our own kubectl tunnel is ready.
+        with tunnel_factory() as port:
+            token = private_token(token_file)
+            get = client_factory(token, None, loopback_port=port)
+            snapshot = sanitize(get)
+    else:
+        token = private_token(token_file)
+        get = client_factory(token, ca_file)
+        snapshot = sanitize(get)
     review = policy.evaluate(snapshot)
     healthy = review["status"] == "CONSISTENT_SNAPSHOT"
     return {
@@ -261,10 +334,12 @@ def main(argv=None):
     p.add_argument("--observe", action="store_true", required=True,
                    help="Explicitly perform only allowlisted GETs to the pinned Dell NBI")
     p.add_argument("--token-file", type=Path, required=True, help="Existing private NBI bearer token file; never shown")
-    p.add_argument("--ca-file", type=Path, help="Trusted CA certificate if Dell NBI uses private CA")
+    p.add_argument("--ca-file", type=Path, help="Trusted CA certificate for pinned HTTPS transport")
+    p.add_argument("--transport", choices=("https", "kubernetes-port-forward"), default="https",
+                   help="Opt-in Dell-only short-lived loopback kubectl port-forward; no custom endpoint")
     a = p.parse_args(argv)
     try:
-        result = observe(a.token_file, a.ca_file)
+        result = observe(a.token_file, a.ca_file, transport=a.transport)
     except (LiveObservationError, policy.SnapshotError, p5_target.ObservationError,
             OSError, ValueError, TypeError, KeyError, AttributeError):
         result = {
