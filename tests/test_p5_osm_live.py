@@ -1,4 +1,6 @@
 """Synthetic-only P5 live NBI client tests, with no network or real OSM creds."""
+from contextlib import contextmanager
+import io
 import json
 import os
 from pathlib import Path
@@ -151,6 +153,136 @@ class OSMClientTests(unittest.TestCase):
         link.symlink_to(self.token_file)
         with self.assertRaisesRegex(live.LiveObservationError, "TOKEN_UNAVAILABLE"):
             live.private_token(link)
+
+    def test_explicit_loopback_mode_uses_owned_tunnel_and_no_ca(self):
+        original = raw()
+        events = []
+
+        @contextmanager
+        def tunnel():
+            events.append("tunnel_open")
+            try:
+                yield 29876
+            finally:
+                events.append("tunnel_closed")
+
+        def client(token, ca, *, loopback_port):
+            self.assertIsNone(ca)
+            self.assertEqual(loopback_port, 29876)
+            self.assertEqual(token, "simulated-read-only-token-12345678")
+            events.append("client_ready")
+            return original.__getitem__
+
+        result = live.observe(
+            self.token_file, transport="kubernetes-port-forward",
+            collect=lambda: {}, evaluate_target=lambda _: {
+                "status": "OBSERVED", "deployment_authorized": False,
+            }, resolve=resolver, client_factory=client, tunnel_factory=tunnel)
+        self.assertEqual(result["status"], "OBSERVED")
+        self.assertFalse(result["deployment_authorized"])
+        self.assertFalse(result["mutations_performed"])
+        self.assertEqual(events, ["tunnel_open", "client_ready", "tunnel_closed"])
+
+    def test_loopback_rejects_ca_file_before_tunnel_and_token(self):
+        with mock.patch.object(live, "private_token", side_effect=AssertionError("token read")), \\
+             mock.patch.object(live, "dell_nbi_tunnel", side_effect=AssertionError("tunnel opened")):
+            with self.assertRaisesRegex(live.LiveObservationError, "CA_FILE_WITH_LOOPBACK_UNSUPPORTED"):
+                live.observe(
+                    self.token_file, ca_file=Path("/unused/root.crt"),
+                    transport="kubernetes-port-forward",
+                    collect=lambda: {}, evaluate_target=lambda _: {
+                        "status": "OBSERVED", "deployment_authorized": False,
+                    }, resolve=resolver)
+
+    def test_loopback_wrong_target_aborts_before_tunnel_or_token(self):
+        with mock.patch.object(live, "private_token", side_effect=AssertionError("token read")):
+            def forbidden_tunnel():
+                raise AssertionError("must not establish port-forward")
+            with self.assertRaisesRegex(live.LiveObservationError, "KUBERNETES_BASELINE_BLOCKED"):
+                live.observe(
+                    self.token_file, transport="kubernetes-port-forward",
+                    collect=lambda: {}, evaluate_target=lambda _: {"status": "BLOCKED"},
+                    resolve=resolver, tunnel_factory=forbidden_tunnel)
+
+    def test_loopback_missing_token_still_closes_tunnel(self):
+        events = []
+        @contextmanager
+        def tunnel():
+            events.append("open")
+            try:
+                yield 29876
+            finally:
+                events.append("close")
+        with mock.patch.object(live, "private_token", side_effect=live.LiveObservationError("TOKEN_UNAVAILABLE")):
+            with self.assertRaisesRegex(live.LiveObservationError, "TOKEN_UNAVAILABLE"):
+                live.observe(
+                    self.token_file, transport="kubernetes-port-forward",
+                    collect=lambda: {}, evaluate_target=lambda _: {
+                        "status": "OBSERVED", "deployment_authorized": False,
+                    }, resolve=resolver, tunnel_factory=tunnel)
+        self.assertEqual(events, ["open", "close"])
+
+    def test_owned_tunnel_command_and_cleanup(self):
+        proc = mock.Mock()
+        proc.stdout = io.StringIO("Forwarding from 127.0.0.1:23871 -> 9999\\n")
+        proc.poll.return_value = None
+        with mock.patch.object(live.subprocess, "Popen", return_value=proc) as popen, \\
+             mock.patch.object(live.select, "select", return_value=([proc.stdout], [], [])):
+            with live.dell_nbi_tunnel() as port:
+                self.assertEqual(port, 23871)
+            proc.terminate.assert_called_once()
+            proc.wait.assert_called_once_with(timeout=5)
+            args, kwargs = popen.call_args
+            self.assertEqual(args[0], [
+                "kubectl", "--context", "kubernetes-admin@kubernetes",
+                "--namespace", "osm", "port-forward", "--address", "127.0.0.1",
+                "service/nbi", ":9999",
+            ])
+            self.assertNotIn("shell", kwargs)
+            self.assertEqual(kwargs["stderr"], live.subprocess.DEVNULL)
+
+    def test_unexpected_forward_line_rejected_and_process_closed(self):
+        proc = mock.Mock()
+        proc.stdout = io.StringIO("Forwarding from 0.0.0.0:23871 -> 9999\\n")
+        proc.poll.return_value = None
+        with mock.patch.object(live.subprocess, "Popen", return_value=proc), \\
+             mock.patch.object(live.select, "select", return_value=([proc.stdout], [], [])):
+            with self.assertRaisesRegex(live.LiveObservationError, "PORT_FORWARD_UNAVAILABLE"):
+                with live.dell_nbi_tunnel():
+                    self.fail("untrusted local listener was accepted")
+            proc.terminate.assert_called_once()
+
+    def test_loopback_getter_is_fixed_http_localhost_get_only(self):
+        fake = mock.Mock()
+        fake_response = fake.open.return_value.__enter__.return_value
+        fake_response.status = 200
+        fake_response.headers = {}
+        fake_response.read.return_value = b"[]"
+        with mock.patch.object(live.http_request, "build_opener", return_value=fake):
+            get = live.make_client("simulated-read-only-token-12345678",
+                                   loopback_port=23871)
+            self.assertEqual(get("/admin/v1/projects"), [])
+            request = fake.open.call_args.args[0]
+            self.assertEqual(request.full_url, "http://127.0.0.1:23871/osm/admin/v1/projects")
+            self.assertEqual(request.get_method(), "GET")
+            with self.assertRaisesRegex(live.LiveObservationError, "OSM_ENDPOINT_NOT_ALLOWLISTED"):
+                get("/nslcm/v1/ns_instances/action")
+            self.assertEqual(fake.open.call_count, 1)
+
+    def test_loopback_rejects_arbitrary_port_and_ca(self):
+        for port in ("23871", 0, 80, -1, 70000, True):
+            with self.subTest(port=port), self.assertRaisesRegex(
+                    live.LiveObservationError, "PORT_FORWARD_UNAVAILABLE"):
+                live.make_client("fake-read-only-token", loopback_port=port)
+        with self.assertRaisesRegex(live.LiveObservationError, "PORT_FORWARD_UNAVAILABLE"):
+            live.make_client("fake-read-only-token", Path("/unused"), loopback_port=23871)
+
+    def test_cli_transport_is_explicit_and_rejected_without_token(self):
+        with mock.patch.object(live, "observe", side_effect=live.LiveObservationError("TOKEN_UNAVAILABLE")) as observe:
+            self.assertEqual(live.main(["--observe", "--transport",
+                                        "kubernetes-port-forward", "--token-file",
+                                        str(self.token_file)]), 2)
+            self.assertEqual(observe.call_args.kwargs["transport"], "kubernetes-port-forward")
 
     def test_cli_rejects_missing_token_without_network(self):
         with mock.patch.object(live, "observe", side_effect=live.LiveObservationError("TOKEN_UNAVAILABLE")):
