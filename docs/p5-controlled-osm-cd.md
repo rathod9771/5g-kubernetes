@@ -274,9 +274,10 @@ and Helm baseline check and rejects a wrong host/context/API server before
 opening an NBI connection. It then resolves the **single hardcoded** NBI
 hostname `nbi.osm.172.30.0.20.nip.io` (observed on 27 October 2026
 in `osm/nbi-ingress`) and requires it to resolve only to
-`172.30.0.20`. Its HTTPS connection requires normal certificate
-verification (optionally with a user-provided trusted CA); redirects,
-proxies and plaintext HTTP are disabled. Each response is bounded, and
+`172.30.0.20`. Its **default HTTPS** connection requires normal certificate
+verification (optionally with a user-provided trusted CA); redirects and
+proxies are disabled. An explicit separate local-only port-forward mode
+uses HTTP exclusively over its owned localhost tunnel (see below). Each response is bounded, and
 each request is an allowlisted **GET** against Dell's OSM NBI.
 
 The collector reads an **already issued bearer token** from a regular
@@ -328,6 +329,76 @@ The code must be separately reviewed before manual live use; the active
 P4 test NS is deliberately preserved.
 
 
+
+### Phase 1C local-only Dell NBI observation (opt-in transport)
+
+The dedicated Dell `p5-traefik` TLS proxy was deployed in
+`p5-ingress` on 29 October 2026 as **ClusterIP only**. Verified via
+localhost-only port-forward: the NBI GET returned HTTP 401 with
+`ssl_verify_result=0`. Its service account has no token automount
+or OSM Secret listing permission. P4 CU/DU remained at Helm revisions
+6/8 with the P5 Kubernetes baseline `OBSERVED`. These results
+validate an **unauthenticated** proxy pathway, *not* permission to send
+OSM bearer tokens, because Traefik currently forwards to the NBI Pod
+over plaintext HTTP within the cluster.
+
+A separate, explicitly selected `--transport kubernetes-port-forward`
+mode has been added to `p5_osm_live.py` for **manual** authenticated
+observation. It is not the original HTTPS/Traefik transport. It
+reruns the pinned Dell hostname, Kubernetes context/API and P4/OSM
+read-only baseline and the DNS Dell-identity check **before** launching
+its own short-lived subprocess:
+
+```text
+kubectl --context kubernetes-admin@kubernetes --namespace osm \
+  port-forward --address 127.0.0.1 service/nbi :9999
+```
+
+`kubectl` chooses a new local ephemeral port; the observer requires
+the exact `Forwarding from 127.0.0.1:<port> -> 9999` banner and
+refuses any other address or port. It never accepts a user-controlled
+remote URL or a separately established local listener. After the
+tunnel is ready, the observer reads the owner-only token file and uses
+GET-only `http://127.0.0.1:<ephemeral>/osm/...` calls on localhost.
+The Kubernetes port-forward stream runs over the Dell API server's
+authenticated TLS connection; **the local HTTP leg is not HTTPS**.
+The subprocess is terminated when observation completes or fails.
+No bearer token is intentionally forwarded through the Traefik
+HTTP-to-NBI backend hop. A trusted local OS is required: local root
+and other privileged processes can still inspect connections and process
+memory. The temporary port-forward uses the operator's Kubernetes
+context, which must not be reused for unattended automation.
+
+**Prerequisite**: a separately approved, least-privilege OSM
+*read-only* project token whose GET permissions cover the fixed
+allowlist, stored in a private `0600` regular file outside any
+repository. The observer neither creates nor requests a token.
+Do not use old P4 administrator credentials, a production credential,
+or a placeholder token. Do not send a token in chat or GitHub.
+
+After that credential has actually been provisioned and reviewed:
+
+```bash
+cd ~/5g-kubernetes-p5
+python3 scripts/experiments/p5/p5_osm_live.py \
+  --observe \
+  --transport kubernetes-port-forward \
+  --token-file "$HOME/.config/p5/osm-readonly-token"
+```
+
+**Do not supply** `--ca-file` with this mode: it uses the Kubernetes
+API's existing TLS-verified transport, not the Traefik serving
+certificate. The default `--transport https` retains the existing
+strictly validated fixed NBI HTTPS URL, optional `--ca-file`, and
+DNS pin; it cannot currently reach the Dell's ClusterIP-only Traefik
+via `172.30.0.20:30843` without a separately reviewed change.
+
+Both modes fail closed on invalid baseline, DNS, tunnel, token, GET,
+metadata, NS state, or VIM/cluster binding. They print only sanitized
+summary/status and never grant catalog, KDU, NS action or deployment
+authorization. The original P4 upgrade gate remains closed.
+Tests use synthetic fixtures and mocks; they do not establish a live
+OSM identity or provision credentials.
 
 ### TLS and read-only identity preflight (Dell operator)
 
