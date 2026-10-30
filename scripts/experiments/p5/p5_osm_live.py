@@ -35,7 +35,7 @@ NBI = "https://" + NBI_HOST + ":30843"
 NBI_IP = "172.30.0.20"
 MAX_RESPONSE = 2 << 20
 PORT_FORWARD_TIMEOUT = 12
-LOOPBACK_FORWARD_LINE = re.compile(r"Forwarding from 127\\.0\\.0\\.1:([0-9]{1,5}) -> 9999\\Z")
+LOOPBACK_FORWARD_LINE = re.compile(r"Forwarding from 127\.0\.0\.1:([0-9]{1,5}) -> 9999\Z")
 TOKEN_FORMAT = re.compile(r"[A-Za-z0-9._~-]{16,4096}\Z")
 PATHS = (
     "/admin/v1/projects",
