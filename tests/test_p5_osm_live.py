@@ -184,7 +184,7 @@ class OSMClientTests(unittest.TestCase):
         self.assertEqual(events, ["tunnel_open", "client_ready", "tunnel_closed"])
 
     def test_loopback_rejects_ca_file_before_tunnel_and_token(self):
-        with mock.patch.object(live, "private_token", side_effect=AssertionError("token read")), \\
+        with mock.patch.object(live, "private_token", side_effect=AssertionError("token read")), \
              mock.patch.object(live, "dell_nbi_tunnel", side_effect=AssertionError("tunnel opened")):
             with self.assertRaisesRegex(live.LiveObservationError, "CA_FILE_WITH_LOOPBACK_UNSUPPORTED"):
                 live.observe(
@@ -224,9 +224,9 @@ class OSMClientTests(unittest.TestCase):
 
     def test_owned_tunnel_command_and_cleanup(self):
         proc = mock.Mock()
-        proc.stdout = io.StringIO("Forwarding from 127.0.0.1:23871 -> 9999\\n")
+        proc.stdout = io.StringIO("Forwarding from 127.0.0.1:23871 -> 9999\n")
         proc.poll.return_value = None
-        with mock.patch.object(live.subprocess, "Popen", return_value=proc) as popen, \\
+        with mock.patch.object(live.subprocess, "Popen", return_value=proc) as popen, \
              mock.patch.object(live.select, "select", return_value=([proc.stdout], [], [])):
             with live.dell_nbi_tunnel() as port:
                 self.assertEqual(port, 23871)
@@ -243,9 +243,9 @@ class OSMClientTests(unittest.TestCase):
 
     def test_unexpected_forward_line_rejected_and_process_closed(self):
         proc = mock.Mock()
-        proc.stdout = io.StringIO("Forwarding from 0.0.0.0:23871 -> 9999\\n")
+        proc.stdout = io.StringIO("Forwarding from 0.0.0.0:23871 -> 9999\n")
         proc.poll.return_value = None
-        with mock.patch.object(live.subprocess, "Popen", return_value=proc), \\
+        with mock.patch.object(live.subprocess, "Popen", return_value=proc), \
              mock.patch.object(live.select, "select", return_value=([proc.stdout], [], [])):
             with self.assertRaisesRegex(live.LiveObservationError, "PORT_FORWARD_UNAVAILABLE"):
                 with live.dell_nbi_tunnel():
