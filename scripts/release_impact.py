@@ -37,7 +37,7 @@ NON_PACKAGE_FILES = frozenset((
     'scripts/osm_tls.py', 'scripts/runtime_config.py', 'scripts/runtime_render.py', 'scripts/runtime_state.py',
     'scripts/service_entry.py', 'scripts/state_schema.py', 'scripts/ran_health.py', 'scripts/validate_oran_oai.py',
     'scripts/validate.sh', 'scripts/recover_experimental_ran.py', 'scripts/prepare_simulated_ue.py',
-    'scripts/image_metadata.py', 'scripts/preflight.sh', 'scripts/common.sh', 'scripts/instantiate-with-retry.sh',
+    'scripts/image_metadata.py', 'scripts/hf_ran_readiness.py', 'scripts/preflight.sh', 'scripts/common.sh', 'scripts/instantiate-with-retry.sh',
     'scripts/enable-oran-oai-e2.sh', 'scripts/deploy-oran-oai-rfsim.sh', 'scripts/build-cudu-batch.sh',
     'scripts/build-private-installer.sh', 'scripts/build-ran-batch.sh', 'scripts/build-ran-nsds.sh',
     'scripts/rename-ran-packages.sh',
