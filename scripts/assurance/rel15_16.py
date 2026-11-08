@@ -45,7 +45,7 @@ def qualify_counter_windows(metric_id, windows, *, now=None, min_attempts=20,
     Missing, duplicate, stale, reset, contradictory and unscoped evidence fails
     closed. Threshold is a LOCAL policy value, never a 3GPP-defined BLER/SLA.
     """
-    if metric_id not in METRICS:
+    if not isinstance(metric_id, str) or metric_id not in METRICS:
         return _blocked('unsupported_metric')
     if (type(min_attempts) is not int or not 1 <= min_attempts <= 1000000 or
             not _finite(failure_threshold) or not 0 <= failure_threshold < 1 or
@@ -121,7 +121,11 @@ def production_readiness(assessments):
     """A self-contained fail-closed report, not a live operational attestation."""
     valid = (isinstance(assessments, dict) and set(assessments) == set(METRICS) and
              all(isinstance(value, dict) and value.get('status') in
-                 ('NORMAL_CANDIDATE', 'DEGRADED_CANDIDATE') for value in assessments.values()))
+                 ('NORMAL_CANDIDATE', 'DEGRADED_CANDIDATE') and
+                 value.get('metric_id') == name and
+                 value.get('production_execution_allowed') is False and
+                 value.get('3gpp_conformant') is False
+                 for name, value in assessments.items()))
     return {'kpi_candidates_qualified': bool(valid),
             'release_15_16_conformance_certified': False,
             'production_autonomous_remediation_ready': False,
