@@ -77,6 +77,7 @@ class Release1516Tests(unittest.TestCase):
         reports = ({k: healthy for k in METRICS}, {}, {'bad': healthy})
         for report in reports:
             out = production_readiness(report)
+            self.assertFalse(out['kpi_candidates_qualified'])
             self.assertFalse(out['production_autonomous_remediation_ready'])
             self.assertFalse(out['release_15_16_conformance_certified'])
             self.assertEqual(out['mode'], 'OBSERVE_ONLY')
