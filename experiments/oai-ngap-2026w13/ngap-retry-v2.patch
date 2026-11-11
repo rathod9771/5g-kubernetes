@@ -1,0 +1,35 @@
+--- a/openair3/NGAP/ngap_gNB.c
++++ b/openair3/NGAP/ngap_gNB.c
+@@ -116,7 +116,7 @@
+             req->in_streams,
+             req->out_streams);
+ 
+-  inst->ngap_amf_nb++;
++  /* A redial reuses the existing AMF descriptor. */
+   inst->ngap_amf_pending_nb++;
+ 
+   itti_send_msg_to_task(TASK_SCTP, inst->instance, message_p);
+@@ -153,6 +153,9 @@
+   ngap_amf_data_p = calloc(1, sizeof(*ngap_amf_data_p));
+   DevAssert(ngap_amf_data_p != NULL);
+   ngap_amf_data_p->cnx_id                = ngap_gNB_fetch_add_global_cnx_id();
++  /* Required if the first SCTP attempt fails before streams are negotiated. */
++  ngap_amf_data_p->in_streams = in_streams;
++  ngap_amf_data_p->out_streams = out_streams;
+   sctp_new_association_req_p->ulp_cnx_id = ngap_amf_data_p->cnx_id;
+   ngap_amf_data_p->assoc_id          = -1;
+   ngap_amf_data_p->broadcast_plmn_num = broadcast_plmn_num;
+@@ -280,6 +283,13 @@
+               instance,
+               sctp_new_association_resp->ulp_cnx_id);
+     ngap_handle_ng_setup_message(ngap_amf_data_p, sctp_new_association_resp->sctp_state == SCTP_STATE_SHUTDOWN);
++    /* An initial UNREACHABLE response does not schedule the existing
++     * AMF redial timer. Reuse that mechanism; review its UE cleanup and
++     * timer lifecycle before production acceptance. This deliberately
++     * covers only the observed SCTP_STATE_UNREACHABLE failure. */
++    if (sctp_new_association_resp->sctp_state == SCTP_STATE_UNREACHABLE) {
++      ngap_release_ues_for_amf(ngap_amf_data_p);
++    }
+     return;
+   }
+ 
