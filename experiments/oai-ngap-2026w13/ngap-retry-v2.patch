@@ -19,7 +19,7 @@
    sctp_new_association_req_p->ulp_cnx_id = ngap_amf_data_p->cnx_id;
    ngap_amf_data_p->assoc_id          = -1;
    ngap_amf_data_p->broadcast_plmn_num = broadcast_plmn_num;
-@@ -280,6 +283,13 @@
+@@ -280,5 +283,12 @@
                instance,
                sctp_new_association_resp->ulp_cnx_id);
      ngap_handle_ng_setup_message(ngap_amf_data_p, sctp_new_association_resp->sctp_state == SCTP_STATE_SHUTDOWN);
@@ -32,4 +32,3 @@
 +    }
      return;
    }
- 
