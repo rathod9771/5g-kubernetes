@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   real-gtpu-path:
-    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4k-real-ue-pdu'
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4l-gtpu-traffic'
     runs-on: ubuntu-24.04
     timeout-minutes: 22
     env:
