@@ -1,0 +1,64 @@
+name: Experimental OAI NGAP Stage 4H OSM rollback simulation (NO DEPLOY)
+
+# Runs existing OSM/lifecycle safety tests with synthetic IDs only.
+# Never accesses the real HP cluster, OSM credentials, or dashboard.
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-stage4h-osm-offline
+    paths:
+      - .github/workflows/oai-ngap-stage4h-osm-offline.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-lifecycle-contracts:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4h-osm-offline'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout isolated experimental branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install minimal offline Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/osm-gates-venv"
+          "$RUNNER_TEMP/osm-gates-venv/bin/python" -m pip install \
+            --disable-pip-version-check 'PyYAML==6.0.2' 'Flask==3.1.2' 'requests==2.32.5'
+
+      - name: Run existing P5 and OSM safety simulation suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/osm-safety-evidence"
+          PYTHONDONTWRITEBYTECODE=1 \
+          "$RUNNER_TEMP/osm-gates-venv/bin/python" -B -m unittest -v \
+            tests.test_p5_readiness \
+            tests.test_p5_plan \
+            tests.test_p5_target \
+            tests.test_experimental_catalog_guard \
+            tests.test_lifecycle_coordination \
+            > "$RUNNER_TEMP/osm-safety-evidence/offline-unittest.log" 2>&1 || {
+              tail -n 180 "$RUNNER_TEMP/osm-safety-evidence/offline-unittest.log"
+              exit 1
+            }
+          tail -n 25 "$RUNNER_TEMP/osm-safety-evidence/offline-unittest.log"
+          {
+            echo 'OFFLINE TEST PASS ONLY'
+            echo 'No live OSM operation, no Kubernetes upgrade/rollback performed.'
+            echo 'Production rollout authorization: NO-GO.'
+          } > "$RUNNER_TEMP/osm-safety-evidence/limits.txt"
+
+      - name: Upload OSM/lifecycle simulated test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-stage4h-offline-osm-${{ github.run_number }}
+          path: ${{ runner.temp }}/osm-safety-evidence/
+          if-no-files-found: warn
+          retention-days: 7
