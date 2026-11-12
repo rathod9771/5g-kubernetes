@@ -26,6 +26,7 @@ KNOWN = [
     ("HCRAN_DUAL_F1_SMALL_UE_USER_PLANE", 43193891521, "oai-hcran-small-ue-userplane-"),
     ("HCRAN_TWO_UE_CONCURRENT_USER_PLANE", 43194751671, "oai-hcran-dual-ue-traffic-"),
     ("HCRAN_ASSISTED_TWO_UE_RECOVERY_AFTER_FULL_5GC_RESTART", 43209876014, "oai-hcran-assisted-dual-ue-recovery-"),
+    ("HCRAN_CONTROLLED_TWO_UE_RECOVERY_AFTER_AMF_ONLY_FAULT", 43220775040, "oai-hcran-controlled-ue-reattach-"),
     ("OSM_OFFLINE_SIMULATION", 43165822749, "oai-ngap-stage4h-offline-osm-"),
 ]
 # Verification of these gates requires real positive evidence, not inferred
@@ -36,7 +37,7 @@ NOT_VERIFIED = {
     "MULTI_CYCLE_NAS_PDU_SERVICE_SLO": "Only single bounded isolated UE attach and PDU proved; no repeated registrations or sustained service SLO",
     "DATA_PLANE_THROUGHPUT_AND_LOSS": "Four loss-free internal ICMP probes are positive connectivity proof, not a throughput or loss-under-load benchmark",
     "FULL_5GC_RESTART_AUTO_UE_DATA_RECOVERY": "Stage 4P run 43208820608 FAILED: NGAP reconnected in 36.19 s, F1-C remained connected, but both UE TUNs/DRBs were released and data did not recover automatically",
-    "DUAL_DU_USER_PLANE_AMF_FAULT_RECOVERY": "Stage 4P tested entire disposable 5GC restart, not an isolated AMF-only outage; UE service recovery after an AMF-only restart remains unverified",
+    "AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY": "AMF-only restart tested in 43218236191 and 43219517357. Both DUs retained F1-C and patched NGAP reconnected, but BOTH UEs lost NAS/PDU/TUN service and did not auto-recover within 150s. Controlled simulator restart passed only in 43220775040; autonomous recovery is a NO-GO",
     "INDEPENDENT_STAGING_OBSERVER_CLOCK": "No independent timestamped observer and clock-offset acceptance in staging",
     "STAGING_3_CYCLE_DUAL_DU_RECOVERY": "Offline AMF fault cycle not reproduced on qualified staging topology with UE",
     "STAGING_OSM_ROLLBACK": "No actual OSM-controlled staging rollback and restored image digest",
