@@ -23,11 +23,13 @@ jobs:
   ngap-open5gs-recovery:
     if: github.ref == 'refs/heads/experiment/oai-ngap-stage3-runtime'
     runs-on: ubuntu-24.04
-    timeout-minutes: 28
+    timeout-minutes: 45
     env:
       IMAGE_TAG: oai-ngap-2026w13-v2:ci-2
       CORE_IMAGE: gradiant/open5gs:2.7.6
       EVIDENCE_DIR: /tmp/ngap-stage3-evidence
+      SOURCE_DIR: /tmp/oai-stage3-2026w13
+      PORTABLE_IMAGE_TAG: oai-ngap-2026w13-v2:stage3-portable-${{ github.run_number }}
     steps:
       - name: Check out Stage 3 experimental branch
         uses: actions/checkout@v4
@@ -80,12 +82,60 @@ jobs:
             'test -x /opt/oai-gnb/bin/nr-softmodem; test -f /opt/oai-gnb/bin/entrypoint.sh' \
             | tee "$EVIDENCE_DIR/oai-binary-preflight.txt"
 
+      - name: Rebuild NGAP-patched OAI for CPU instruction portability
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --single-branch --branch 2026.w13 \
+            https://github.com/OPENAIRINTERFACE/openairinterface5g.git "$SOURCE_DIR"
+          cd "$SOURCE_DIR"
+          git apply --check "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
+          git apply "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
+          git diff --check
+          test "$(git diff --name-only)" = "openair3/NGAP/ngap_gNB.c"
+          grep -m 1 '^flags' /proc/cpuinfo > "$EVIDENCE_DIR/runner-cpu-flags.txt" || true
+          cd cmake_targets
+          ./build_oai -I -w SIMU > "$EVIDENCE_DIR/portable-deps.log" 2>&1 || {
+            tail -n 120 "$EVIDENCE_DIR/portable-deps.log"
+            exit 1
+          }
+          ./build_oai --gNB -w SIMU --noavx512 --noavx2 --build-tool-opt "-j2" \
+            > "$EVIDENCE_DIR/portable-build.log" 2>&1 || {
+              tail -n 150 "$EVIDENCE_DIR/portable-build.log"
+              exit 1
+            }
+          BIN="$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem"
+          test -x "$BIN"
+          sha256sum "$BIN" | tee "$EVIDENCE_DIR/portable-binary-sha256.txt"
+          grep -E '^AVX(2|512):' "$SOURCE_DIR/cmake_targets/ran_build/build/CMakeCache.txt" \
+            > "$EVIDENCE_DIR/portable-build-avx-flags.txt" || true
+
+      - name: Package portable experimental CU (on same runner as runtime test)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/oai-stage3-context"
+          cp "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem" \
+             "$RUNNER_TEMP/oai-stage3-context/nr-softmodem"
+          docker build --file "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/Dockerfile.experimental" \
+            --build-arg "OAI_RUNTIME_BASE=$IMAGE_TAG" \
+            --tag "$PORTABLE_IMAGE_TAG" "$RUNNER_TEMP/oai-stage3-context" \
+            | tee "$EVIDENCE_DIR/portable-image-build.log"
+          docker image inspect "$PORTABLE_IMAGE_TAG" > "$EVIDENCE_DIR/portable-image-inspect.json"
+          docker run --rm --network none --entrypoint /bin/sh "$PORTABLE_IMAGE_TAG" -ec \
+            'ldd /opt/oai-gnb/bin/nr-softmodem' \
+            | tee "$EVIDENCE_DIR/portable-binary-ldd.log"
+          if grep -q 'not found' "$EVIDENCE_DIR/portable-binary-ldd.log"; then
+            echo 'Missing runtime shared-library dependency' >&2
+            exit 1
+          fi
+
       - name: Real NGAP reconnect test with AMF start/restart (no UE)
         shell: bash
         run: |
           set -euo pipefail
           python3 -u experiments/oai-ngap-2026w13/stage3/run_real_ngap.py \
-            --image "$IMAGE_TAG" \
+            --image "$PORTABLE_IMAGE_TAG" \
             --conf "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage3" \
             --out "$EVIDENCE_DIR" \
             2>&1 | tee "$EVIDENCE_DIR/console.txt"
@@ -95,7 +145,29 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: oai-ngap-stage3-real-open5gs-${{ github.run_number }}
-          path: ${{ runner.temp }}/ngap-stage3-evidence/
+          path: /tmp/ngap-stage3-evidence/
           if-no-files-found: warn
           retention-days: 7
           compression-level: 2
+
+      - name: Export portable test image only after functional PASS
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/oai-stage3-export"
+          docker save "$PORTABLE_IMAGE_TAG" | gzip -1 \
+            > "$RUNNER_TEMP/oai-stage3-export/oai-ngap-stage3-portable.tar.gz"
+          gzip -t "$RUNNER_TEMP/oai-stage3-export/oai-ngap-stage3-portable.tar.gz"
+          sha256sum "$RUNNER_TEMP/oai-stage3-export/oai-ngap-stage3-portable.tar.gz" \
+            > "$EVIDENCE_DIR/portable-archive.sha256"
+
+      - name: Upload portable verified image archive (no registry push)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-stage3-portable-${{ github.run_number }}
+          path: ${{ runner.temp }}/oai-stage3-export/oai-ngap-stage3-portable.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
