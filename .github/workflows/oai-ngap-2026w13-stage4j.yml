@@ -1,0 +1,51 @@
+name: H-CRAN OAI Stage 4J synthetic UE static preflight (NO DEPLOY)
+
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-stage4j-ue-preflight
+    paths:
+      - .github/workflows/oai-ngap-2026w13-stage4j.yml
+      - experiments/oai-ngap-2026w13/stage4/preflight_ue.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-hcran-ue:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4j-ue-preflight'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Read-only checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Install isolated Python YAML parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/ue-preflight-venv"
+          "$RUNNER_TEMP/ue-preflight-venv/bin/python" -m pip install \
+            --disable-pip-version-check PyYAML==6.0.2
+      - name: Static render both H-CRAN UE profiles in memory only
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/ue-preflight-venv/bin/python" \
+            experiments/oai-ngap-2026w13/stage4/preflight_ue.py \
+            "$RUNNER_TEMP/ue-preflight-evidence/readiness.json"
+          echo "::warning::Static UE/5GC preflight does not prove registration or PDU. Production remains NO-GO."
+      - name: Upload sanitized H-CRAN eligibility report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-hcran-ue-prerequisites-${{ github.run_number }}
+          path: ${{ runner.temp }}/ue-preflight-evidence/readiness.json
+          if-no-files-found: warn
+          retention-days: 7
