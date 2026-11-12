@@ -15,6 +15,8 @@ import sys
 import time
 import traceback
 
+from e2ap_wire_evidence import parse_e2_setup_sctp
+
 NET = "oai-ngap-stage4g-e2"
 GATEWAY = "172.29.75.1"
 CU_IP = "172.29.75.20"
@@ -171,27 +173,31 @@ e2_agent = {{
             ric = self.ric_log()
             sctp = call("docker", "exec", NAMES["cu"], "cat", "/proc/net/sctp/assocs",
                         check=False, timeout=12)
-            request_seen = bool(E2_SETUP_REQ.search(cu + "\n" + ric))
-            # A RIC-side accepted Request is NOT a confirmed Setup Response.
-            # Verify E2setupResponse on the real SCTP wire from RIC -> CU.
-            wire = call("tshark", "-r", str(self.out / "e2ap-sctp.pcap"),
-                        "-Y", f"e2ap.E2setupResponse_element && ip.src == {GATEWAY} && ip.dst == {CU_IP}",
-                        "-T", "fields", "-e", "frame.number", check=False, timeout=20)
-            response_seen = bool(wire.strip())
+            # This FlexRIC build uses SCTP PPID 0, which Wireshark does not
+            # auto-dispatch to E2AP. Parse the bounded ASN.1 APER envelope
+            # on the real recorded SCTP DATA message in both directions.
+            wire = parse_e2_setup_sctp(self.out / "e2ap-sctp.pcap", CU_IP, GATEWAY)
+            request_seen = (bool(E2_SETUP_REQ.search(cu + "\n" + ric))
+                            and bool(wire["e2_setup_requests"]))
+            response_seen = bool(wire["e2_setup_responses"])
             ngap_seen = bool(NGAP_RSP.search(cu))
             e2_sctp = GATEWAY in sctp
             if request_seen and response_seen and ngap_seen and e2_sctp:
                 self.evidence("T3-real-E2-Setup-and-NGAP", "PASS",
                               e2_setup_request=True, e2_setup_response=True,
                               e2_kernel_sctp=True, real_ngap=True)
+                self.out.joinpath("e2ap-wire-evidence.json").write_text(
+                    json.dumps(wire, indent=2) + "\n")
                 self.snapshot("T3-success")
                 return
             time.sleep(3)
         self.snapshot("T3-timeout")
+        self.out.joinpath("e2ap-wire-evidence.json").write_text(
+            json.dumps(wire, indent=2) + "\n")
         self.out.joinpath("tshark-e2ap-summary.txt").write_text(
             call("tshark", "-r", str(self.out / "e2ap-sctp.pcap"),
                  "-Y", "sctp", "-T", "fields", "-e", "frame.number", "-e", "ip.src",
-                 "-e", "ip.dst", "-e", "sctp.ppid", "-e", "_ws.col.Info",
+                 "-e", "ip.dst", "-e", "_ws.col.Info",
                  check=False, timeout=30))
         raise CheckError(f"Timeout E2 or NGAP: request={request_seen} response={response_seen} "
                          f"ngap={ngap_seen} sctp={e2_sctp}\n" +
