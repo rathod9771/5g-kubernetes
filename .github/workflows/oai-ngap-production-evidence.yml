@@ -1,0 +1,50 @@
+name: OAI NGAP production evidence inventory (NO GO, NO DEPLOY)
+
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-prod-readiness-gate
+    paths:
+      - .github/workflows/oai-ngap-production-evidence.yml
+      - scripts/ci_oai_ngap_readiness.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  offline-evidence:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-prod-readiness-gate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Read-only checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate pinned GitHub run evidence and export NO GO result
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPORT: ${{ runner.temp }}/ngap-readiness/report.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B scripts/ci_oai_ngap_readiness.py
+          python3 - <<'PY'
+          import json, os
+          data=json.load(open(os.environ['REPORT']))
+          assert data['production_decision']=='NO_GO'
+          assert data['production_deployment_authorized'] is False
+          assert len(data['outstanding_runtime_and_release_gates'])>=10
+          print("PASS: production is explicitly blocked pending runtime and staging evidence")
+          PY
+          echo "::warning::This evidence-inventory job can pass while deployment decision remains NO-GO."
+      - name: Upload signed-off only after future staged evidence (currently NO GO)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ngap-prod-readiness-NO-GO-${{ github.run_number }}
+          path: ${{ runner.temp }}/ngap-readiness/report.json
+          if-no-files-found: warn
+          retention-days: 7
