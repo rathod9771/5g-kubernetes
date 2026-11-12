@@ -108,7 +108,10 @@ jobs:
             "$SRC/src/xApp/db/sqlite3/sqlite3_wrapper.c" \
             | tee "$EVIDENCE_DIR/pinned-flexric-asn-compat.log"
           git -C "$SRC" diff --check
-          git -C "$SRC" diff -- src/xApp/db/sqlite3/sqlite3_wrapper.c \
+          git -C "$SRC" diff -- \
+            src/xApp/db/sqlite3/sqlite3_wrapper.c \
+            examples/xApp/c/monitor/RRC_MESSAGES/CMakeLists.txt \
+            examples/xApp/c/monitor/RRC_MESSAGES/nr-rrc-17.3.0.cmake \
             > "$EVIDENCE_DIR/pinned-flexric-asn-compat.patch"
           cmake -S "$SRC" -B "$SRC/build" \
             -DE2AP_VERSION=E2AP_V2 -DKPM_VERSION=KPM_V2_03 \
