@@ -19,12 +19,16 @@ credentials or production workload was involved.
 
 ## Non-negotiable remaining live gates
 
-1. E2AP setup response; version-matched nearRT-RIC and service models.
-   Stage 4G diagnosed a **SIGSEGV** in FlexRIC plugin loading. A candidate
-   that crashes before setup is rejected even if the NGAP patch itself works.
-2. E2SM-KPM xApp subscription, at least three valid KPM indications, and
-   bounded RC control with acknowledgement. Mere E2 Setup does not prove
-   control or monitoring behavior.
+1. **E2AP Setup now passed** in isolated Stage 4G run 43173532767.
+   The earlier SIGSEGV was diagnosed in the legacy FlexRIC plugin loader,
+   and the pinned matching KPM/RC agent libraries removed the crash.
+   A real E2 Setup Request and Successful Outcome were seen on SCTP.
+2. **Still NO-GO:** E2SM-KPM xApp subscription and at least three valid
+   KPM indications, plus a bounded E2SM-RC control acknowledgement and
+   demonstrated RAN effect. E2 Setup does not prove monitoring/control.
+   The pinned OAI 2026.w13 upstream labels the KPM/RC control demo
+   as proof-of-concept with no actual RAN control, so a green xApp
+   process alone cannot satisfy this gate.
 3. In an **isolated staging** environment with a synthetic subscriber:
    UE authentication, NAS Registration Accept and PDU Session Establishment
    Accept. Verify actual assigned UE IP and subscriber redaction.
@@ -40,6 +44,8 @@ credentials or production workload was involved.
    and authorization before any live HP replacement.
 
 ## Environment boundary
+
+The H-CRAN OAI offline regression suite on experimental branch (run 43181622225) passed 1,047 tests with two skipped. This does not substitute for live NAS/PDU/F1-U/NG-U or E2 indications.
 
 The current HP system is a busy live Kubernetes/OSM/Longhorn/Open5GS lab;
 no private kubeconfig, subscriber secret, staging namespace, OSM lifecycle
