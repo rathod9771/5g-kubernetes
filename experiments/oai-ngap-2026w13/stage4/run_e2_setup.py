@@ -138,11 +138,21 @@ e2_agent = {{
                  "-v", str(config_dir / f"{key}.yaml") + f":/tmp/{key}.yaml:ro",
                  "--entrypoint", "/bin/sh", CORE_IMAGE, "-ec",
                  f"exec open5gs-{exe} -c /tmp/{key}.yaml")
-        call("docker", "run", "-d", "--name", NAMES["cu"], "--network", NET,
-             "--ip", CU_IP, "--cpus", "1.5", "--memory", "3g",
-             "-v", str(config_dir / "cu.conf") + ":/opt/oai-gnb/etc/gnb.conf:ro",
-             "--entrypoint", "/opt/oai-gnb/bin/nr-softmodem",
-             self.args.cu_image, "-O", "/opt/oai-gnb/etc/gnb.conf")
+        docker_args = ["docker", "run", "-d", "--name", NAMES["cu"], "--network", NET,
+                       "--ip", CU_IP, "--cpus", "1.5", "--memory", "3g",
+                       "-v", str(config_dir / "cu.conf") + ":/opt/oai-gnb/etc/gnb.conf:ro"]
+        if self.args.capture_gdb:
+            docker_args += ["--cap-add", "SYS_PTRACE", "--security-opt", "seccomp=unconfined",
+                            "--entrypoint", "/usr/bin/gdb", self.args.cu_image,
+                            "-q", "-batch", "-ex", "set pagination off",
+                            "-ex", "set print thread-events off",
+                            "-ex", "run", "-ex", "thread apply all bt 14",
+                            "--args", "/opt/oai-gnb/bin/nr-softmodem",
+                            "-O", "/opt/oai-gnb/etc/gnb.conf"]
+        else:
+            docker_args += ["--entrypoint", "/opt/oai-gnb/bin/nr-softmodem",
+                            self.args.cu_image, "-O", "/opt/oai-gnb/etc/gnb.conf"]
+        call(*docker_args)
         self.evidence("T2-E2-enabled-CU-started", "PASS", image=self.args.cu_image)
 
         deadline = time.monotonic() + 140
@@ -193,6 +203,8 @@ def main():
     p.add_argument("--ric-binary", required=True)
     p.add_argument("--stage3", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--capture-gdb", action="store_true",
+                   help="Run experimental CU under GDB to capture real SIGSEGV backtraces")
     t = Trial(p.parse_args())
     try:
         t.run()
