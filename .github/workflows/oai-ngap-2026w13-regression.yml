@@ -1,0 +1,64 @@
+name: Experimental OAI NGAP retry source-regression (no deploy)
+
+# Lightweight, source-derived C tests. This workflow does not build an image,
+# start a cluster, or use live SCTP/AMF. It cannot prove real NGAP recovery.
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-2026w13-actions
+    paths:
+      - .github/workflows/oai-ngap-2026w13-regression.yml
+      - tests/test_oai_ngap_2026w13_source_regression.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ngap-source-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-c-harness:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-2026w13-actions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+    steps:
+      - name: Check out experimental branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Fetch pinned OAI source and apply V2 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --single-branch --branch 2026.w13 \
+            https://github.com/OPENAIRINTERFACE/openairinterface5g.git \
+            "$RUNNER_TEMP/oai-2026w13"
+          cd "$RUNNER_TEMP/oai-2026w13"
+          test "$(git describe --tags --exact-match)" = "2026.w13"
+          git apply --check "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
+          git apply "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
+          git diff --check
+          test "$(git diff --name-only)" = "openair3/NGAP/ngap_gNB.c"
+
+      - name: Compile real OAI NGAP C handlers in mocked-SCTP regression harness
+        shell: bash
+        env:
+          OAI_SOURCE_DIR: ${{ runner.temp }}/oai-2026w13
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests/test_oai_ngap_2026w13_source_regression.py \
+            2>&1 | tee "$RUNNER_TEMP/ngap-unit-regression.txt"
+
+      - name: Upload focused test result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-source-regression-${{ github.run_number }}
+          path: ${{ runner.temp }}/ngap-unit-regression.txt
+          if-no-files-found: warn
+          retention-days: 7
