@@ -49,6 +49,7 @@ class Trial:
         self.records = []
         self.ric = None
         self.ric_output = None
+        self.capture_process = None
         self.start = time.monotonic()
 
     def evidence(self, phase, result, **other):
@@ -103,6 +104,14 @@ class Trial:
         call("docker", "network", "create", "--driver", "bridge",
              "--subnet", "172.29.75.0/24", "--gateway", GATEWAY, NET)
         self.evidence("T0-isolated-bridge", "PASS")
+        self.capture_process = subprocess.Popen(
+            ["sudo", "tcpdump", "-i", "any", "-s", "0", "-U", "-w",
+             str(self.out / "e2ap-sctp.pcap"), "sctp"],
+            stdout=subprocess.DEVNULL, stderr=(self.out / "tcpdump.log").open("w"),
+            start_new_session=True)
+        time.sleep(1)
+        if self.capture_process.poll() is not None:
+            raise CheckError("SCTP packet capture failed before RIC startup")
         # RIC built from the OAI 2026.w13-pinned FlexRIC submodule, which uses
         # the same E2AP and E2SM-KPM versions as the E2-enabled CU.
         self.ric_output = (self.out / "near-rt-ric.log").open("w", encoding="utf-8")
@@ -163,7 +172,12 @@ e2_agent = {{
             sctp = call("docker", "exec", NAMES["cu"], "cat", "/proc/net/sctp/assocs",
                         check=False, timeout=12)
             request_seen = bool(E2_SETUP_REQ.search(cu + "\n" + ric))
-            response_seen = bool(E2_SETUP_RSP.search(cu + "\n" + ric))
+            # A RIC-side accepted Request is NOT a confirmed Setup Response.
+            # Verify E2setupResponse on the real SCTP wire from RIC -> CU.
+            wire = call("tshark", "-r", str(self.out / "e2ap-sctp.pcap"),
+                        "-Y", f"e2ap.E2setupResponse_element && ip.src == {GATEWAY} && ip.dst == {CU_IP}",
+                        "-T", "fields", "-e", "frame.number", check=False, timeout=20)
+            response_seen = bool(wire.strip())
             ngap_seen = bool(NGAP_RSP.search(cu))
             e2_sctp = GATEWAY in sctp
             if request_seen and response_seen and ngap_seen and e2_sctp:
@@ -174,6 +188,11 @@ e2_agent = {{
                 return
             time.sleep(3)
         self.snapshot("T3-timeout")
+        self.out.joinpath("tshark-e2ap-summary.txt").write_text(
+            call("tshark", "-r", str(self.out / "e2ap-sctp.pcap"),
+                 "-Y", "sctp", "-T", "fields", "-e", "frame.number", "-e", "ip.src",
+                 "-e", "ip.dst", "-e", "sctp.ppid", "-e", "_ws.col.Info",
+                 check=False, timeout=30))
         raise CheckError(f"Timeout E2 or NGAP: request={request_seen} response={response_seen} "
                          f"ngap={ngap_seen} sctp={e2_sctp}\n" +
                          "CU tail:\n" + self.logs("cu")[-2500:] +
@@ -193,6 +212,12 @@ e2_agent = {{
                 self.ric.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self.ric.kill()
+        if self.capture_process is not None and self.capture_process.poll() is None:
+            self.capture_process.terminate()
+            try:
+                self.capture_process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                self.capture_process.kill()
         if self.ric_output is not None:
             self.ric_output.close()
 
