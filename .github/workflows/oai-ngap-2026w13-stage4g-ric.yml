@@ -94,6 +94,11 @@ jobs:
             -exec cp {} "$RUNNER_TEMP/flexric-service-models/" \;
           test -f "$RUNNER_TEMP/flexric-service-models/libkpm_sm.so"
           test -f "$RUNNER_TEMP/flexric-service-models/librc_sm.so"
+          # nearRT-RIC loads service models from this hardcoded directory.
+          sudo install -d -m 0755 /usr/local/lib/flexric
+          sudo install -m 0755 "$RUNNER_TEMP/flexric-service-models/libkpm_sm.so" /usr/local/lib/flexric/
+          sudo install -m 0755 "$RUNNER_TEMP/flexric-service-models/librc_sm.so" /usr/local/lib/flexric/
+          sudo ldconfig
           cp "$RUNNER_TEMP/flexric-service-models/"* "$EVIDENCE_DIR/" 
           find "$RUNNER_TEMP/flexric-service-models" -maxdepth 1 -type f \
             | sort > "$EVIDENCE_DIR/installed-flexric-sm-files.txt"
