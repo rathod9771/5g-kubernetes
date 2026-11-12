@@ -25,6 +25,20 @@ jobs:
           version: 'v3.21.0'
       - name: Install offline test dependencies
         run: python3 -m pip install -r ran-selector/requirements.txt
+      # Source-derived NGAP tests require the exact upstream OAI tag, patched
+      # only on the hosted runner. No source is copied from the HP cluster.
+      - name: Prepare pinned patched OAI fixture for source regression
+        if: hashFiles('experiments/oai-ngap-2026w13/ngap-retry-v2.patch') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --single-branch --branch 2026.w13 \
+            https://github.com/OPENAIRINTERFACE/openairinterface5g.git "$RUNNER_TEMP/oai-2026w13-fixture"
+          cd "$RUNNER_TEMP/oai-2026w13-fixture"
+          git apply --check "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
+          git apply "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
+          test "$(git diff --name-only)" = "openair3/NGAP/ngap_gNB.c"
+          echo "OAI_SOURCE_DIR=$RUNNER_TEMP/oai-2026w13-fixture" >> "$GITHUB_ENV"
       # Tests supply approved synthetic image inputs, validate complete chart
       # roots and immutable OSM packages, and assert missing images fail closed.
       # Bare rendering without those inputs is intentionally rejected.
