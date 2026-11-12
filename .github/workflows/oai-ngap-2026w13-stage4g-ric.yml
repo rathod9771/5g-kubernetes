@@ -131,13 +131,32 @@ jobs:
           fi
           docker pull "$CORE_IMAGE" | tee "$EVIDENCE_DIR/open5gs-pull.txt"
 
+      - name: Add GDB to disposable E2 CU image to capture SIGSEGV stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/e2-debug-context"
+          cat > "$RUNNER_TEMP/e2-debug-context/Dockerfile" <<'DOCKER'
+          FROM oai-ngap-2026w13-e2:experimental-4
+          USER root
+          RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gdb && rm -rf /var/lib/apt/lists/*
+          DOCKER
+          docker build -t oai-ngap-e2:debug-stage4g "$RUNNER_TEMP/e2-debug-context" \
+            > "$EVIDENCE_DIR/gdb-image-build.log" 2>&1 || {
+              tail -n 120 "$EVIDENCE_DIR/gdb-image-build.log"
+              exit 1
+            }
+          docker run --rm --network none --entrypoint /bin/sh oai-ngap-e2:debug-stage4g -ec \
+            'command -v gdb; test -x /opt/oai-gnb/bin/nr-softmodem'
+
       - name: Real E2 Setup against pinned FlexRIC and NGAP smoke
         shell: bash
         run: |
           set -euo pipefail
           python3 -m py_compile experiments/oai-ngap-2026w13/stage4/run_e2_setup.py
           python3 -u experiments/oai-ngap-2026w13/stage4/run_e2_setup.py \
-            --cu-image "$E2_CU_IMAGE" \
+            --cu-image "oai-ngap-e2:debug-stage4g" \
+            --capture-gdb \
             --ric-binary "$E2_CU_DIR/openair2/E2AP/flexric/build/examples/ric/nearRT-RIC" \
             --stage3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage3" \
             --out "$EVIDENCE_DIR" \
