@@ -118,6 +118,10 @@ class Trial:
             content = content.replace("172.29.73.", "172.29.74.")
             content = content.replace('mcc: "001"', 'mcc: "208"')
             content = content.replace('mnc: "01"', 'mnc: "93"')
+            if src == "amf":
+                content = content.replace('        - sst: 1', '        - sst: 1\n          sd: "010203"')
+                if 'sd: "010203"' not in content:
+                    raise TestFailure("AMF test slice differentiator not added")
             (configs / f"{src}.yaml").write_text(content)
 
         rendered = pathlib.Path(self.args.rendered)
