@@ -85,8 +85,71 @@ jobs:
           }
           CACHE="$SOURCE_DIR/cmake_targets/ran_build/build/CMakeCache.txt"
           test -f "$CACHE"
-          grep -E '^E2_AGENT:BOOL=ON$' "$CACHE" \
+          # CMake can store command-line -D flags as UNINITIALIZED rather than BOOL.
+          # Verify the actual enabled value, plus compiled E2 and gNB targets.
+          grep -E '^E2_AGENT:[^=]+=ON
+          test -x "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem"
+          sha256sum "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem" \
+            | tee "$EVIDENCE_DIR/e2-binary.sha256"
+          grep -E '^AVX(2|512):' "$CACHE" \
+            > "$EVIDENCE_DIR/e2-avx-cache.txt" || true
+          echo 'PASS: patched OAI 2026.w13 built with E2_AGENT=ON'
+
+      - name: Package isolated E2 experimental image, smoke dynamic dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/oai-e2-context"
+          cp "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem" \
+            "$RUNNER_TEMP/oai-e2-context/nr-softmodem"
+          docker build \
+            -f "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/Dockerfile.experimental" \
+            -t "$E2_IMAGE_TAG" "$RUNNER_TEMP/oai-e2-context" \
+            2>&1 | tee "$EVIDENCE_DIR/docker-build.log"
+          docker image inspect "$E2_IMAGE_TAG" > "$EVIDENCE_DIR/image-inspect.json"
+          docker run --rm --network none --entrypoint /bin/sh "$E2_IMAGE_TAG" -ec \
+            'test -x /opt/oai-gnb/bin/nr-softmodem; ldd /opt/oai-gnb/bin/nr-softmodem' \
+            | tee "$EVIDENCE_DIR/ldd.txt"
+          if grep -q 'not found' "$EVIDENCE_DIR/ldd.txt"; then
+            echo 'E2 image contains unresolved direct shared library dependencies' >&2
+            exit 1
+          fi
+          echo 'PASS: E2-enabled candidate image packages; FlexRIC xApp handshake still untested'
+
+      - name: Export E2 test image (not pushed or deployed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/e2-export"
+          docker save "$E2_IMAGE_TAG" | gzip -1 \
+            > "$RUNNER_TEMP/e2-export/oai-ngap-e2-candidate.tar.gz"
+          gzip -t "$RUNNER_TEMP/e2-export/oai-ngap-e2-candidate.tar.gz"
+          sha256sum "$RUNNER_TEMP/e2-export/oai-ngap-e2-candidate.tar.gz" \
+            > "$EVIDENCE_DIR/e2-archive.sha256"
+
+      - name: Upload compiler and verification evidence always
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-e2-build-evidence-${{ github.run_number }}
+          path: /tmp/oai-ngap-e2-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
+
+      - name: Upload E2-enabled experimental image only if all steps succeeded
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-e2-build-candidate-${{ github.run_number }}
+          path: ${{ runner.temp }}/e2-export/oai-ngap-e2-candidate.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+ "$CACHE" \
             | tee "$EVIDENCE_DIR/e2-cmake-cache.txt"
+          grep -q 'Built target e2_agent' "$EVIDENCE_DIR/e2-build.log"
+          grep -q 'Built target nr-softmodem' "$EVIDENCE_DIR/e2-build.log"
           test -x "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem"
           sha256sum "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem" \
             | tee "$EVIDENCE_DIR/e2-binary.sha256"
