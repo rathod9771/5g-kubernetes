@@ -1,0 +1,3 @@
+Stage 4G isolated FlexRIC E2 Setup trigger.
+Source: E2-enabled NGAP V2 CU image from successful run 43165182823; verified image artifact oai-ngap-e2-build-candidate-4.
+No registry push, no deployment, no HP cluster access.
