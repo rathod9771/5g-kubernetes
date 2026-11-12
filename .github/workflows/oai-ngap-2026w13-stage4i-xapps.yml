@@ -54,6 +54,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             cmake gcc g++ make swig libsctp-dev libpcre2-dev \
             libsqlite3-dev libssl-dev python3-dev pkg-config tcpdump tshark \
+            autoconf automake libtool libtool-bin bison flex \
             > "$EVIDENCE_DIR/host-prerequisites.log" 2>&1 || {
               tail -n 120 "$EVIDENCE_DIR/host-prerequisites.log"
               exit 1
@@ -69,6 +70,35 @@ jobs:
             | tee "$EVIDENCE_DIR/flexric-pinned-commit.txt"
           test "$(cat "$EVIDENCE_DIR/flexric-pinned-commit.txt")" = "340c36bc8385dc0b9f5d8b2d51d16ff288acee79"
 
+      - name: Build pinned ASN.1 compiler for FlexRIC NR RRC monitoring xApps
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/mouse07410/asn1c.git "$RUNNER_TEMP/flexric-asn1c"
+          git -C "$RUNNER_TEMP/flexric-asn1c" checkout 844f9caa
+          git -C "$RUNNER_TEMP/flexric-asn1c" rev-parse HEAD \
+            > "$EVIDENCE_DIR/asn1c-commit.txt"
+          cd "$RUNNER_TEMP/flexric-asn1c"
+          autoreconf -iv > "$EVIDENCE_DIR/asn1c-autoreconf.log" 2>&1 || {
+            tail -n 100 "$EVIDENCE_DIR/asn1c-autoreconf.log"
+            exit 1
+          }
+          ./configure --prefix=/opt/asn1c-flexric \
+            > "$EVIDENCE_DIR/asn1c-configure.log" 2>&1 || {
+              tail -n 100 "$EVIDENCE_DIR/asn1c-configure.log"
+              exit 1
+            }
+          make -j2 > "$EVIDENCE_DIR/asn1c-build.log" 2>&1 || {
+            tail -n 120 "$EVIDENCE_DIR/asn1c-build.log"
+            exit 1
+          }
+          sudo make install > "$EVIDENCE_DIR/asn1c-install.log" 2>&1 || {
+            tail -n 120 "$EVIDENCE_DIR/asn1c-install.log"
+            exit 1
+          }
+          /opt/asn1c-flexric/bin/asn1c -version \
+            | tee "$EVIDENCE_DIR/asn1c-version.txt"
+
       - name: Build pinned matching FlexRIC near-RT RIC and service models
         shell: bash
         run: |
@@ -76,6 +106,7 @@ jobs:
           SRC="$E2_CU_DIR/openair2/E2AP/flexric"
           cmake -S "$SRC" -B "$SRC/build" \
             -DE2AP_VERSION=E2AP_V2 -DKPM_VERSION=KPM_V2_03 \
+            -DASN1C_EXEC_PATH=/opt/asn1c-flexric/bin/asn1c \
             > "$EVIDENCE_DIR/flexric-configure.log" 2>&1 || {
               tail -n 170 "$EVIDENCE_DIR/flexric-configure.log"
               exit 1
