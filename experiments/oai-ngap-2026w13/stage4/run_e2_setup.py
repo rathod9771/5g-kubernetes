@@ -80,7 +80,18 @@ class Trial:
         for name in NAMES.values():
             x = call("docker", "inspect", "--format", "{{.State.Running}}", name, check=False)
             if x.strip() != "true":
-                raise CheckError(f"{name} not running")
+                state = call("docker", "inspect", "--format",
+                             "{{json .State}}", name, check=False, timeout=20)
+                returncode = "unknown"
+                try:
+                    returncode = str(json.loads(state).get("ExitCode", "unknown"))
+                except (ValueError, TypeError):
+                    pass
+                self.out.joinpath(f"{name}-exit-state.json").write_text(state)
+                self.out.joinpath(f"{name}-exit-logs.txt").write_text(
+                    call("docker", "logs", "--timestamps", name, check=False, timeout=20))
+                raise CheckError(f"{name} not running; exit code {returncode}; state={state}; "
+                                 f"logs tail={self.logs(next((k for k, v in NAMES.items() if v == name), 'cu'))[-5000:]}")
         if self.ric is None or self.ric.poll() is not None:
             raise CheckError(f"FlexRIC exited (rc={None if self.ric is None else self.ric.returncode}):\n" +
                              self.ric_log()[-5500:])
@@ -95,7 +106,7 @@ class Trial:
         # RIC built from the OAI 2026.w13-pinned FlexRIC submodule, which uses
         # the same E2AP and E2SM-KPM versions as the E2-enabled CU.
         self.ric_output = (self.out / "near-rt-ric.log").open("w", encoding="utf-8")
-        self.ric = subprocess.Popen([self.args.ric_binary, "-a", GATEWAY],
+        self.ric = subprocess.Popen(["stdbuf", "-oL", "-eL", self.args.ric_binary, "-a", GATEWAY],
                                     stdout=self.ric_output,
                                     stderr=subprocess.STDOUT, start_new_session=True)
         time.sleep(3)
