@@ -87,7 +87,10 @@ jobs:
           test -f "$CACHE"
           # CMake can store command-line -D flags as UNINITIALIZED rather than BOOL.
           # Verify the actual enabled value, plus compiled E2 and gNB targets.
-          grep -E '^E2_AGENT:[^=]+=ON
+          grep -E '^E2_AGENT:[^=]+=ON$' "$CACHE" \
+            | tee "$EVIDENCE_DIR/e2-cmake-cache.txt"
+          grep -q 'Built target e2_agent' "$EVIDENCE_DIR/e2-build.log"
+          grep -q 'Built target nr-softmodem' "$EVIDENCE_DIR/e2-build.log"
           test -x "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem"
           sha256sum "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem" \
             | tee "$EVIDENCE_DIR/e2-binary.sha256"
