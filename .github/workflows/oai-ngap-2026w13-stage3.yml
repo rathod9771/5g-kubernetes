@@ -27,7 +27,7 @@ jobs:
     env:
       IMAGE_TAG: oai-ngap-2026w13-v2:ci-2
       CORE_IMAGE: gradiant/open5gs:2.7.6
-      EVIDENCE_DIR: ${{ runner.temp }}/ngap-stage3-evidence
+      EVIDENCE_DIR: /tmp/ngap-stage3-evidence
     steps:
       - name: Check out Stage 3 experimental branch
         uses: actions/checkout@v4
