@@ -92,7 +92,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/openairinterface5g/cmake_targets"
-          ./build_oai --gNB -w SIMU --ninja --build-tool-opt "-j2" 2>&1 \
+          ./build_oai --gNB -w SIMU --build-tool-opt "-j2" 2>&1 \
             | tee "$RUNNER_TEMP/oai-ngap-ci-logs/build.log"
           test -f "$RUNNER_TEMP/openairinterface5g/cmake_targets/ran_build/build/nr-softmodem"
           sha256sum "$RUNNER_TEMP/openairinterface5g/cmake_targets/ran_build/build/nr-softmodem" \
