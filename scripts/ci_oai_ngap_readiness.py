@@ -25,6 +25,7 @@ KNOWN = [
     ("HCRAN_DUAL_F1_MACRO_UE_USER_PLANE", 43193089291, "oai-hcran-dual-f1-live-traffic-"),
     ("HCRAN_DUAL_F1_SMALL_UE_USER_PLANE", 43193891521, "oai-hcran-small-ue-userplane-"),
     ("HCRAN_TWO_UE_CONCURRENT_USER_PLANE", 43194751671, "oai-hcran-dual-ue-traffic-"),
+    ("HCRAN_ASSISTED_TWO_UE_RECOVERY_AFTER_FULL_5GC_RESTART", 43209876014, "oai-hcran-assisted-dual-ue-recovery-"),
     ("OSM_OFFLINE_SIMULATION", 43165822749, "oai-ngap-stage4h-offline-osm-"),
 ]
 # Verification of these gates requires real positive evidence, not inferred
