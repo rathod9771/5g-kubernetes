@@ -3,3 +3,5 @@ H-CRAN OAI Stage 4I isolated KPM and RC monitoring xApps trial; no live cluster.
 Run 2: correct experimental job branch guard. Check RIC + KPM/RC monitoring xApp execution.
 
 Run 3: build pinned mouse07410 ASN.1 compiler for NR RRC xApp code generation.
+
+Run 4: pinned ASN.1 pointer-based RRC database compatibility, strict expected source signatures.
