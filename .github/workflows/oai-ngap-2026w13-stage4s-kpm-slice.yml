@@ -1,4 +1,4 @@
-H-CRAN OAI Stage 4S KPM slice-matched real dual UE indications (NO DEPLOY)
+name: H-CRAN OAI Stage 4S KPM slice-matched real dual UE indications (NO DEPLOY)
 
 # Trigger deliberately gated by a separate marker, once the E2 image
 # has completed its own build; avoids running on a missing artifact.
