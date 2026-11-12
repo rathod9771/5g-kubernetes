@@ -28,7 +28,7 @@ def find(documents_, kind, name):
 
 
 def setting(conf, key, expected):
-    m = re.search(r"(?m)^\\s*" + re.escape(key) + r"\\s*=\\s*([^;,\\n]+)", conf)
+    m = re.search(r"(?m)^\s*" + re.escape(key) + r"\s*=\s*([^;,\n]+)", conf)
     require(m is not None, f"missing {key}")
     actual = m.group(1).strip().strip('"')
     require(actual == str(expected), f"{key}: expected {expected}, got {actual}")
