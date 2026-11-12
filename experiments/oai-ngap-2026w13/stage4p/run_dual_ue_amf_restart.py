@@ -19,7 +19,7 @@ sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/"stage4o"))
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/"stage4k"))
 import gtpu_wire
 from run_two_ues import DualUEProbe, SMALL_IP
-from run_ue_registration import IPS, name, sh
+from run_ue_registration import IPS, REG, PDU, name, sh
 
 NGAP=re.compile(r"Received NGSetupResponse from AMF",re.I)
 REDIAL=re.compile(r"Re-dial AMF|SCTP_STATE_UNREACHABLE|SCTP.*unreachable",re.I)
@@ -91,6 +91,36 @@ class Recovery(DualUEProbe):
         self.capture("NGAP-recovery-timeout")
         raise RuntimeError("No NEW NG Setup Response within 140 seconds")
 
+    def await_automatic_ue_service(self, baselines):
+        # CU NG Setup alone is not NAS/PDU recovery. Require fresh registration,
+        # a new PDU accept AND a real UE tunnel for both synthetic subscribers.
+        deadline=time.monotonic()+150
+        snapshots={}
+        while time.monotonic()<deadline:
+            self.demand(*ALIVE)
+            recovered=True
+            for label in ("ue","ue-small"):
+                output=self.logs(label)
+                regs=len(REG.findall(output))
+                pdus=len(PDU.findall(output))
+                tun=sh("docker","exec",name(label),"ip","-o","-4",
+                       "addr","show",check=False,timeout=20)
+                has_tun=("oaitun_ue1" in tun and "10.45." in tun)
+                snapshots[label]={"registration_accepts":regs,
+                                  "pdu_accepts":pdus,"has_tun":has_tun}
+                rb,pb=baselines[label]
+                if regs<=rb or pdus<=pb or not has_tun:
+                    recovered=False
+            if recovered:
+                self.record("T35A-both-UEs-fresh-NAS-PDU-and-TUN","PASS",detail=snapshots)
+                return
+            time.sleep(5)
+        self.capture("auto-recovery-timeout")
+        self.out.joinpath("automatic-ue-recovery-status.json").write_text(
+            json.dumps(snapshots,indent=2)+"\n")
+        raise RuntimeError("Neither NG Setup nor F1-C proves NAS/PDU; "
+                           "fresh dual-UE recovery NOT established after 150s: "+json.dumps(snapshots))
+
     def post_ping(self):
         streams={}
         procs={}
@@ -146,11 +176,15 @@ class Recovery(DualUEProbe):
                         ("dual-ue-traffic-evidence.json","before-fault-dual-ue.json")):
             f=self.out/old
             if f.exists():f.rename(self.out/new)
+        baselines={label:(len(REG.findall(self.logs(label))),
+                          len(PDU.findall(self.logs(label))))
+                   for label in ("ue","ue-small")}
         self.stop_amf()
         self.await_redial(redials)
         self.start_amf()
         self.await_ngap(before)
         self.sctp_check("T35-both-F1C-DUs-survived-AMF-restart")
+        self.await_automatic_ue_service(baselines)
         self.start_capture()
         try:
             self.post_ping()
