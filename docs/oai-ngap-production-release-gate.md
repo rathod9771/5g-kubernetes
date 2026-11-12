@@ -39,9 +39,8 @@ executed **inventory** workflow does not indicate a production-ready image.
   This does **not** reverse the failed automatic-recovery result in 4P.
 - AMF-only Stage 4P: [run 43218236191](https://github.com/rathod9771/5g-kubernetes/actions/runs/43218236191) and extended [run 43219517357](https://github.com/rathod9771/5g-kubernetes/actions/runs/43219517357) **FAILED automatic dual-UE service recovery**. The test stopped only the AMF process while SMF, UPF, NRF and other core functions stayed online. Patched CU re-dialed, obtained a new NG Setup Response, and both DU SCTP/F1-C associations survived. Nevertheless, the CU released both UE contexts/DRBs/GTP-U tunnels and sent RRC Release. Neither UE obtained a fresh Registration Accept, PDU Accept, or TUN interface within **150 seconds**. Do not confuse AMF signaling recovery with end-to-end UE service restoration.
 - AMF-only controlled reattachment [run 43220775040](https://github.com/rathod9771/5g-kubernetes/actions/runs/43220775040) **PASSED as an assisted workaround only**. After AMF/NGAP recovery, the experiment recreated both disposable OAI UE simulator processes; both registered again and established distinct PDU IPs (10.45.0.4 and 10.45.0.5), passed 6/6 UE-to-UPF pings each, and restored two-DU F1-U/NG-U G-PDU traffic. This is **not automatic recovery** and does **not** make the patch production-ready.
-- Stage 4R: separate experimental GitHub test of real E2SM-KPM indication
-  callbacks under two actively registered H-CRAN UEs; no PASS assumed
-  until runtime evidence exists.
+- Stage 4R [run 43211850821](https://github.com/rathod9771/5g-kubernetes/actions/runs/43211850821) initially **FAILED** to produce live KPM indications despite two active UEs and accepted subscriptions: xApp sent an SST-only condition interpreted by OAI as SST 1 / SD ffffff, not the actual SST 1 / SD 010203.
+- Stage 4S [run 43223244340](https://github.com/rathod9771/5g-kubernetes/actions/runs/43223244340) **PASSED**: the pinned FlexRIC test-only xApp's S-NSSAI predicate encoded the actual four-byte 01 01 02 03; E2 Setup and subscription passed with both UEs registered and transmitting data. The xApp recorded **30 real KPM indication callbacks**. The live CU agent, actual subscriber slice and production charts were not modified.
 - simulated (not live) OSM lifecycle/rollback test suite.
 
 All results above come from **isolated GitHub-hosted runners**. No HP cluster
@@ -53,11 +52,7 @@ credentials or production workload was involved.
    The earlier SIGSEGV was diagnosed in the legacy FlexRIC plugin loader,
    and the pinned matching KPM/RC agent libraries removed the crash.
    A real E2 Setup Request and Successful Outcome were seen on SCTP.
-2. **Still NO-GO:** KPM/RC monitoring xApps subscribed in Stage 4I.
-   At least three **real KPM indications with an attached UE** are pending
-   Stage 4M. A bounded E2SM-RC control acknowledgement and demonstrated
-   RAN effect are also missing. OAI 2026.w13's example RC control path is
-   proof-of-concept, not a validated live RAN action.
+2. **KPM indication gate PASSED in isolated Stage 4S** (30 actual callbacks under dual-UE data). **Still NO-GO:** no bounded E2SM-RC control acknowledgement and demonstrated RAN effect. The OAI 2026.w13 RC control example is proof-of-concept, not a validated live RAN action.
 3. **Stages 4K–4O PASSED**: a disposable Open5GS core authenticated
    two independent synthetic subscribers on separate H-CRAN DUs, established
    two PDU sessions, and carried concurrent F1-U and NG-U user-plane
@@ -84,7 +79,7 @@ credentials or production workload was involved.
 
 ## Environment boundary
 
-The H-CRAN OAI offline regression suite on experimental branch (run 43181622225) passed 1,047 tests with two skipped. It cannot substitute for E2 indications, demonstrable RC control, automatic session recovery under failures, sustained SLOs, or staging rollback.
+The H-CRAN OAI offline regression suite on experimental branch (run 43181622225) passed 1,047 tests with two skipped. It cannot substitute for demonstrable RC control, automatic session recovery under failures, sustained SLOs, or staging rollback.
 
 The current HP system is a busy live Kubernetes/OSM/Longhorn/Open5GS lab;
 no private kubeconfig, subscriber secret, staging namespace, OSM lifecycle
