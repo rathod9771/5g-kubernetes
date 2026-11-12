@@ -1,0 +1,1 @@
+Stage 4P retry: synthetic-only H-CRAN macro/small UE PDU sessions and Open5GS AMF/CU NSSAI SD aligned to 0xffffff per OAI 2026.w13 KPM monitoring documentation. Require >=3 real KPM indication callback records; no deploy, no HP cluster.
