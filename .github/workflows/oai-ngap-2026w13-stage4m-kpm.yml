@@ -1,0 +1,284 @@
+name: H-CRAN OAI Stage 4M real UE PDU plus E2SM-KPM indications (NO DEPLOY)
+
+# Trigger deliberately gated by a separate marker, once the E2 image
+# has completed its own build; avoids running on a missing artifact.
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-stage4m-ue-kpm
+    paths:
+      - experiments/oai-ngap-2026w13/stage4m/kpm-ue-trigger.txt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ngap-e2-live-kpm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2-with-real-ue:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4m-ue-kpm'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 48
+    env:
+      E2_CU_IMAGE: oai-ngap-2026w13-e2:experimental-4
+      CORE_IMAGE: gradiant/open5gs:2.7.6
+      EVIDENCE_DIR: /tmp/oai-hcran-stage4m-evidence
+      E2_CU_DIR: /tmp/oai-e2-reference
+      DEBIAN_FRONTEND: noninteractive
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Checkout E2 Setup experimental source (read-only)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download E2-agent-enabled patched CU candidate
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43165182823
+          name: oai-ngap-e2-build-candidate-4
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/oai-e2-stage4g-input
+
+      - name: Install isolated RIC and test build dependencies on GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake gcc g++ make swig libsctp-dev libpcre2-dev \
+            libsqlite3-dev libssl-dev python3-dev pkg-config tcpdump tshark \
+            autoconf automake libtool libtool-bin bison flex \
+            > "$EVIDENCE_DIR/host-prerequisites.log" 2>&1 || {
+              tail -n 120 "$EVIDENCE_DIR/host-prerequisites.log"
+              exit 1
+            }
+          if ! test -d /proc/net/sctp; then
+            sudo modprobe sctp || true
+          fi
+          test -d /proc/net/sctp
+          git clone --depth 1 --single-branch --branch 2026.w13 \
+            https://github.com/OPENAIRINTERFACE/openairinterface5g.git "$E2_CU_DIR"
+          git -C "$E2_CU_DIR" submodule update --init openair2/E2AP/flexric
+          git -C "$E2_CU_DIR/openair2/E2AP/flexric" rev-parse HEAD \
+            | tee "$EVIDENCE_DIR/flexric-pinned-commit.txt"
+          test "$(cat "$EVIDENCE_DIR/flexric-pinned-commit.txt")" = "340c36bc8385dc0b9f5d8b2d51d16ff288acee79"
+
+      - name: Build pinned ASN.1 compiler for FlexRIC NR RRC monitoring xApps
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/mouse07410/asn1c.git "$RUNNER_TEMP/flexric-asn1c"
+          git -C "$RUNNER_TEMP/flexric-asn1c" checkout 844f9caa
+          git -C "$RUNNER_TEMP/flexric-asn1c" rev-parse HEAD \
+            > "$EVIDENCE_DIR/asn1c-commit.txt"
+          cd "$RUNNER_TEMP/flexric-asn1c"
+          autoreconf -iv > "$EVIDENCE_DIR/asn1c-autoreconf.log" 2>&1 || {
+            tail -n 100 "$EVIDENCE_DIR/asn1c-autoreconf.log"
+            exit 1
+          }
+          ./configure --prefix=/opt/asn1c-flexric \
+            > "$EVIDENCE_DIR/asn1c-configure.log" 2>&1 || {
+              tail -n 100 "$EVIDENCE_DIR/asn1c-configure.log"
+              exit 1
+            }
+          make -j2 > "$EVIDENCE_DIR/asn1c-build.log" 2>&1 || {
+            tail -n 120 "$EVIDENCE_DIR/asn1c-build.log"
+            exit 1
+          }
+          sudo make install > "$EVIDENCE_DIR/asn1c-install.log" 2>&1 || {
+            tail -n 120 "$EVIDENCE_DIR/asn1c-install.log"
+            exit 1
+          }
+          /opt/asn1c-flexric/bin/asn1c -version \
+            | tee "$EVIDENCE_DIR/asn1c-version.txt"
+
+      - name: Build pinned matching FlexRIC near-RT RIC and service models
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$E2_CU_DIR/openair2/E2AP/flexric"
+          python3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage4/flexric_asn_compat.py" \
+            "$SRC/src/xApp/db/sqlite3/sqlite3_wrapper.c" \
+            | tee "$EVIDENCE_DIR/pinned-flexric-asn-compat.log"
+          git -C "$SRC" diff --check
+          git -C "$SRC" diff -- \
+            src/xApp/db/sqlite3/sqlite3_wrapper.c \
+            examples/xApp/c/monitor/RRC_MESSAGES/CMakeLists.txt \
+            examples/xApp/c/monitor/RRC_MESSAGES/nr-rrc-17.3.0.cmake \
+            examples/xApp/c/monitor/xapp_rc_moni.c \
+            > "$EVIDENCE_DIR/pinned-flexric-asn-compat.patch"
+          cmake -S "$SRC" -B "$SRC/build" \
+            -DE2AP_VERSION=E2AP_V2 -DKPM_VERSION=KPM_V2_03 \
+            -DASN1C_EXEC_PATH=/opt/asn1c-flexric/bin/asn1c \
+            > "$EVIDENCE_DIR/flexric-configure.log" 2>&1 || {
+              tail -n 170 "$EVIDENCE_DIR/flexric-configure.log"
+              exit 1
+            }
+          # Avoid unrelated xApp ASN.1 monitor examples requiring a separate
+          # customized asn1c compiler; build only the actual RIC + KPM/RC SM.
+          cmake --build "$SRC/build" --target nearRT-RIC kpm_sm rc_sm xapp_kpm_moni xapp_rc_moni --parallel 2 \
+            > "$EVIDENCE_DIR/flexric-build.log" 2>&1 || {
+              tail -n 170 "$EVIDENCE_DIR/flexric-build.log"
+              exit 1
+            }
+          test -x "$SRC/build/examples/ric/nearRT-RIC"
+          test -x "$SRC/build/examples/xApp/c/monitor/xapp_kpm_moni"
+          test -x "$SRC/build/examples/xApp/c/monitor/xapp_rc_moni"
+          mkdir -p "$RUNNER_TEMP/flexric-service-models"
+          find "$SRC/build" -type f \
+            \( -name 'libkpm_sm.so' -o -name 'librc_sm.so' \) \
+            -exec cp {} "$RUNNER_TEMP/flexric-service-models/" \;
+          test -f "$RUNNER_TEMP/flexric-service-models/libkpm_sm.so"
+          test -f "$RUNNER_TEMP/flexric-service-models/librc_sm.so"
+          # nearRT-RIC loads service models from this hardcoded directory.
+          sudo install -d -m 0755 /usr/local/lib/flexric
+          sudo install -m 0755 "$RUNNER_TEMP/flexric-service-models/libkpm_sm.so" /usr/local/lib/flexric/
+          sudo install -m 0755 "$RUNNER_TEMP/flexric-service-models/librc_sm.so" /usr/local/lib/flexric/
+          sudo ldconfig
+          # FlexRIC also requires its pinned configuration file at startup.
+          test -f "$SRC/flexric.conf"
+          sudo install -d -m 0755 /usr/local/etc/flexric
+          sudo install -m 0644 "$SRC/flexric.conf" /usr/local/etc/flexric/flexric.conf
+          cp "$SRC/flexric.conf" "$EVIDENCE_DIR/pinned-flexric.conf"
+          cp "$RUNNER_TEMP/flexric-service-models/"* "$EVIDENCE_DIR/" 
+          find "$RUNNER_TEMP/flexric-service-models" -maxdepth 1 -type f \
+            | sort > "$EVIDENCE_DIR/installed-flexric-sm-files.txt"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/flexric-service-models:$SRC/build/src/lib:/usr/local/lib" \
+            >> "$GITHUB_ENV"
+          sha256sum "$SRC/build/examples/ric/nearRT-RIC" \
+            > "$EVIDENCE_DIR/ric.sha256"
+
+      - name: Load E2 CU candidate and isolated Open5GS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/oai-e2-stage4g-input/oai-ngap-e2-candidate.tar.gz"
+          gzip -t "$ARCHIVE"
+          sha256sum "$ARCHIVE" > "$EVIDENCE_DIR/e2-cu-archive.sha256"
+          docker load -i "$ARCHIVE" \
+            | tee "$EVIDENCE_DIR/e2-cu-image-load.log"
+          docker image inspect "$E2_CU_IMAGE" > "$EVIDENCE_DIR/e2-cu-image-inspect.json"
+          docker run --rm --network none --entrypoint /bin/sh "$E2_CU_IMAGE" -ec \
+            'test -x /opt/oai-gnb/bin/nr-softmodem; ldd /opt/oai-gnb/bin/nr-softmodem; ls -lah /usr/local/lib/flexric/' \
+            | tee "$EVIDENCE_DIR/e2-cu-ldd-sm.txt"
+          if grep -q 'not found' "$EVIDENCE_DIR/e2-cu-ldd-sm.txt"; then
+            echo 'Missing runtime library dependency in E2 image' >&2
+            exit 1
+          fi
+          docker pull "$CORE_IMAGE" | tee "$EVIDENCE_DIR/open5gs-pull.txt"
+
+      - name: Repackage candidate CU with matching pinned FlexRIC KPM/RC service models
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/e2-plugins-context"
+          test -s "$RUNNER_TEMP/flexric-service-models/libkpm_sm.so"
+          test -s "$RUNNER_TEMP/flexric-service-models/librc_sm.so"
+          cp "$RUNNER_TEMP/flexric-service-models/libkpm_sm.so" "$RUNNER_TEMP/e2-plugins-context/"
+          cp "$RUNNER_TEMP/flexric-service-models/librc_sm.so" "$RUNNER_TEMP/e2-plugins-context/"
+          sha256sum "$RUNNER_TEMP/e2-plugins-context/"*.so \
+            | tee "$EVIDENCE_DIR/agent-service-model-sha256.txt"
+          cat > "$RUNNER_TEMP/e2-plugins-context/Dockerfile" <<'DOCKER'
+          FROM oai-ngap-2026w13-e2:experimental-4
+          USER root
+          # Replace all preexisting plugins, not just Slice: the matching
+          # FlexRIC pinned-submodule binaries must be used by RIC and E2 agent.
+          RUN mkdir -p /usr/local/lib/flexric && rm -f /usr/local/lib/flexric/lib*.so
+          COPY --chmod=0755 libkpm_sm.so librc_sm.so /usr/local/lib/flexric/
+          RUN test -s /usr/local/lib/flexric/libkpm_sm.so \
+              && test -s /usr/local/lib/flexric/librc_sm.so
+          DOCKER
+          docker build -t oai-ngap-e2:kpm-rc-only "$RUNNER_TEMP/e2-plugins-context" \
+            > "$EVIDENCE_DIR/plugin-filter-image-build.log" 2>&1 || {
+              tail -n 100 "$EVIDENCE_DIR/plugin-filter-image-build.log"
+              exit 1
+            }
+          docker run --rm --network none --entrypoint /bin/sh oai-ngap-e2:kpm-rc-only -ec \
+            'set -e; ls -l /usr/local/lib/flexric/; \
+             test "$(find /usr/local/lib/flexric -maxdepth 1 -name "lib*.so" | wc -l)" -eq 2; \
+             ldd /usr/local/lib/flexric/libkpm_sm.so; \
+             ldd /usr/local/lib/flexric/librc_sm.so' \
+            | tee "$EVIDENCE_DIR/pinned-agent-plugins.txt"
+          if grep -q 'not found' "$EVIDENCE_DIR/pinned-agent-plugins.txt"; then
+            echo "Pinned E2SM plugin has unresolved runtime dependencies" >&2
+            exit 1
+          fi
+
+      - name: Prepare full isolated synthetic 5GC and official DU/UE images
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! test -c /dev/net/tun; then
+            sudo modprobe tun || true
+          fi
+          test -c /dev/net/tun || { echo 'TUN unavailable on runner'; exit 1; }
+          sudo apt-get install -y --no-install-recommends iproute2 iputils-ping \
+            > "$EVIDENCE_DIR/userplane-host-prerequisites.log" 2>&1
+          python3 -m venv "$RUNNER_TEMP/hcran-stage4m-venv"
+          "$RUNNER_TEMP/hcran-stage4m-venv/bin/python" -m pip install \
+            --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
+          docker pull gradiant/open5gs:2.7.6
+          docker pull mongo:6.0
+          docker pull oaisoftwarealliance/oai-gnb:2026.w25
+          docker pull oaisoftwarealliance/oai-nr-ue:2026.w13
+          docker image inspect oaisoftwarealliance/oai-nr-ue:2026.w13 \
+            > "$EVIDENCE_DIR/oai-nr-ue-image-inspect.json"
+
+      - name: Offline render of canonical H-CRAN CU and macro DU
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Render canonical H-CRAN CU/macro config (no install)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hcran-stage4m-render"
+          helm template hcran-oai-cu helm/cran-oai/cu \
+            -f helm/cran-oai/cu/values-hcran.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/hcran-stage4m-render/cu.yaml"
+          helm template hcran-oai-macro helm/cran-oai/du \
+            -f helm/cran-oai/du/values-hcran-macro.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/hcran-stage4m-render/macro.yaml"
+
+      - name: Real patched OAI CU, macro DU, UE/PDU and >=3 KPM indications
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/hcran-stage4m-venv/bin/python" -u \
+            experiments/oai-ngap-2026w13/stage4m/run_live_kpm.py \
+            --output "$EVIDENCE_DIR" \
+            --rendered "$RUNNER_TEMP/hcran-stage4m-render" \
+            --cu-image "oai-ngap-e2:kpm-rc-only" \
+            --du-image "oaisoftwarealliance/oai-gnb:2026.w25" \
+            --ue-image "oaisoftwarealliance/oai-nr-ue:2026.w13" \
+            --ric-binary "$E2_CU_DIR/openair2/E2AP/flexric/build/examples/ric/nearRT-RIC" \
+            --kpm-binary "$E2_CU_DIR/openair2/E2AP/flexric/build/examples/xApp/c/monitor/xapp_kpm_moni" \
+            2>&1 | tee "$EVIDENCE_DIR/runtime-console.txt"
+          echo 'KPM success requires real subscription and >=3 indications after real UE/PDU setup'
+
+      - name: Purge synthetic UE private configuration before upload
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$EVIDENCE_DIR/PRIVATE-REMOVE-BEFORE-UPLOAD"
+
+      - name: Always upload pinned E2 RIC test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-hcran-live-ue-kpm-${{ github.run_number }}
+          path: /tmp/oai-hcran-stage4m-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
