@@ -104,6 +104,12 @@ jobs:
         run: |
           set -euo pipefail
           SRC="$E2_CU_DIR/openair2/E2AP/flexric"
+          python3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage4/flexric_asn_compat.py" \
+            "$SRC/src/xApp/db/sqlite3/sqlite3_wrapper.c" \
+            | tee "$EVIDENCE_DIR/pinned-flexric-asn-compat.log"
+          git -C "$SRC" diff --check
+          git -C "$SRC" diff -- src/xApp/db/sqlite3/sqlite3_wrapper.c \
+            > "$EVIDENCE_DIR/pinned-flexric-asn-compat.patch"
           cmake -S "$SRC" -B "$SRC/build" \
             -DE2AP_VERSION=E2AP_V2 -DKPM_VERSION=KPM_V2_03 \
             -DASN1C_EXEC_PATH=/opt/asn1c-flexric/bin/asn1c \
