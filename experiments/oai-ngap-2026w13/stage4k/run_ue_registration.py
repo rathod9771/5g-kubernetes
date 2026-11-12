@@ -194,6 +194,16 @@ class Probe:
         du=du.replace("POD_IP",IPS["macro"]).replace("CU_IP",IPS["cu"])
         if "gNB_DU_ID = 100;" not in du:raise RuntimeError("wrong H-CRAN macro DU identity")
         if IPS["core"] not in cu or IPS["cu"] not in du:raise RuntimeError("IP substitution failed")
+        # Experimental Stage 4P only: connect the E2-capable patched CU to
+        # the FlexRIC process on this runner's isolated Docker gateway.
+        ric_ip=getattr(self.opts,"ric_ip",None)
+        if ric_ip:
+            if ric_ip!="172.29.76.1" or "e2_agent" in cu:
+                raise RuntimeError("unexpected E2 RIC address or duplicate e2_agent configuration")
+            cu+='''\ne2_agent = {
+  near_ric_ip_addr = "172.29.76.1";
+  sm_dir = "/usr/local/lib/flexric/";
+};\n'''
         (self.priv/"cu.conf").write_text(cu)
         (self.priv/"macro.conf").write_text(du)
         for item,image,conf,extra in (
