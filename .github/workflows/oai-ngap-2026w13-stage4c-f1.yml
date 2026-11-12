@@ -1,0 +1,124 @@
+name: Experimental OAI NGAP Stage 4C single small DU F1 (NO DEPLOY)
+
+# Only an isolated hosted-runner Docker bridge: real CU+one DU and Open5GS,
+# with no UE and no Kubernetes, OSM, registry write, or HP SSH.
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-stage4c-f1-small
+    paths:
+      - .github/workflows/oai-ngap-2026w13-stage4c-f1.yml
+      - experiments/oai-ngap-2026w13/stage4/run_one_du_f1.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: oai-ngap-stage4c-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  single-du-f1:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4c-f1-small'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      CU_IMAGE: oai-ngap-2026w13-v2:stage3-portable-4
+      DU_IMAGE: oaisoftwarealliance/oai-gnb:2026.w25
+      CORE_IMAGE: gradiant/open5gs:2.7.6
+    steps:
+      - name: Check out isolated experimental branch (read-only)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Helm for offline H-CRAN render
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Prepare local YAML parser
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/stage4c-python"
+          "$RUNNER_TEMP/stage4c-python/bin/python" -m pip install \
+            --disable-pip-version-check PyYAML==6.0.2
+
+      - name: Render canonical H-CRAN CU and small DU (no Kubernetes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage4c-render" "$RUNNER_TEMP/stage4c-evidence"
+          helm template hcran-oai-cu helm/cran-oai/cu \
+            -f helm/cran-oai/cu/values-hcran.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage4c-render/cu.yaml"
+          helm template hcran-oai-small helm/cran-oai/du \
+            -f helm/cran-oai/du/values-hcran-small.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage4c-render/small.yaml"
+          cp "$RUNNER_TEMP/stage4c-render/"*.yaml "$RUNNER_TEMP/stage4c-evidence/"
+
+      - name: Download successful Stage 3 CPU-compatible CU (no recompilation)
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43157479388
+          name: oai-ngap-stage3-portable-4
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/stage4c-cu-input
+
+      - name: Pull isolated DU and Open5GS test images, load validated CU
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/stage4c-cu-input/oai-ngap-stage3-portable.tar.gz"
+          gzip -t "$ARCHIVE"
+          sha256sum "$ARCHIVE" > "$RUNNER_TEMP/stage4c-evidence/cu-archive.sha256"
+          docker load -i "$ARCHIVE" \
+            | tee "$RUNNER_TEMP/stage4c-evidence/cu-image-load.log"
+          docker pull "$DU_IMAGE" \
+            | tee "$RUNNER_TEMP/stage4c-evidence/du-image-pull.log"
+          docker pull "$CORE_IMAGE" \
+            | tee "$RUNNER_TEMP/stage4c-evidence/core-image-pull.log"
+          docker image inspect "$CU_IMAGE" > "$RUNNER_TEMP/stage4c-evidence/cu-image.json"
+          docker image inspect "$DU_IMAGE" > "$RUNNER_TEMP/stage4c-evidence/du-image.json"
+          docker image inspect "$CORE_IMAGE" > "$RUNNER_TEMP/stage4c-evidence/core-image.json"
+          docker run --rm --network none --entrypoint /bin/sh "$DU_IMAGE" -ec \
+            'test -x /opt/oai-gnb/bin/nr-softmodem; ldd /opt/oai-gnb/bin/nr-softmodem' \
+            | tee "$RUNNER_TEMP/stage4c-evidence/du-ldd.txt"
+          if grep -q 'not found' "$RUNNER_TEMP/stage4c-evidence/du-ldd.txt"; then
+            echo 'DU image is missing runtime libraries' >&2
+            exit 1
+          fi
+          if ! test -d /proc/net/sctp; then
+            sudo modprobe sctp || true
+          fi
+          test -d /proc/net/sctp
+
+      - name: Real F1 Setup on isolated CU + one small DU
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/stage4c-python/bin/python" -u \
+            experiments/oai-ngap-2026w13/stage4/run_one_du_f1.py \
+            --rendered "$RUNNER_TEMP/stage4c-render" \
+            --stage3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage3" \
+            --cu-image "$CU_IMAGE" --du-image "$DU_IMAGE" \
+            --out "$RUNNER_TEMP/stage4c-evidence" \
+            2>&1 | tee "$RUNNER_TEMP/stage4c-evidence/console.txt"
+
+      - name: Always upload F1-C attempt logs and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-stage4c-one-du-f1-${{ github.run_number }}
+          path: ${{ runner.temp }}/stage4c-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
