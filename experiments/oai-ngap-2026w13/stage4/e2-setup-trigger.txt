@@ -11,3 +11,5 @@ Retry 4: restore pinned FlexRIC runtime configuration to /usr/local/etc/flexric/
 Retry 5 diagnostic: preserve real CU exit code and Docker State after initial NG Setup; line-buffer FlexRIC.
 
 Retry 6: GDB-enabled disposable E2 image and captured crash backtrace; isolate SIGSEGV origin.
+
+Retry 7: GDB-proven libslice_sm null-callback segfault; isolate only KPM + RC E2 agent plugins in disposable CI image.
