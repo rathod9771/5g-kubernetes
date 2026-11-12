@@ -7,6 +7,7 @@ user's IMSI or security keys. Fail closed if real runtime proof is absent.
 import argparse, datetime, json, pathlib, re, shutil, subprocess, sys, time, traceback
 import yaml
 from pymongo import MongoClient
+from gtpu_wire import analyze
 
 NETWORK="oai-ngap-stage4k"
 IPS={"mongo":"172.29.76.9","core":"172.29.76.10",
@@ -58,6 +59,8 @@ class Probe:
         self.priv.mkdir(mode=0o700,exist_ok=True)
         self.events=[]
         self.start=time.monotonic()
+        self.pcap_process=None
+        self.pcap_stderr=None
     def record(self,label,status,**more):
         record={"time":datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "seconds":round(time.monotonic()-self.start,1),
@@ -156,6 +159,10 @@ class Probe:
         launcher=self.priv/"start-core.sh"
         launcher.write_text("#!/bin/bash\nset -euo pipefail\n"
           "mkdir -p /tmp/stage4k-log\n"
+          "command -v ip >/dev/null || { echo iproute2-unavailable >&2; exit 1; }\n"
+          "ip tuntap add dev ogstun mode tun\n"
+          "ip addr add 10.45.0.1/16 dev ogstun\n"
+          "ip link set ogstun up\n"
           "for svc in nrfd scpd ausfd udmd udrd nssfd pcfd bsfd smfd upfd amfd; do\n"
           "  case \"$svc\" in\n"
           "    nrfd) nf=nrf;; scpd) nf=scp;; ausfd) nf=ausf;; udmd) nf=udm;;\n"
@@ -202,7 +209,46 @@ class Probe:
         self.wait_log("T6-F1SetupRequest","cu",F1REQ,90,("core","cu","macro"))
         self.wait_log("T7-F1SetupResponse","cu",F1RESP,60,("core","cu","macro"))
         self.capture("before-UE")
+    def start_capture(self):
+        self.pcap_stderr=(self.out/"tcpdump.stderr.txt").open("w")
+        self.pcap_process=subprocess.Popen(
+            ["sudo","tcpdump","-i","any","-nn","-U","-s","0",
+             "-w",str(self.out/"gtpu.pcap"),"udp port 2152 or udp port 38472"],
+            stdout=subprocess.DEVNULL,stderr=self.pcap_stderr)
+        time.sleep(2)
+        if self.pcap_process.poll() is not None:
+            raise RuntimeError("GTP-U capture failed to start")
+    def stop_capture(self):
+        if self.pcap_process is not None and self.pcap_process.poll() is None:
+            self.pcap_process.terminate()
+            try:self.pcap_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:self.pcap_process.kill()
+        if self.pcap_stderr is not None:
+            self.pcap_stderr.close()
+            self.pcap_stderr=None
+    def verify_gtpu(self):
+        # The Open5GS local TUN gateway is an internal Docker test address,
+        # never a WAN endpoint. A ping result is independent of GTP-U counts.
+        reply=sh("docker","exec",name("ue"),"/bin/sh","-c",
+                 "ping -I oaitun_ue1 -c 4 -W 2 10.45.0.1",
+                 check=False,timeout=40)
+        (self.out/"UE-internal-ping.txt").write_text(reply[-4000:])
+        time.sleep(2)
+        self.stop_capture()
+        packet_evidence=analyze(self.out/"gtpu.pcap")
+        (self.out/"GTPU-GPDU-evidence.json").write_text(
+            json.dumps(packet_evidence,indent=2)+"\n")
+        counts=packet_evidence["G_PDU_counts"]
+        if not all(counts.values()):
+            raise RuntimeError("Not all F1-U/NG-U directions carry G-PDU packets: "+str(counts))
+        self.record("T12-F1U-NGU-real-GPDU-4directions","PASS",
+                    packet_counts=counts,teids=packet_evidence["TEIDs"])
+        if " 0% packet loss" not in reply and "0% packet loss" not in reply:
+            raise RuntimeError("No confirmed loss-free UE-to-UPF-gateway ICMP echo replies")
+        self.record("T13-real-UE-UPF-internal-ICMP","PASS",ping_target="10.45.0.1")
     def ue(self):
+        if getattr(self.opts,"verify_gtpu",False):
+            self.start_capture()
         ueconf=self.priv/"ue.conf"
         ueconf.write_text('uicc0 = {\n'
           '  imsi = "'+SIM["imsi"]+'";\n'
@@ -231,9 +277,15 @@ class Probe:
         if not tun.strip():raise RuntimeError("PDU Accept but no UE tunnel interface")
         (self.out/"UE-PDU-interface.txt").write_text(tun)
         self.record("T11-UE-assigned-IP","PASS")
+        if getattr(self.opts,"verify_gtpu",False):
+            self.verify_gtpu()
         self.capture("final")
-        self.record("STAGE4K","PASS",scope="one-DU real NAS/PDU; user-plane and second DU not tested")
+        self.record("STAGE4L" if self.opts.verify_gtpu else "STAGE4K",
+                    "PASS",
+                    scope="one-DU real NAS/PDU and F1-U/NG-U G-PDU" if self.opts.verify_gtpu
+                    else "one-DU real NAS/PDU; user-plane and second DU not tested")
     def cleanup(self):
+        self.stop_capture()
         try:self.capture("cleanup")
         except Exception as e:self.record("capture-cleanup","WARN",error=str(e)[:500])
         for item in IPS:sh("docker","rm","-f",name(item),check=False)
@@ -258,6 +310,7 @@ def main():
     parser=argparse.ArgumentParser()
     for arg in ("rendered","output","cu-image","du-image","ue-image"):
         parser.add_argument("--"+arg,required=True)
+    parser.add_argument("--verify-gtpu",action="store_true")
     return Probe(parser.parse_args()).run()
 if __name__=="__main__":
     sys.exit(main())
