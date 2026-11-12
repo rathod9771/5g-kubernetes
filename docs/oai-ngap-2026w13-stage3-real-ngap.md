@@ -1,9 +1,15 @@
 # Stage 3: Real SCTP/NGAP recovery against Open5GS (isolated GitHub runner)
 
 **Inputs:** GitHub Actions artifact `oai-ngap-2026w13-v2-image-2` from run
-`43151733655`; image contains the experimental V2-patched OAI gNB built
-against OAI `2026.w13`. Third-party Open5GS image
-`gradiant/open5gs:2.7.6` is downloaded **on the runner only**.
+`43151733655`, serving as the verified base runtime image. The first hosted
+runtime attempt revealed `SIGILL` (illegal instruction) before the CU reached
+NGAP. To control CPU-instruction compatibility, the workflow **rebuilds the
+same patched OAI `2026.w13` source on its own hosted runner** with
+`--noavx2 --noavx512`, and overlays the rebuilt executable onto the isolated
+experimental container. A successful run will therefore produce a **new
+portable test image**, not certify the original Stage 2 binary as portable.
+Third-party Open5GS image `gradiant/open5gs:2.7.6` is downloaded **on the
+runner only**.
 
 **Networking:** dedicated disposable Docker bridge `172.29.73.0/24`:
 OAI CU `172.29.73.20`, AMF `172.29.73.10`, NRF `172.29.73.11`.
