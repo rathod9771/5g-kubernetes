@@ -51,11 +51,12 @@ class LiveE2Probe(DualUEProbe):
 
     def bootstrap(self):
         super().bootstrap()
-        bridge=sh("docker","network","inspect", "-f",
-                  "{{(index .IPAM.Config 0).Gateway}}", "oai-ngap-stage4k",
-                  timeout=20).strip()
-        if bridge!=RIC_IP:
-            raise RuntimeError("E2 RIC gateway mismatch: "+bridge)
+        inspected=json.loads(sh("docker","network","inspect","oai-ngap-stage4k",
+                                timeout=20))
+        gateways=[cfg.get("Gateway","") for cfg in
+                  inspected[0].get("IPAM",{}).get("Config",[])]
+        if RIC_IP not in gateways:
+            raise RuntimeError("E2 RIC gateway mismatch: "+repr(gateways))
         self.ric_fp=(self.out/"pinned-nearRT-RIC.log").open("w",encoding="utf-8")
         self.e2err=(self.out/"sctp-tcpdump.stderr.txt").open("w",encoding="utf-8")
         self.e2cap=subprocess.Popen(
