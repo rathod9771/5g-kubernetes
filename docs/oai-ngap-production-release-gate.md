@@ -37,6 +37,8 @@ executed **inventory** workflow does not indicate a production-ready image.
   Establishment Accept, had distinct PDU IPs, exchanged 6/6 loss-free
   ICMP replies, and restored bidirectional F1-U/NG-U G-PDUs with two TEIDs.
   This does **not** reverse the failed automatic-recovery result in 4P.
+- AMF-only Stage 4P: [run 43218236191](https://github.com/rathod9771/5g-kubernetes/actions/runs/43218236191) and extended [run 43219517357](https://github.com/rathod9771/5g-kubernetes/actions/runs/43219517357) **FAILED automatic dual-UE service recovery**. The test stopped only the AMF process while SMF, UPF, NRF and other core functions stayed online. Patched CU re-dialed, obtained a new NG Setup Response, and both DU SCTP/F1-C associations survived. Nevertheless, the CU released both UE contexts/DRBs/GTP-U tunnels and sent RRC Release. Neither UE obtained a fresh Registration Accept, PDU Accept, or TUN interface within **150 seconds**. Do not confuse AMF signaling recovery with end-to-end UE service restoration.
+- AMF-only controlled reattachment [run 43220775040](https://github.com/rathod9771/5g-kubernetes/actions/runs/43220775040) **PASSED as an assisted workaround only**. After AMF/NGAP recovery, the experiment recreated both disposable OAI UE simulator processes; both registered again and established distinct PDU IPs (10.45.0.4 and 10.45.0.5), passed 6/6 UE-to-UPF pings each, and restored two-DU F1-U/NG-U G-PDU traffic. This is **not automatic recovery** and does **not** make the patch production-ready.
 - Stage 4R: separate experimental GitHub test of real E2SM-KPM indication
   callbacks under two actively registered H-CRAN UEs; no PASS assumed
   until runtime evidence exists.
@@ -63,7 +65,12 @@ credentials or production workload was involved.
 4. **Stage 4L PASSED**: pcap shows F1-U G-PDUs (12 UL/8 DL) and NG-U
    G-PDUs (12 UL/8 DL), with 4/4 responses from the isolated UPF gateway.
    These are short observations, not production throughput/loss testing.
-5. **Stage 4P failed automatic dual-UE data recovery after a full 5GC restart**.
+5. **Both full-5GC and AMF-only outages failed automatic dual-UE data recovery**.
+   AMF-only evidence runs 43218236191 and 43219517357, with 150s
+   re-registration/PDU grace; controlled AMF-only UE simulator reattach
+   passed separately as run 43220775040. This is a recovery workaround,
+   not autonomous fault restoration.
+   Previous full-5GC finding: **Stage 4P failed automatic dual-UE data recovery after a full 5GC restart**.
    RRC and bearer contexts were released. A fresh UE registration/PDU
    recovery is required; distinguish an *assisted UE restart* from autonomous
    resumption. AMF-only outage tests with active UE service and >=3 cycles
