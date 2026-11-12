@@ -23,7 +23,7 @@ RESEARCHER = ('scripts/telecom/', 'tests/test_telecom_', 'config/telecom/', 'doc
               '.github/workflows/telecom')
 # Original-orchestrator files that are not OSM package inputs (dashboard, installer,
 # lifecycle, monitoring, docs, tests, workflows). Anything else is unknown.
-NON_PACKAGE_PREFIXES = ('docs/', 'tests/', 'ran-selector/', 'scripts/assurance/', 'scripts/installer/',
+NON_PACKAGE_PREFIXES = ('experiments/oai-ngap-2026w13/', 'docs/', 'tests/', 'ran-selector/', 'scripts/assurance/', 'scripts/installer/',
                         'scripts/experiments/', 'monitoring/', 'layer3-autonomous/', 'deploy/', 'usrp-gnb/',
                         '.github/')
 NON_PACKAGE_FILES = frozenset((
