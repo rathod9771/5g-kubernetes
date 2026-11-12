@@ -98,11 +98,13 @@ class Runner:
             raise Stage3Error(
                 f"{name} exited unexpectedly. Last 10000 log chars:\n{self.logs(name)[-10000:]}")
 
-    def await_cu(self, phase, predicate, timeout):
+    def await_cu(self, phase, predicate, timeout, require_amf=False):
         end = time.monotonic() + timeout
         last = ""
         while time.monotonic() < end:
             self.must_live(CU)
+            if require_amf:
+                self.must_live(AMF)
             last = self.logs(CU)
             if predicate(last):
                 self.note(phase, "PASS",
@@ -172,11 +174,11 @@ class Runner:
         self.await_cu("T2-two-redials-with-AMF-offline",
                       lambda s: count(RETRY_PATTERN, s) >= 2
                       and count(FAIL_PATTERN, s) >= 2, 120)
-        self.note("T3-enable-Open5GS-AMF", "PASS")
         self.enable_amf()
+        self.note("T3-enable-Open5GS-AMF", "PASS")
         self.await_cu("T4-first-real-NGSetupResponse",
                       lambda s: count(SETUP_PATTERN, s) >= 1
-                      and count(REQUEST_PATTERN, s) >= 1, 135)
+                      and count(REQUEST_PATTERN, s) >= 1, 135, require_amf=True)
         self.must_live(AMF)
         self.must_live(NRF)
 
@@ -196,7 +198,7 @@ class Runner:
 
         self.enable_amf()
         self.await_cu("T6-real-NGSetupResponse-after-AMF-restart",
-                      lambda s: count(SETUP_PATTERN, s) > base_rsp, 135)
+                      lambda s: count(SETUP_PATTERN, s) > base_rsp, 135, require_amf=True)
         self.must_live(CU)
         self.must_live(AMF)
         self.must_live(NRF)

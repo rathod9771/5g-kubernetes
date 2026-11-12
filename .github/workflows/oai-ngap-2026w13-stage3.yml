@@ -130,6 +130,26 @@ jobs:
             exit 1
           fi
 
+      - name: Preserve portable image before runtime test (for retry without recompiling)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/oai-stage3-portable-build"
+          docker save "$PORTABLE_IMAGE_TAG" | gzip -1 \
+            > "$RUNNER_TEMP/oai-stage3-portable-build/portable-test-image.tar.gz"
+          gzip -t "$RUNNER_TEMP/oai-stage3-portable-build/portable-test-image.tar.gz"
+          sha256sum "$RUNNER_TEMP/oai-stage3-portable-build/portable-test-image.tar.gz" \
+            > "$EVIDENCE_DIR/portable-pretest-archive.sha256"
+
+      - name: Upload portable image before functional test (still experimental)
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-stage3-pretest-image-${{ github.run_number }}
+          path: ${{ runner.temp }}/oai-stage3-portable-build/portable-test-image.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
       - name: Real NGAP reconnect test with AMF start/restart (no UE)
         shell: bash
         run: |

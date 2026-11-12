@@ -39,3 +39,6 @@ amf:
     full: CI-Stage3-Open5GS
     short: CI
   amf_name: ci-stage3-amf
+  time:
+    t3512:
+      value: 540
