@@ -29,7 +29,7 @@ jobs:
       GIT_TERMINAL_PROMPT: '0'
       CMAKE_BUILD_PARALLEL_LEVEL: '2'
       MAKEFLAGS: -j2
-      OAI_SOURCE_DIR: ${{ runner.temp }}/oai-ngap-src
+      OAI_SOURCE_DIR: /tmp/oai-ngap-src
       IMAGE_TAG: oai-ngap-2026w13-v2:ci-${{ github.run_number }}
     steps:
       - name: Check out experimental branch
