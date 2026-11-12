@@ -71,9 +71,23 @@ class Probe:
     def logs(self,item):
         return sh("docker","logs",name(item),check=False,timeout=20)
     def core_logs(self):
-        return sh("docker","exec",name("core"),"/bin/sh","-c",
-                  "for f in /tmp/stage4k-log/*.log; do echo ==$f; tail -n 100 \"$f\"; done",
-                  check=False,timeout=20)
+        # docker exec does not work after an NF exits and shuts down the
+        # supervisor. docker cp still works on the stopped container.
+        if self.live("core"):
+            return sh("docker","exec",name("core"),"/bin/sh","-c",
+                      "for f in /tmp/stage4k-log/*.log; do echo ==$f; tail -n 100 \"$f\"; done",
+                      check=False,timeout=20)
+        dump=self.priv/"nf-logs-after-exit"
+        dump.mkdir(parents=True,exist_ok=True)
+        copy=sh("docker","cp",name("core")+":/tmp/stage4k-log/.",
+                str(dump),check=False,timeout=30)
+        logs=[]
+        for f in sorted(dump.glob("*.log")):
+            logs.append("==== "+f.name+" ====")
+            logs.append(f.read_text(errors="replace")[-7000:])
+        status=sh("docker","inspect","--format","{{json .State}}",
+                  name("core"),check=False,timeout=20)
+        return "Core exit state: "+status+"\n"+copy+"\n"+"\n".join(logs)
     def demand(self,*items):
         for item in items:
             if not self.live(item):
