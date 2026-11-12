@@ -17,3 +17,5 @@ Retry 7: GDB-proven libslice_sm null-callback segfault; isolate only KPM + RC E2
 Retry 8: replace all base E2 agent plugins with exact matching KPM/RC shared libraries from pinned FlexRIC source.
 
 Retry 9: capture real SCTP wire and require decoded E2setupResponse from RIC IP, rather than relying on absent logging.
+
+Retry 10: proven E2AP successfulOutcome procedure 1 over SCTP PPID 0; verify bounded APER envelope from captured peer packets.
