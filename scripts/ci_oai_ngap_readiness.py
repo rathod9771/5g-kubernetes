@@ -18,12 +18,13 @@ KNOWN = [
     ("THREE_AMF_FAULT_CYCLES", 43163998295, "oai-ngap-stage4e-dual-du-f1-"),
     ("E2_ENABLED_CU_BUILD", 43165182823, "oai-ngap-e2-build-candidate-"),
     ("FLEXRIC_E2_SETUP", 43173532767, "oai-ngap-stage4g-flexric-e2-"),
+    ("KPM_RC_MONITOR_XAPP_SUBSCRIPTIONS", 43183404348, "oai-ngap-stage4i-xapp-monitor-"),
     ("OSM_OFFLINE_SIMULATION", 43165822749, "oai-ngap-stage4h-offline-osm-"),
 ]
 # Verification of these gates requires real positive evidence, not inferred
 # success from compile, static renders, F1-C setup, or a synthetic test.
 NOT_VERIFIED = {
-    "KPM_SUBSCRIPTION_AND_INDICATIONS": "No live E2SM-KPM xApp subscription plus >=3 indications",
+    "KPM_INDICATIONS_WITH_ATTACHED_UE": "KPM and RC monitor subscriptions accepted in Stage 4I, but no attached UE and no received KPM indications",
     "RC_CONTROL_ACKNOWLEDGEMENT": "No live E2SM-RC control and outcome evidence",
     "UE_NAS_REGISTRATION": "No controlled NR UE Registration Accept with redacted pseudonymous identifiers",
     "PDU_SESSION": "No PDU Session Establishment Accept and assigned PDU IP",
