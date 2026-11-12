@@ -1,0 +1,139 @@
+name: Experimental OAI NGAP Stage 4G real FlexRIC E2 Setup (NO DEPLOY)
+
+# Trigger deliberately gated by a separate marker, once the E2 image
+# has completed its own build; avoids running on a missing artifact.
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-stage4g-e2-ric
+    paths:
+      - experiments/oai-ngap-2026w13/stage4/e2-setup-trigger.txt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ngap-e2-real-flexric-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-e2-setup:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4g-e2-ric'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      E2_CU_IMAGE: oai-ngap-2026w13-e2:experimental-4
+      CORE_IMAGE: gradiant/open5gs:2.7.6
+      EVIDENCE_DIR: /tmp/oai-ngap-stage4g-e2-evidence
+      E2_CU_DIR: /tmp/oai-e2-reference
+      DEBIAN_FRONTEND: noninteractive
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Checkout E2 Setup experimental source (read-only)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download E2-agent-enabled patched CU candidate
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43165182823
+          name: oai-ngap-e2-build-candidate-4
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/oai-e2-stage4g-input
+
+      - name: Install isolated RIC and test build dependencies on GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake gcc g++ make swig libsctp-dev libpcre2-dev \
+            libsqlite3-dev libssl-dev python3-dev pkg-config \
+            > "$EVIDENCE_DIR/host-prerequisites.log" 2>&1 || {
+              tail -n 120 "$EVIDENCE_DIR/host-prerequisites.log"
+              exit 1
+            }
+          if ! test -d /proc/net/sctp; then
+            sudo modprobe sctp || true
+          fi
+          test -d /proc/net/sctp
+          git clone --depth 1 --single-branch --branch 2026.w13 \
+            https://github.com/OPENAIRINTERFACE/openairinterface5g.git "$E2_CU_DIR"
+          git -C "$E2_CU_DIR" submodule update --init openair2/E2AP/flexric
+          git -C "$E2_CU_DIR/openair2/E2AP/flexric" rev-parse HEAD \
+            | tee "$EVIDENCE_DIR/flexric-pinned-commit.txt"
+          test "$(cat "$EVIDENCE_DIR/flexric-pinned-commit.txt")" = "340c36bc8385dc0b9f5d8b2d51d16ff288acee79"
+
+      - name: Build pinned matching FlexRIC near-RT RIC and service models
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$E2_CU_DIR/openair2/E2AP/flexric"
+          cmake -S "$SRC" -B "$SRC/build" \
+            -DE2AP_VERSION=E2AP_V2 -DKPM_VERSION=KPM_V2_03 \
+            > "$EVIDENCE_DIR/flexric-configure.log" 2>&1 || {
+              tail -n 170 "$EVIDENCE_DIR/flexric-configure.log"
+              exit 1
+            }
+          cmake --build "$SRC/build" --parallel 2 \
+            > "$EVIDENCE_DIR/flexric-build.log" 2>&1 || {
+              tail -n 170 "$EVIDENCE_DIR/flexric-build.log"
+              exit 1
+            }
+          sudo cmake --install "$SRC/build" \
+            > "$EVIDENCE_DIR/flexric-install.log" 2>&1 || {
+              tail -n 100 "$EVIDENCE_DIR/flexric-install.log"
+              exit 1
+            }
+          sudo ldconfig
+          test -x "$SRC/build/examples/ric/nearRT-RIC"
+          find /usr/local/lib/flexric -maxdepth 1 -type f \
+            | sort > "$EVIDENCE_DIR/installed-flexric-sm-files.txt"
+          sha256sum "$SRC/build/examples/ric/nearRT-RIC" \
+            > "$EVIDENCE_DIR/ric.sha256"
+
+      - name: Load E2 CU candidate and isolated Open5GS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/oai-e2-stage4g-input/oai-ngap-e2-candidate.tar.gz"
+          gzip -t "$ARCHIVE"
+          sha256sum "$ARCHIVE" > "$EVIDENCE_DIR/e2-cu-archive.sha256"
+          docker load -i "$ARCHIVE" \
+            | tee "$EVIDENCE_DIR/e2-cu-image-load.log"
+          docker image inspect "$E2_CU_IMAGE" > "$EVIDENCE_DIR/e2-cu-image-inspect.json"
+          docker run --rm --network none --entrypoint /bin/sh "$E2_CU_IMAGE" -ec \
+            'test -x /opt/oai-gnb/bin/nr-softmodem; ldd /opt/oai-gnb/bin/nr-softmodem; ls -lah /usr/local/lib/flexric/' \
+            | tee "$EVIDENCE_DIR/e2-cu-ldd-sm.txt"
+          if grep -q 'not found' "$EVIDENCE_DIR/e2-cu-ldd-sm.txt"; then
+            echo 'Missing runtime library dependency in E2 image' >&2
+            exit 1
+          fi
+          docker pull "$CORE_IMAGE" | tee "$EVIDENCE_DIR/open5gs-pull.txt"
+
+      - name: Real E2 Setup against pinned FlexRIC and NGAP smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile experiments/oai-ngap-2026w13/stage4/run_e2_setup.py
+          python3 -u experiments/oai-ngap-2026w13/stage4/run_e2_setup.py \
+            --cu-image "$E2_CU_IMAGE" \
+            --ric-binary "$E2_CU_DIR/openair2/E2AP/flexric/build/examples/ric/nearRT-RIC" \
+            --stage3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage3" \
+            --out "$EVIDENCE_DIR" \
+            2>&1 | tee "$EVIDENCE_DIR/runtime-console.txt"
+
+      - name: Always upload pinned E2 RIC test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-stage4g-flexric-e2-${{ github.run_number }}
+          path: /tmp/oai-ngap-stage4g-e2-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
