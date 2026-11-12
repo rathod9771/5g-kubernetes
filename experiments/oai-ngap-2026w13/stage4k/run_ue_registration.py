@@ -171,7 +171,7 @@ class Probe:
           "  command -v open5gs-$svc >/dev/null\n"
           "  open5gs-$svc -c /tmp/stage4k-conf/$nf.yaml > /tmp/stage4k-log/$nf.log 2>&1 &\n"
           "  sleep .5\n"
-          "done\nwait -n\n")
+          "done\nwait\n")
         launcher.chmod(0o700)
         self.record("T2-5GC-config-generated","PASS")
         sh("docker","run","-d","--name",name("core"),
