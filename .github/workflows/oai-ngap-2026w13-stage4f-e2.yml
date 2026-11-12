@@ -1,0 +1,147 @@
+name: Experimental OAI NGAP Stage 4F E2-enabled compile (NO DEPLOY)
+
+# Builds patched E2_AGENT=ON OAI CU on disposable GitHub runner; this is
+# NOT a FlexRIC/KPM/RC live integration test or production image.
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-stage4f-e2-build
+    paths:
+      - .github/workflows/oai-ngap-2026w13-stage4f-e2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oai-ngap-stage4f-e2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-e2:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4f-e2-build'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SOURCE_DIR: /tmp/oai-ngap-e2-src
+      EVIDENCE_DIR: /tmp/oai-ngap-e2-evidence
+      DEBIAN_FRONTEND: noninteractive
+      MAKEFLAGS: -j2
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      GIT_TERMINAL_PROMPT: '0'
+      E2_IMAGE_TAG: oai-ngap-2026w13-e2:experimental-${{ github.run_number }}
+    steps:
+      - name: Checkout experimental sources (read only)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Fetch OAI 2026.w13 and apply same NGAP V2 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          git clone --depth 1 --single-branch --branch 2026.w13 \
+            https://github.com/OPENAIRINTERFACE/openairinterface5g.git "$SOURCE_DIR"
+          cd "$SOURCE_DIR"
+          test "$(git describe --tags --exact-match)" = "2026.w13"
+          git rev-parse HEAD | tee "$EVIDENCE_DIR/upstream-commit.txt"
+          sha256sum "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch" \
+            | tee "$EVIDENCE_DIR/v2-patch.sha256"
+          git apply --check "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
+          git apply "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
+          git diff --check
+          test "$(git diff --name-only)" = "openair3/NGAP/ngap_gNB.c"
+          git diff --binary > "$EVIDENCE_DIR/applied-source.patch"
+
+      - name: Compile mocked-source NGAP C regression (same modified source)
+        shell: bash
+        env:
+          OAI_SOURCE_DIR: /tmp/oai-ngap-e2-src
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests/test_oai_ngap_2026w13_source_regression.py \
+            2>&1 | tee "$EVIDENCE_DIR/ngap-source-regression.log"
+
+      - name: Install OAI build prerequisites only on hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR/cmake_targets"
+          ./build_oai -I -w SIMU > "$EVIDENCE_DIR/install.log" 2>&1 || {
+            tail -n 130 "$EVIDENCE_DIR/install.log"
+            exit 1
+          }
+
+      - name: Compile patched E2_AGENT=ON gNB for portable CPU baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR/cmake_targets"
+          ./build_oai --gNB -w SIMU --build-e2 --noavx512 --noavx2 \
+            --build-tool-opt "-j2" > "$EVIDENCE_DIR/e2-build.log" 2>&1 || {
+            tail -n 170 "$EVIDENCE_DIR/e2-build.log"
+            exit 1
+          }
+          CACHE="$SOURCE_DIR/cmake_targets/ran_build/build/CMakeCache.txt"
+          test -f "$CACHE"
+          grep -E '^E2_AGENT:BOOL=ON$' "$CACHE" \
+            | tee "$EVIDENCE_DIR/e2-cmake-cache.txt"
+          test -x "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem"
+          sha256sum "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem" \
+            | tee "$EVIDENCE_DIR/e2-binary.sha256"
+          grep -E '^AVX(2|512):' "$CACHE" \
+            > "$EVIDENCE_DIR/e2-avx-cache.txt" || true
+          echo 'PASS: patched OAI 2026.w13 built with E2_AGENT=ON'
+
+      - name: Package isolated E2 experimental image, smoke dynamic dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/oai-e2-context"
+          cp "$SOURCE_DIR/cmake_targets/ran_build/build/nr-softmodem" \
+            "$RUNNER_TEMP/oai-e2-context/nr-softmodem"
+          docker build \
+            -f "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/Dockerfile.experimental" \
+            -t "$E2_IMAGE_TAG" "$RUNNER_TEMP/oai-e2-context" \
+            2>&1 | tee "$EVIDENCE_DIR/docker-build.log"
+          docker image inspect "$E2_IMAGE_TAG" > "$EVIDENCE_DIR/image-inspect.json"
+          docker run --rm --network none --entrypoint /bin/sh "$E2_IMAGE_TAG" -ec \
+            'test -x /opt/oai-gnb/bin/nr-softmodem; ldd /opt/oai-gnb/bin/nr-softmodem' \
+            | tee "$EVIDENCE_DIR/ldd.txt"
+          if grep -q 'not found' "$EVIDENCE_DIR/ldd.txt"; then
+            echo 'E2 image contains unresolved direct shared library dependencies' >&2
+            exit 1
+          fi
+          echo 'PASS: E2-enabled candidate image packages; FlexRIC xApp handshake still untested'
+
+      - name: Export E2 test image (not pushed or deployed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/e2-export"
+          docker save "$E2_IMAGE_TAG" | gzip -1 \
+            > "$RUNNER_TEMP/e2-export/oai-ngap-e2-candidate.tar.gz"
+          gzip -t "$RUNNER_TEMP/e2-export/oai-ngap-e2-candidate.tar.gz"
+          sha256sum "$RUNNER_TEMP/e2-export/oai-ngap-e2-candidate.tar.gz" \
+            > "$EVIDENCE_DIR/e2-archive.sha256"
+
+      - name: Upload compiler and verification evidence always
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-e2-build-evidence-${{ github.run_number }}
+          path: /tmp/oai-ngap-e2-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
+
+      - name: Upload E2-enabled experimental image only if all steps succeeded
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-e2-build-candidate-${{ github.run_number }}
+          path: ${{ runner.temp }}/e2-export/oai-ngap-e2-candidate.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
