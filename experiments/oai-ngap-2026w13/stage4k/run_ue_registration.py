@@ -192,6 +192,10 @@ class Probe:
         du=configmap(render/"macro.yaml","ConfigMap","hcran-oai-macro-config")["data"]["gnb.conf"]
         cu=cu.replace("POD_IP",IPS["cu"]).replace("AMF_IP",IPS["core"])
         du=du.replace("POD_IP",IPS["macro"]).replace("CU_IP",IPS["cu"])
+        if getattr(self.opts,"ric_ip",None):
+            if "e2_agent" in cu:
+                raise RuntimeError("unexpected duplicate E2 agent configuration")
+            cu += '\ne2_agent = {\n  near_ric_ip_addr = "'+self.opts.ric_ip+'";\n  sm_dir = "/usr/local/lib/flexric/";\n};\n'
         if "gNB_DU_ID = 100;" not in du:raise RuntimeError("wrong H-CRAN macro DU identity")
         if IPS["core"] not in cu or IPS["cu"] not in du:raise RuntimeError("IP substitution failed")
         (self.priv/"cu.conf").write_text(cu)
@@ -311,6 +315,7 @@ def main():
     for arg in ("rendered","output","cu-image","du-image","ue-image"):
         parser.add_argument("--"+arg,required=True)
     parser.add_argument("--verify-gtpu",action="store_true")
+    parser.add_argument("--ric-ip",default=None)
     return Probe(parser.parse_args()).run()
 if __name__=="__main__":
     sys.exit(main())
