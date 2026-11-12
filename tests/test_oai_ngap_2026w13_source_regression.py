@@ -23,13 +23,17 @@ def load(path):
 def extract_function(source, symbol):
     # Extract a full, real upstream C function; do not recreate its control flow
     # in the test. Function bodies used here contain no braces inside strings.
-    match = re.search(r"\b" + re.escape(symbol) + r"\s*\(", source)
-    if not match:
-        raise AssertionError("Missing upstream symbol: " + symbol)
+    match = None
+    opening = -1
+    for candidate in re.finditer(r"\b" + re.escape(symbol) + r"\s*\(", source):
+        candidate_open = source.find("{", candidate.end())
+        candidate_semi = source.find(";", candidate.end())
+        if candidate_open >= 0 and (candidate_semi < 0 or candidate_open < candidate_semi):
+            match, opening = candidate, candidate_open
+            break
+    if match is None:
+        raise AssertionError("Missing upstream function definition: " + symbol)
     start = source.rfind("\n", 0, match.start()) + 1
-    opening = source.find("{", match.end())
-    if opening < 0:
-        raise AssertionError("Missing opening brace: " + symbol)
     depth = 0
     for i in range(opening, len(source)):
         if source[i] == "{":
@@ -53,9 +57,11 @@ SHIM = r"""
 #define TASK_GNB_APP 3
 #define TASK_RRC_GNB 4
 #define SCTP_NEW_ASSOCIATION_REQ 5
-#define NGAP_REGISTER_GNB_CNF 6
-#define NGAP_DEREGISTERED_GNB_IND 7
-#define NGAP_UE_CONTEXT_RELEASE_COMMAND 8
+enum {
+  NGAP_REGISTER_GNB_CNF = 6,
+  NGAP_DEREGISTERED_GNB_IND = 7,
+  NGAP_UE_CONTEXT_RELEASE_COMMAND = 8
+};
 #define NGAP_PORT_NUMBER 38412
 #define NGAP_SCTP_PPID 60
 #define NGAP 0
