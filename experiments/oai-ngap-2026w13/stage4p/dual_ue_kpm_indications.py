@@ -25,6 +25,7 @@ sys.path[:0] = [str(ROOT/"stage4o"), str(ROOT/"stage4k"), str(ROOT/"stage4")]
 from run_two_ues import DualUEProbe
 from run_ue_registration import IPS, name, sh
 from e2ap_wire_evidence import parse_e2_setup_sctp
+from kpm_wire import kpm_ric_indications
 
 RIC_IP="172.29.76.1"
 CU_IP=IPS["cu"]
@@ -34,7 +35,7 @@ REQ="E2 Setup Request"
 INDICATION_LINE=re.compile(
     r"(?:\bRIC[_ -]?INDICATION(?:[_ -]?rx|[_ -]?received|[_ -]?message)?\b"
     r"|\bKPM[_ -]?indication(?:[_ -]?received)?\b"
-    r"|\bKPM[_ -]?callback\b)",re.I)
+    r"|\bKPM[_ -]?callback\b|\bKPM ind_msg latency\b)",re.I)
 
 class DualUEKPM(DualUEProbe):
     def __init__(self,options):
@@ -42,6 +43,7 @@ class DualUEKPM(DualUEProbe):
         self.ric=None
         self.ric_out=None
         self.sctp_capture=None
+        self.kpm_capture=None
 
     def ran(self):
         rendered=pathlib.Path(self.opts.rendered)
@@ -120,6 +122,17 @@ class DualUEKPM(DualUEProbe):
         env=os.environ.copy()
         env["DB_DIR"]=str(self.out)
         env["XAPP_DURATION"]="20"
+        kpm_pcap=self.out/"kpm-e2ap-sctp.pcap"
+        kpm_err=(self.out/"kpm-tcpdump.log").open("w",encoding="utf-8")
+        self.kpm_capture=subprocess.Popen(
+            ["sudo","tcpdump","-i","any","-s","0","-U","-w",
+             str(kpm_pcap),"sctp"],
+            stdout=subprocess.DEVNULL,stderr=kpm_err,
+            start_new_session=True)
+        time.sleep(1)
+        if self.kpm_capture.poll() is not None:
+            kpm_err.close()
+            raise RuntimeError("KPM SCTP capture could not start")
         with out.open("w",encoding="utf-8") as sink:
             xapp=subprocess.Popen(
                 ["stdbuf","-oL","-eL",self.opts.kpm_xapp,"-a",RIC_IP],
@@ -149,6 +162,11 @@ class DualUEKPM(DualUEProbe):
                     xapp.terminate()
                     try:xapp.wait(timeout=7)
                     except subprocess.TimeoutExpired:xapp.kill()
+                if self.kpm_capture is not None and self.kpm_capture.poll() is None:
+                    self.kpm_capture.terminate()
+                    try:self.kpm_capture.wait(timeout=8)
+                    except subprocess.TimeoutExpired:self.kpm_capture.kill()
+                kpm_err.close()
         log=out.read_text(encoding="utf-8",errors="replace")
         if xapp.returncode!=0:
             raise RuntimeError("KPM xApp failed: "+log[-2000:])
@@ -156,18 +174,22 @@ class DualUEKPM(DualUEProbe):
             raise RuntimeError("KPM RIC Subscription Response absent")
         self.record("T34-KPM-subscription-with-two-active-UEs","PASS")
         lines=[line for line in log.splitlines() if INDICATION_LINE.search(line)]
+        wire=kpm_ric_indications(kpm_pcap,CU_IP,RIC_IP)
         result={"stage":"4P","scope":"real dual-UE H-CRAN KPM",
                 "xapp_exit":xapp.returncode,
                 "actual_indication_lines":lines[:100],
                 "observed_indication_count":len(lines),
+                "wire_e2ap_ricindication_count":wire["e2ap_ricindication_data_chunks"],
+                "wire":wire,
                 "two_active_ues":True,
                 "production_approval":"NO_GO",
                 "notes":"Indication callbacks required; subscription alone is not proof"}
         (self.out/"kpm-evidence.json").write_text(json.dumps(result,indent=2)+"\n")
-        if len(lines)<3:
+        if len(lines)<3 or wire["e2ap_ricindication_data_chunks"]<3:
             raise RuntimeError(
-                f"KPM actual indications not demonstrated: {len(lines)} < 3, "
-                "despite xApp subscription; see redacted KPM log")
+                f"KPM actual indications insufficient: app_callbacks={len(lines)}, "
+                f"wire_RICindication={wire['e2ap_ricindication_data_chunks']}; "
+                "both must be >=3, subscription alone does not count")
         self.record("T35-KPM-indication-callbacks-with-two-UEs","PASS",
                     count=len(lines))
         self.capture("after-real-KPM")
@@ -176,6 +198,10 @@ class DualUEKPM(DualUEProbe):
 
     def cleanup(self):
         self.stop_sctp_capture()
+        if self.kpm_capture and self.kpm_capture.poll() is None:
+            self.kpm_capture.terminate()
+            try:self.kpm_capture.wait(timeout=7)
+            except subprocess.TimeoutExpired:self.kpm_capture.kill()
         if self.ric and self.ric.poll() is None:
             self.ric.terminate()
             try:self.ric.wait(timeout=6)
