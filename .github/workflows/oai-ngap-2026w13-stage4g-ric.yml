@@ -80,20 +80,25 @@ jobs:
               tail -n 170 "$EVIDENCE_DIR/flexric-configure.log"
               exit 1
             }
-          cmake --build "$SRC/build" --parallel 2 \
+          # Avoid unrelated xApp ASN.1 monitor examples requiring a separate
+          # customized asn1c compiler; build only the actual RIC + KPM/RC SM.
+          cmake --build "$SRC/build" --target nearRT-RIC kpm_sm rc_sm --parallel 2 \
             > "$EVIDENCE_DIR/flexric-build.log" 2>&1 || {
               tail -n 170 "$EVIDENCE_DIR/flexric-build.log"
               exit 1
             }
-          sudo cmake --install "$SRC/build" \
-            > "$EVIDENCE_DIR/flexric-install.log" 2>&1 || {
-              tail -n 100 "$EVIDENCE_DIR/flexric-install.log"
-              exit 1
-            }
-          sudo ldconfig
           test -x "$SRC/build/examples/ric/nearRT-RIC"
-          find /usr/local/lib/flexric -maxdepth 1 -type f \
+          mkdir -p "$RUNNER_TEMP/flexric-service-models"
+          find "$SRC/build" -type f \
+            \( -name 'libkpm_sm.so' -o -name 'librc_sm.so' \) \
+            -exec cp {} "$RUNNER_TEMP/flexric-service-models/" \;
+          test -f "$RUNNER_TEMP/flexric-service-models/libkpm_sm.so"
+          test -f "$RUNNER_TEMP/flexric-service-models/librc_sm.so"
+          cp "$RUNNER_TEMP/flexric-service-models/"* "$EVIDENCE_DIR/" 
+          find "$RUNNER_TEMP/flexric-service-models" -maxdepth 1 -type f \
             | sort > "$EVIDENCE_DIR/installed-flexric-sm-files.txt"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/flexric-service-models:$SRC/build/src/lib:/usr/local/lib" \
+            >> "$GITHUB_ENV"
           sha256sum "$SRC/build/examples/ric/nearRT-RIC" \
             > "$EVIDENCE_DIR/ric.sha256"
 
