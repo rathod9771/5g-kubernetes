@@ -30,6 +30,16 @@ executed **inventory** workflow does not indicate a production-ready image.
   but the CU issued RRC Release, removed both DRBs/GTP-U tunnels,
   and neither UE's data service recovered without intervention.
   This is NOT an AMF-only restart test.
+- Stage 4Q ([run 43209876014](https://github.com/rathod9771/5g-kubernetes/actions/runs/43209876014)):
+  **PASS only for assisted recovery**: after the same full core outage and
+  36.08-second NGAP reconnection, both simulated UE processes were explicitly
+  restarted. Both obtained new Registration Accept and PDU Session
+  Establishment Accept, had distinct PDU IPs, exchanged 6/6 loss-free
+  ICMP replies, and restored bidirectional F1-U/NG-U G-PDUs with two TEIDs.
+  This does **not** reverse the failed automatic-recovery result in 4P.
+- Stage 4R: separate experimental GitHub test of real E2SM-KPM indication
+  callbacks under two actively registered H-CRAN UEs; no PASS assumed
+  until runtime evidence exists.
 - simulated (not live) OSM lifecycle/rollback test suite.
 
 All results above come from **isolated GitHub-hosted runners**. No HP cluster
