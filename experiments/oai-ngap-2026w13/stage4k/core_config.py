@@ -62,7 +62,8 @@ def main():
         if f.stem=="amf":
             amf=obj["amf"]
             must(amf.get("ngap",{}).get("server"),"AMF NGAP server missing")
-            amf["ngap"]["server"][0]["address"]=a.core_ip
+            # Existing container has duplicate 38412 SCTP bind candidates.
+            amf["ngap"]["server"]=[{"address":a.core_ip}]
             plmn={"mcc":"208","mnc":"93"}
             amf["guami"]=[{"plmn_id":plmn,
                            "amf_id":{"region":2,"set":1}}]
@@ -73,6 +74,9 @@ def main():
             amf["amf_name"]="stage4k-hcran-ci"
         if f.stem=="smf":
             smf=obj["smf"]
+            # FreeDiameter is legacy EPC policy. For this 5GC-only trial,
+            # disable it instead of resolving a non-existent PCRF hostname.
+            smf.pop("freeDiameter",None)
             session=smf.get("session",[])
             must(bool(session),"SMF session address pool missing")
             for item in session:
