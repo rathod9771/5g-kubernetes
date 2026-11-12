@@ -19,3 +19,5 @@ Retry 8: replace all base E2 agent plugins with exact matching KPM/RC shared lib
 Retry 9: capture real SCTP wire and require decoded E2setupResponse from RIC IP, rather than relying on absent logging.
 
 Retry 10: proven E2AP successfulOutcome procedure 1 over SCTP PPID 0; verify bounded APER envelope from captured peer packets.
+
+H-CRAN-only: export the already-verified KPM/RC matched CU image on re-run for isolated xApp testing.
