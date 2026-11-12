@@ -19,6 +19,7 @@ KNOWN = [
     ("E2_ENABLED_CU_BUILD", 43165182823, "oai-ngap-e2-build-candidate-"),
     ("FLEXRIC_E2_SETUP", 43173532767, "oai-ngap-stage4g-flexric-e2-"),
     ("KPM_RC_MONITOR_XAPP_SUBSCRIPTIONS", 43183404348, "oai-ngap-stage4i-xapp-monitor-"),
+    ("KPM_REAL_UE_INDICATIONS_SST1_SD010203", 43223244340, "oai-hcran-E2-real-KPM-dual-UE-slice-matched-"),
     ("HCRAN_DUAL_UE_STATIC_PREREQUISITES", 43186660857, "oai-hcran-ue-prerequisites-"),
     ("HCRAN_REAL_UE_NAS_PDU_ONE_DU", 43190810958, "oai-hcran-real-ue-pdu-"),
     ("HCRAN_REAL_F1U_NGU_GTPU_ONE_DU", 43192172149, "oai-hcran-real-gtpu-"),
@@ -32,7 +33,6 @@ KNOWN = [
 # Verification of these gates requires real positive evidence, not inferred
 # success from compile, static renders, F1-C setup, or a synthetic test.
 NOT_VERIFIED = {
-    "KPM_INDICATIONS_WITH_ATTACHED_UE": "Stage 4I accepted E2 KPM/RC subscriptions without UEs; E2 indications under Stage 4O dual-UE load are being tested separately",
     "RC_CONTROL_ACKNOWLEDGEMENT": "No live E2SM-RC control and outcome evidence",
     "MULTI_CYCLE_NAS_PDU_SERVICE_SLO": "Only single bounded isolated UE attach and PDU proved; no repeated registrations or sustained service SLO",
     "DATA_PLANE_THROUGHPUT_AND_LOSS": "Four loss-free internal ICMP probes are positive connectivity proof, not a throughput or loss-under-load benchmark",
@@ -93,7 +93,7 @@ def main():
         "production_deployment_authorized": False,
         "verified_ci_and_offline_evidence": observed,
         "outstanding_runtime_and_release_gates": missing,
-        "rule": "Two concurrent UE/PDU/F1-U/NG-U isolated functional smoke tests passed, but live KPM indications, effective RC control, repeated fault-with-service, sustained staging SLO, actual OSM rollback and release approval remain required.",
+        "rule": "Two concurrent UE/PDU/F1-U/NG-U isolated functional smoke tests passed, and real KPM indications have passed, but effective RC control, automatic UE service recovery after AMF loss, sustained staging SLO, actual OSM rollback and release approval remain required.",
     }
     dst.write_text(json.dumps(report, indent=2) + "\n")
     print(f"Production decision: NO_GO. CI historical evidence: "
