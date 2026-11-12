@@ -17,12 +17,12 @@ KNOWN = [
     ("DUAL_DU_F1C", 43162695243, "oai-ngap-stage4d"),
     ("THREE_AMF_FAULT_CYCLES", 43163998295, "oai-ngap-stage4e-dual-du-f1-"),
     ("E2_ENABLED_CU_BUILD", 43165182823, "oai-ngap-e2-build-candidate-"),
+    ("FLEXRIC_E2_SETUP", 43173532767, "oai-ngap-stage4g-flexric-e2-"),
     ("OSM_OFFLINE_SIMULATION", 43165822749, "oai-ngap-stage4h-offline-osm-"),
 ]
 # Verification of these gates requires real positive evidence, not inferred
 # success from compile, static renders, F1-C setup, or a synthetic test.
 NOT_VERIFIED = {
-    "FLEXRIC_E2_SETUP": "E2AP Request + Response and established SCTP peer not yet confirmed",
     "KPM_SUBSCRIPTION_AND_INDICATIONS": "No live E2SM-KPM xApp subscription plus >=3 indications",
     "RC_CONTROL_ACKNOWLEDGEMENT": "No live E2SM-RC control and outcome evidence",
     "UE_NAS_REGISTRATION": "No controlled NR UE Registration Accept with redacted pseudonymous identifiers",
