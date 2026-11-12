@@ -1,0 +1,10 @@
+# Experimental overlay. Base is the same public OAI release already used in the lab.
+# Built and tested only by the GitHub Actions isolated hosted runner.
+ARG OAI_RUNTIME_BASE=oaisoftwarealliance/oai-gnb:2026.w13
+FROM ${OAI_RUNTIME_BASE}
+
+LABEL org.opencontainers.image.title="OAI gNB 2026.w13 NGAP V2 review candidate" \
+      org.opencontainers.image.description="Unverified NGAP SCTP recovery experiment; NOT production-ready" \
+      org.opencontainers.image.version="2026.w13-ngap-v2-experimental"
+
+COPY --chmod=0755 nr-softmodem /opt/oai-gnb/bin/nr-softmodem
