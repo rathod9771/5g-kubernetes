@@ -51,6 +51,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/hcran-stage4k-evidence" "$RUNNER_TEMP/hcran-stage4k-render"
           python3 -m py_compile experiments/oai-ngap-2026w13/stage4p/dual_ue_kpm_indications.py
+          python3 -m py_compile experiments/oai-ngap-2026w13/stage4p/kpm_wire.py experiments/oai-ngap-2026w13/stage4p/audit_kpm_slice.py
           python3 -m venv "$RUNNER_TEMP/hcran-stage4k-venv"
           "$RUNNER_TEMP/hcran-stage4k-venv/bin/python" -m pip install \
             --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
@@ -130,6 +131,12 @@ jobs:
         run: |
           set -euo pipefail
           SRC="$E2_CU_DIR/openair2/E2AP/flexric"
+          # KPM monitor's documented S-NSSAI may differ from H-CRAN.
+          # Audit and, only if a literal SD=ffffff filter exists, adapt
+          # the disposable xApp source to H-CRAN SST=1/SD=010203.
+          python3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage4p/audit_kpm_slice.py" \
+            "$SRC/examples/xApp/c/monitor/xapp_kpm_moni.c" \
+            "$EVIDENCE_DIR/pinned-kpm-slice-audit.json"
           python3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage4/flexric_asn_compat.py" \
             "$SRC/src/xApp/db/sqlite3/sqlite3_wrapper.c" \
             | tee "$EVIDENCE_DIR/pinned-flexric-asn-compat.log"
@@ -139,6 +146,7 @@ jobs:
             examples/xApp/c/monitor/RRC_MESSAGES/CMakeLists.txt \
             examples/xApp/c/monitor/RRC_MESSAGES/nr-rrc-17.3.0.cmake \
             examples/xApp/c/monitor/xapp_rc_moni.c \
+            examples/xApp/c/monitor/xapp_kpm_moni.c \
             > "$EVIDENCE_DIR/pinned-flexric-asn-compat.patch"
           cmake -S "$SRC" -B "$SRC/build" \
             -DE2AP_VERSION=E2AP_V2 -DKPM_VERSION=KPM_V2_03 \
