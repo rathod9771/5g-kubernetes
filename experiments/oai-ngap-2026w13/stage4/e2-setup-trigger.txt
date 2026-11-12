@@ -3,3 +3,5 @@ Source: E2-enabled NGAP V2 CU image from successful run 43165182823; verified im
 No registry push, no deployment, no HP cluster access.
 
 Retry 2: constrain FlexRIC build to nearRT-RIC and KPM/RC SM targets; avoid unrelated ASN.1 monitoring example.
+
+Retry 3: install pinned KPM/RC SM libraries in FlexRIC's required /usr/local/lib/flexric runtime directory.
