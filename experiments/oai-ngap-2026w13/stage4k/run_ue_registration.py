@@ -87,7 +87,8 @@ class Probe:
             logs.append(f.read_text(errors="replace")[-7000:])
         status=sh("docker","inspect","--format","{{json .State}}",
                   name("core"),check=False,timeout=20)
-        return "Core exit state: "+status+"\n"+copy+"\n"+"\n".join(logs)
+        container_output=self.logs("core")
+        return "Core exit state: "+status+"\n"+container_output+"\n"+copy+"\n"+"\n".join(logs)
     def demand(self,*items):
         for item in items:
             if not self.live(item):
@@ -169,6 +170,7 @@ class Probe:
         sh("docker","run","-d","--name",name("core"),
            "--network",NETWORK,"--ip",IPS["core"],
            "--cpus","1.5","--memory","2.5g",
+           "--user","0:0",
            "--cap-add","NET_ADMIN","--device","/dev/net/tun",
            "-e","DB_URI=mongodb://"+IPS["mongo"]+"/open5gs",
            "-v",str(self.priv)+":/tmp/stage4k-conf:ro",
