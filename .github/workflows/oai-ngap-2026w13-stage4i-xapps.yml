@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   real-e2-xapps:
-    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4g-e2-ric'
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4i-kpm-rc'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
