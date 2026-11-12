@@ -125,7 +125,7 @@ class Probe:
             sh("docker","rm","-f",name(item),check=False)
         sh("docker","network","rm",NETWORK,check=False)
         sh("docker","network","create","--driver","bridge",
-           "--subnet","172.29.76.0/24",NETWORK)
+           "--subnet","172.29.76.0/24","--gateway","172.29.76.1",NETWORK)
         self.record("T0-isolated-bridge","PASS")
         sh("docker","run","-d","--name",name("mongo"),
            "--network",NETWORK,"--ip",IPS["mongo"],
