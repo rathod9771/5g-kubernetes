@@ -1,1 +1,3 @@
 H-CRAN OAI Stage 4I isolated KPM and RC monitoring xApps trial; no live cluster.
+
+Run 2: correct experimental job branch guard. Check RIC + KPM/RC monitoring xApp execution.
