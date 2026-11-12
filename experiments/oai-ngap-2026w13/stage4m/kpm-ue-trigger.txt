@@ -1,0 +1,1 @@
+Run isolated H-CRAN E2-enabled CU+macro DU+UE/PDU with KPM xApp indications; no deployment.
