@@ -26,9 +26,39 @@ def main():
     available={f.stem for f in files}
     must(required.issubset(available),"Missing 5GC config(s): "+str(sorted(required-available)))
 
+    # All processes share one Docker network namespace. Their SBI and
+    # PFCP sockets MUST NOT all bind the public core bridge address.
+    local_ips={
+       "nrf":"127.0.0.10","scp":"127.0.0.11","amf":"127.0.0.5",
+       "smf":"127.0.0.4","upf":"127.0.0.7","ausf":"127.0.0.12",
+       "udm":"127.0.0.13","udr":"127.0.0.14","pcf":"127.0.0.15",
+       "nssf":"127.0.0.16","bsf":"127.0.0.17",
+    }
+    def set_endpoint(block, ip):
+        if isinstance(block,dict) and isinstance(block.get("server"),list):
+            for item in block["server"]:
+                if isinstance(item,dict):
+                    item["address"]=ip
+                    item.pop("dev",None)
+    def map_hosts(value):
+        if isinstance(value,str):
+            for host,ip in local_ips.items():
+                value=value.replace("http://"+host+":", "http://"+ip+":")
+                if value==host:value=ip
+            return value
+        if isinstance(value,list):return [map_hosts(x) for x in value]
+        if isinstance(value,dict):return {k:map_hosts(v) for k,v in value.items()}
+        return value
     for f in files:
         obj=yaml.safe_load(f.read_text())
         must(isinstance(obj,dict),f"Not a YAML object: {f.name}")
+        nf=f.stem
+        if nf in local_ips:
+            network=obj.get(nf,{})
+            for interface in ("sbi","metrics","pfcp"):
+                if interface in network:
+                    set_endpoint(network[interface],local_ips[nf])
+            obj=map_hosts(obj)
         if f.stem=="amf":
             amf=obj["amf"]
             must(amf.get("ngap",{}).get("server"),"AMF NGAP server missing")
@@ -54,7 +84,20 @@ def main():
         if f.stem=="upf":
             upf=obj["upf"]
             must(upf.get("gtpu",{}).get("server"),"UPF N3 GTP-U listener missing")
-            upf["gtpu"]["server"][0]["address"]=a.core_ip
+            # Existing image has multiple GTP-U listeners on same endpoint:
+            # retain only N3 for one UPF, one DU trial.
+            upf["gtpu"]["server"]=[{"address":a.core_ip}]
+            set_endpoint(upf.get("pfcp"),local_ips["upf"])
+        if f.stem=="smf":
+            smf=obj["smf"]
+            set_endpoint(smf.get("pfcp"),local_ips["smf"])
+            pfcp=smf.get("pfcp",{})
+            if isinstance(pfcp,dict):
+                client=pfcp.get("client",{})
+                if isinstance(client,dict) and isinstance(client.get("upf"),list):
+                    for item in client["upf"]:
+                        if isinstance(item,dict):
+                            item["address"]=local_ips["upf"]
         if f.stem=="nrf":
             nrf=obj["nrf"]
             if "serving" in nrf:
@@ -62,6 +105,8 @@ def main():
 
         # The one core container hosts all local loopback SBI and PFCP.
         # UDR/PCF still need Docker bridge access to disposable MongoDB.
+        # SBI, PFCP and metrics endpoints must be unique. The AMF NGAP
+        # listener alone is public for SCTP from the OAI CU.
         raw=yaml.safe_dump(obj,sort_keys=False)
         for old in ("mongodb://127.0.0.1", "mongodb://localhost",
                     "mongodb://mongo", "mongodb://mongodb"):
