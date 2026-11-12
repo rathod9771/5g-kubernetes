@@ -1,0 +1,151 @@
+name: H-CRAN OAI Stage 4M dual-DU F1 plus live macro UE traffic (NO DEPLOY)
+
+# Bounded isolated RFSIM attempt: full disposable Mongo/Open5GS 5GC,
+# patched CU, macro DU 100 and one test-only OAI NR UE. No HP access.
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-stage4m-dual-f1-live-traffic
+    paths:
+      - .github/workflows/oai-ngap-2026w13-stage4m-dual-traffic.yml
+      - experiments/oai-ngap-2026w13/stage4m/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: oai-hcran-stage4m-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-dual-du-data-path:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4m-dual-f1-live-traffic'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    env:
+      CORE_IMG: gradiant/open5gs:2.7.6
+      MONGO_IMG: mongo:6.0
+      CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w25
+      UE_IMG: oaisoftwarealliance/oai-nr-ue:2026.w13
+    steps:
+      - name: Read-only checkout of isolated experiment
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Helm and YAML/MongoDB test dependencies
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Prepare isolated Python dependencies and runner preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hcran-stage4k-evidence" "$RUNNER_TEMP/hcran-stage4k-render"
+          python3 -m venv "$RUNNER_TEMP/hcran-stage4k-venv"
+          "$RUNNER_TEMP/hcran-stage4k-venv/bin/python" -m pip install \
+            --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tcpdump
+          {
+            uname -a
+            free -h
+            df -h /
+            docker info | head -90
+          } > "$RUNNER_TEMP/hcran-stage4k-evidence/runner-preflight.txt"
+          if ! test -c /dev/net/tun; then
+            sudo modprobe tun || true
+          fi
+          test -c /dev/net/tun || { echo 'TUN unavailable; PDU test cannot execute safely'; exit 1; }
+          if ! test -d /proc/net/sctp; then
+            sudo modprobe sctp || true
+          fi
+          test -d /proc/net/sctp || { echo 'Kernel SCTP missing'; exit 1; }
+
+      - name: Render canonical H-CRAN CU and macro DU without deploying
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm template hcran-oai-cu helm/cran-oai/cu \
+            -f helm/cran-oai/cu/values-hcran.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/hcran-stage4k-render/cu.yaml"
+          helm template hcran-oai-macro helm/cran-oai/du \
+            -f helm/cran-oai/du/values-hcran-macro.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/hcran-stage4k-render/macro.yaml"
+          helm template hcran-oai-small helm/cran-oai/du \
+            -f helm/cran-oai/du/values-hcran-small.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/hcran-stage4k-render/small.yaml"
+
+      - name: Download verified patched CU from successful Stage 3
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43157479388
+          name: oai-ngap-stage3-portable-4
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/stage4k-input
+
+      - name: Load patched CU and pull test-only core, DU, UE images
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/stage4k-input/oai-ngap-stage3-portable.tar.gz"
+          gzip -t "$archive"
+          sha256sum "$archive" > "$RUNNER_TEMP/hcran-stage4k-evidence/cu-image-archive.sha256"
+          docker load -i "$archive" | tee "$RUNNER_TEMP/hcran-stage4k-evidence/cu-load.txt"
+          for img in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG" "$UE_IMG"; do
+            docker pull "$img" || exit 1
+          done
+          docker image inspect "$CU_IMG" > "$RUNNER_TEMP/hcran-stage4k-evidence/cu-image.json"
+          docker image inspect "$CORE_IMG" > "$RUNNER_TEMP/hcran-stage4k-evidence/core-image.json"
+          docker image inspect "$DU_IMG" > "$RUNNER_TEMP/hcran-stage4k-evidence/du-image.json"
+          docker image inspect "$UE_IMG" > "$RUNNER_TEMP/hcran-stage4k-evidence/ue-image.json"
+          docker run --rm --network none --entrypoint /bin/sh "$CORE_IMG" -ec \
+            'for nf in nrfd scpd ausfd udmd udrd nssfd pcfd bsfd smfd upfd amfd; do command -v open5gs-$nf >/dev/null; done; test -d /opt/open5gs/etc/open5gs' \
+            | tee "$RUNNER_TEMP/hcran-stage4k-evidence/core-binary-preflight.txt"
+          docker run --rm --network none --entrypoint /bin/sh "$UE_IMG" -ec \
+            'test -x /opt/oai-nr-ue/bin/nr-uesoftmodem; ldd /opt/oai-nr-ue/bin/nr-uesoftmodem' \
+            > "$RUNNER_TEMP/hcran-stage4k-evidence/ue-ldd.txt"
+          if grep -q 'not found' "$RUNNER_TEMP/hcran-stage4k-evidence/ue-ldd.txt"; then
+            echo 'UE binary missing shared-library dependencies' >&2
+            exit 1
+          fi
+
+      - name: Dual-DU F1-C alive during real macro UE PDU and four GTP-U data directions
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/hcran-stage4k-venv/bin/python" -u \
+            experiments/oai-ngap-2026w13/stage4m/dual_du_macro_ue_traffic.py \
+            --rendered "$RUNNER_TEMP/hcran-stage4k-render" \
+            --output "$RUNNER_TEMP/hcran-stage4k-evidence" \
+            --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
+            --verify-gtpu \
+            2>&1 | tee "$RUNNER_TEMP/hcran-stage4k-console.log"
+          echo 'PASS only if real UE/PDU, F1-U+NG-U G-PDU all four directions and ICMP 0% loss were observed'
+
+      - name: Purge private synthetic test material before artifact upload
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/hcran-stage4k-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          test ! -e "$RUNNER_TEMP/hcran-stage4k-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+
+      - name: Upload redacted stage evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-hcran-dual-f1-live-traffic-${{ github.run_number }}
+          path: ${{ runner.temp }}/hcran-stage4k-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
