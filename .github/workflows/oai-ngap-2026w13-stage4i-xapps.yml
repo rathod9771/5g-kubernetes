@@ -112,6 +112,7 @@ jobs:
             src/xApp/db/sqlite3/sqlite3_wrapper.c \
             examples/xApp/c/monitor/RRC_MESSAGES/CMakeLists.txt \
             examples/xApp/c/monitor/RRC_MESSAGES/nr-rrc-17.3.0.cmake \
+            examples/xApp/c/monitor/xapp_rc_moni.c \
             > "$EVIDENCE_DIR/pinned-flexric-asn-compat.patch"
           cmake -S "$SRC" -B "$SRC/build" \
             -DE2AP_VERSION=E2AP_V2 -DKPM_VERSION=KPM_V2_03 \
