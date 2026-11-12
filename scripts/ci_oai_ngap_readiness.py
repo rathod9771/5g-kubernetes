@@ -19,6 +19,7 @@ KNOWN = [
     ("E2_ENABLED_CU_BUILD", 43165182823, "oai-ngap-e2-build-candidate-"),
     ("FLEXRIC_E2_SETUP", 43173532767, "oai-ngap-stage4g-flexric-e2-"),
     ("KPM_RC_MONITOR_XAPP_SUBSCRIPTIONS", 43183404348, "oai-ngap-stage4i-xapp-monitor-"),
+    ("HCRAN_DUAL_UE_STATIC_PREREQUISITES", 43186660857, "oai-hcran-ue-prerequisites-"),
     ("OSM_OFFLINE_SIMULATION", 43165822749, "oai-ngap-stage4h-offline-osm-"),
 ]
 # Verification of these gates requires real positive evidence, not inferred
