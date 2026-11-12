@@ -34,7 +34,11 @@ def genuine_kpm_indication_lines(log):
         # Subscription setup/definitions are NOT received indications.
         if re.search(r"(?:SUBSCRIPTION|subscrib|RAN_FUNC|SM ID|def =|E2SM-KPM)", line,re.I):
             continue
-        if re.search(r"(?:RIC[_ -]?INDICATION\s*(?:rx|received)|"
+        # The pinned FlexRIC monitor's actual sm_cb_kpm callback prints
+        # "<counter> KPM ind_msg latency = <duration> [µs]". This is an
+        # actual decoded indication callback, not the subscription response.
+        if re.search(r"^\s*\d+\s+KPM\s+ind_msg\s+latency\s*=\s*-?\d+",line,re.I) or re.search(
+                     r"(?:RIC[_ -]?INDICATION\s*(?:rx|received)|"
                      r"(?:KPM|meas(?:urement)?)\s*indication\s*(?:rx|received)|"
                      r"indication\s*callback)",line,re.I):
             candidates.append(line[:400])
