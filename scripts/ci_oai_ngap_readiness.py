@@ -20,6 +20,8 @@ KNOWN = [
     ("FLEXRIC_E2_SETUP", 43173532767, "oai-ngap-stage4g-flexric-e2-"),
     ("KPM_RC_MONITOR_XAPP_SUBSCRIPTIONS", 43183404348, "oai-ngap-stage4i-xapp-monitor-"),
     ("HCRAN_DUAL_UE_STATIC_PREREQUISITES", 43186660857, "oai-hcran-ue-prerequisites-"),
+    ("HCRAN_REAL_UE_NAS_PDU_ONE_DU", 43190810958, "oai-hcran-real-ue-pdu-"),
+    ("HCRAN_REAL_F1U_NGU_GTPU_ONE_DU", 43192172149, "oai-hcran-real-gtpu-"),
     ("OSM_OFFLINE_SIMULATION", 43165822749, "oai-ngap-stage4h-offline-osm-"),
 ]
 # Verification of these gates requires real positive evidence, not inferred
@@ -27,10 +29,11 @@ KNOWN = [
 NOT_VERIFIED = {
     "KPM_INDICATIONS_WITH_ATTACHED_UE": "KPM and RC monitor subscriptions accepted in Stage 4I, but no attached UE and no received KPM indications",
     "RC_CONTROL_ACKNOWLEDGEMENT": "No live E2SM-RC control and outcome evidence",
-    "UE_NAS_REGISTRATION": "No controlled NR UE Registration Accept with redacted pseudonymous identifiers",
-    "PDU_SESSION": "No PDU Session Establishment Accept and assigned PDU IP",
-    "F1U_USER_PLANE": "No verified per-DU F1-U GTP-U packet/TEID evidence",
-    "NGU_USER_PLANE": "No UE-to-UPF/Internet end-to-end payload and counters",
+    "TWO_DU_CONCURRENT_ACTIVE_UE_SERVICE": "Stage 4K/L proved macro DU 100 one-UE NAS/PDU and bidirectional GTP-U; simultaneous macro/small active UEs still not verified",
+    "MULTI_CYCLE_NAS_PDU_SERVICE_SLO": "Only single bounded isolated UE attach and PDU proved; no repeated registrations or sustained service SLO",
+    "DATA_PLANE_THROUGHPUT_AND_LOSS": "Four loss-free internal ICMP probes are positive connectivity proof, not a throughput or loss-under-load benchmark",
+    "DUAL_DU_USER_PLANE_AMF_FAULT_RECOVERY": "Earlier AMF faults were tested without an active UE/PDU; concurrent two-DU traffic during faults unverified",
+    "INDEPENDENT_STAGING_OBSERVER_CLOCK": "No independent timestamped observer and clock-offset acceptance in staging",
     "STAGING_3_CYCLE_DUAL_DU_RECOVERY": "Offline AMF fault cycle not reproduced on qualified staging topology with UE",
     "STAGING_OSM_ROLLBACK": "No actual OSM-controlled staging rollback and restored image digest",
     "STAGING_HEALTH_PERFORMANCE": "No sustained resource/PSI/restarts/registration SLO window",
@@ -85,7 +88,7 @@ def main():
         "production_deployment_authorized": False,
         "verified_ci_and_offline_evidence": observed,
         "outstanding_runtime_and_release_gates": missing,
-        "rule": "No production approval without all live UE/PDU/F1U/NGU/E2/OSM staging evidence and an explicit operator-approved release.",
+        "rule": "One-DU UE/PDU/F1-U/NG-U isolated proofs are accepted, but dual-DU active-service, KPM indication, RC effects, sustained staging SLO, actual OSM rollback and release approval are required.",
     }
     dst.write_text(json.dumps(report, indent=2) + "\n")
     print(f"Production decision: NO_GO. CI historical evidence: "
