@@ -22,14 +22,16 @@ KNOWN = [
     ("HCRAN_DUAL_UE_STATIC_PREREQUISITES", 43186660857, "oai-hcran-ue-prerequisites-"),
     ("HCRAN_REAL_UE_NAS_PDU_ONE_DU", 43190810958, "oai-hcran-real-ue-pdu-"),
     ("HCRAN_REAL_F1U_NGU_GTPU_ONE_DU", 43192172149, "oai-hcran-real-gtpu-"),
+    ("HCRAN_DUAL_F1_MACRO_UE_USER_PLANE", 43193089291, "oai-hcran-dual-f1-live-traffic-"),
+    ("HCRAN_DUAL_F1_SMALL_UE_USER_PLANE", 43193891521, "oai-hcran-small-ue-userplane-"),
+    ("HCRAN_TWO_UE_CONCURRENT_USER_PLANE", 43194751671, "oai-hcran-dual-ue-traffic-"),
     ("OSM_OFFLINE_SIMULATION", 43165822749, "oai-ngap-stage4h-offline-osm-"),
 ]
 # Verification of these gates requires real positive evidence, not inferred
 # success from compile, static renders, F1-C setup, or a synthetic test.
 NOT_VERIFIED = {
-    "KPM_INDICATIONS_WITH_ATTACHED_UE": "KPM and RC monitor subscriptions accepted in Stage 4I, but no attached UE and no received KPM indications",
+    "KPM_INDICATIONS_WITH_ATTACHED_UE": "Stage 4I accepted E2 KPM/RC subscriptions without UEs; E2 indications under Stage 4O dual-UE load are being tested separately",
     "RC_CONTROL_ACKNOWLEDGEMENT": "No live E2SM-RC control and outcome evidence",
-    "TWO_DU_CONCURRENT_ACTIVE_UE_SERVICE": "Stage 4K/L proved macro DU 100 one-UE NAS/PDU and bidirectional GTP-U; simultaneous macro/small active UEs still not verified",
     "MULTI_CYCLE_NAS_PDU_SERVICE_SLO": "Only single bounded isolated UE attach and PDU proved; no repeated registrations or sustained service SLO",
     "DATA_PLANE_THROUGHPUT_AND_LOSS": "Four loss-free internal ICMP probes are positive connectivity proof, not a throughput or loss-under-load benchmark",
     "DUAL_DU_USER_PLANE_AMF_FAULT_RECOVERY": "Earlier AMF faults were tested without an active UE/PDU; concurrent two-DU traffic during faults unverified",
@@ -88,7 +90,7 @@ def main():
         "production_deployment_authorized": False,
         "verified_ci_and_offline_evidence": observed,
         "outstanding_runtime_and_release_gates": missing,
-        "rule": "One-DU UE/PDU/F1-U/NG-U isolated proofs are accepted, but dual-DU active-service, KPM indication, RC effects, sustained staging SLO, actual OSM rollback and release approval are required.",
+        "rule": "Two concurrent UE/PDU/F1-U/NG-U isolated functional smoke tests passed, but live KPM indications, effective RC control, repeated fault-with-service, sustained staging SLO, actual OSM rollback and release approval remain required.",
     }
     dst.write_text(json.dumps(report, indent=2) + "\n")
     print(f"Production decision: NO_GO. CI historical evidence: "
