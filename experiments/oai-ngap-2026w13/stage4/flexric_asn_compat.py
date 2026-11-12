@@ -62,6 +62,26 @@ def main():
         "set(nr_rrc_source\\n    OPEN_TYPE_print.c\\n    asn_constraint_value.c", 1
     ).replace("\\n", "\n"), encoding="utf-8")
     print("included required ASN.1 OPEN_TYPE_print.c and asn_constraint_value.c")
+
+    # RC monitoring consumes the same regenerated optional ASN.1 fields.
+    # This does not modify RAN service-model code or create RC control.
+    rc = root / "examples/xApp/c/monitor/xapp_rc_moni.c"
+    rc_src = rc.read_text(encoding="utf-8")
+    updates=[
+        ("results->measResultServingMOList.list",
+         "results->measResultServingMOList->list"),
+        ("msg->message.present", "msg->message->present"),
+        ("msg->message.choice.c1", "msg->message->choice.c1"),
+    ]
+    for old,new in updates:
+        n=rc_src.count(old)
+        if n==0:
+            raise RuntimeError(f"Expected pinned RC monitor expression absent: {old!r}")
+        rc_src=rc_src.replace(old,new)
+        print(f"RC monitor: corrected {n} occurrence(s) of {old}")
+    # Defensive guard for absent RRC message pointer before dereference in
+    # RC monitoring; do not alter event/control handling.
+    rc.write_text(rc_src,encoding="utf-8")
     return 0
 
 if __name__ == "__main__":
