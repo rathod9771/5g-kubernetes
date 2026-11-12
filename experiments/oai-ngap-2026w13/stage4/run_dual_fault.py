@@ -41,9 +41,14 @@ class FaultTrial(lab.Trial):
     def wait_predicate(self, label, predicate, seconds, require_amf=False):
         end = time.monotonic() + seconds
         while time.monotonic() < end:
-            self.assert_two_f1_associations(label + "-poll", require_amf=require_amf)
+            # The AMF peer is deliberately absent during fault recovery.
+            # Require both DU SCTP peers throughout polling, and verify the
+            # AMF peer only *after* a new NGSetupResponse is observed.
+            self.assert_two_f1_associations(label + "-poll", require_amf=False)
             metrics = self.counts()
             if predicate(metrics):
+                if require_amf:
+                    self.assert_two_f1_associations(label + "-recovered", require_amf=True)
                 self.event(label, "PASS", **metrics)
                 self.capture(label)
                 return metrics
