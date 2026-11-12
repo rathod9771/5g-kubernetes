@@ -1,0 +1,101 @@
+name: Experimental OAI NGAP Stage 3 real Open5GS recovery (no deploy)
+
+# Standalone GitHub-hosted bridge. Reuses image artifact from prior successful
+# run; no HP SSH, no registry push, no Kubernetes credentials, and no UE.
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-stage3-runtime
+    paths:
+      - .github/workflows/oai-ngap-2026w13-stage3.yml
+      - experiments/oai-ngap-2026w13/stage3/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: oai-ngap-stage3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ngap-open5gs-recovery:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage3-runtime'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 28
+    env:
+      IMAGE_TAG: oai-ngap-2026w13-v2:ci-2
+      CORE_IMAGE: gradiant/open5gs:2.7.6
+      EVIDENCE_DIR: ${{ runner.temp }}/ngap-stage3-evidence
+    steps:
+      - name: Check out Stage 3 experimental branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download EXACT successful Stage 2 image artifact (no compilation)
+        uses: actions/download-artifact@v4
+        with:
+          name: oai-ngap-2026w13-v2-image-2
+          repository: rathod9771/5g-kubernetes
+          run-id: 43151733655
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/ngap-stage3-input
+
+      - name: Load experimental OAI image and Open5GS core image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          test -f "$RUNNER_TEMP/ngap-stage3-input/oai-ngap-2026w13-v2-experimental.tar.gz"
+          gzip -t "$RUNNER_TEMP/ngap-stage3-input/oai-ngap-2026w13-v2-experimental.tar.gz"
+          docker load -i "$RUNNER_TEMP/ngap-stage3-input/oai-ngap-2026w13-v2-experimental.tar.gz" \
+            | tee "$EVIDENCE_DIR/image-load.log"
+          docker image inspect "$IMAGE_TAG" >/dev/null
+          docker pull "$CORE_IMAGE" | tee "$EVIDENCE_DIR/open5gs-pull.log"
+          docker image inspect "$CORE_IMAGE" > "$EVIDENCE_DIR/open5gs-image-inspect.json"
+          docker image inspect "$IMAGE_TAG" > "$EVIDENCE_DIR/cu-image-inspect.json"
+          {
+            uname -a
+            docker version
+            docker info
+            free -h
+            df -h /
+          } > "$EVIDENCE_DIR/runner-preflight.txt"
+          # Docker bridge and host must support kernel SCTP.
+          if ! test -d /proc/net/sctp; then
+            sudo modprobe sctp || true
+          fi
+          test -d /proc/net/sctp
+
+      - name: Open5GS daemon/binary preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --entrypoint /bin/sh "$CORE_IMAGE" -ec \
+            'command -v open5gs-amfd; command -v open5gs-nrfd; test -x "$(command -v open5gs-amfd)"' \
+            | tee "$EVIDENCE_DIR/open5gs-daemon-preflight.txt"
+          docker run --rm --network none --entrypoint /bin/sh "$IMAGE_TAG" -ec \
+            'test -x /opt/oai-gnb/bin/nr-softmodem; test -f /opt/oai-gnb/bin/entrypoint.sh' \
+            | tee "$EVIDENCE_DIR/oai-binary-preflight.txt"
+
+      - name: Real NGAP reconnect test with AMF start/restart (no UE)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u experiments/oai-ngap-2026w13/stage3/run_real_ngap.py \
+            --image "$IMAGE_TAG" \
+            --conf "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage3" \
+            --out "$EVIDENCE_DIR" \
+            2>&1 | tee "$EVIDENCE_DIR/console.txt"
+
+      - name: Upload evidence on success OR failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-ngap-stage3-real-open5gs-${{ github.run_number }}
+          path: ${{ runner.temp }}/ngap-stage3-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
