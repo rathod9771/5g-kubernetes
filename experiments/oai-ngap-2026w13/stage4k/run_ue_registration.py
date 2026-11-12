@@ -41,7 +41,7 @@ def db_record():
     bandwidth={"uplink":{"value":1,"unit":3},"downlink":{"value":1,"unit":3}}
     return {"imsi":SIM["imsi"],"subscribed_rau_tau_timer":12,"network_access_mode":0,
         "subscriber_status":0,"operator_determined_barring":0,"access_restriction_data":32,
-        "slice":[{"sst":1,"sd":"010203","default_indicator":True,
+        "slice":[{"sst":1,"sd":"ffffff","default_indicator":True,
                   "session":[{"name":"internet","type":3,"pcc_rule":[],
                               "ambr":bandwidth,"qos":{"index":9,"arp":{
                               "priority_level":8,"pre_emption_capability":1,
@@ -191,6 +191,9 @@ class Probe:
         cu=configmap(render/"cu.yaml","ConfigMap","hcran-oai-cu-config")["data"]["gnb.conf"]
         du=configmap(render/"macro.yaml","ConfigMap","hcran-oai-macro-config")["data"]["gnb.conf"]
         cu=cu.replace("POD_IP",IPS["cu"]).replace("AMF_IP",IPS["core"])
+        if "010203" not in cu:
+            raise RuntimeError("expected isolated H-CRAN CU NSSAI SD missing")
+        cu=cu.replace("010203","ffffff")
         du=du.replace("POD_IP",IPS["macro"]).replace("CU_IP",IPS["cu"])
         if "gNB_DU_ID = 100;" not in du:raise RuntimeError("wrong H-CRAN macro DU identity")
         if IPS["core"] not in cu or IPS["cu"] not in du:raise RuntimeError("IP substitution failed")
@@ -264,7 +267,7 @@ class Probe:
           '  imsi = "'+SIM["imsi"]+'";\n'
           '  key = "'+SIM["key"]+'";\n'
           '  opc = "'+SIM["opc"]+'";\n'
-          '  pdu_sessions = ({ dnn = "internet"; nssai_sst = 1; nssai_sd = 0x010203; });\n};\n')
+          '  pdu_sessions = ({ dnn = "internet"; nssai_sst = 1; nssai_sd = 0xffffff; });\n};\n')
         ueconf.chmod(0o600)
         sh("docker","run","-d","--name",name("ue"),
            "--network",NETWORK,"--ip",IPS["ue"],
