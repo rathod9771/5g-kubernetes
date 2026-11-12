@@ -77,6 +77,10 @@ def main():
             # FreeDiameter is legacy EPC policy. For this 5GC-only trial,
             # disable it instead of resolving a non-existent PCRF hostname.
             smf.pop("freeDiameter",None)
+            # Legacy SMF GTP-U listener must not steal N3 port 2152
+            # from the 5G UPF in this shared-network-namespace lab.
+            set_endpoint(smf.get("gtpu"),local_ips["smf"])
+            set_endpoint(smf.get("gtpc"),local_ips["smf"])
             session=smf.get("session",[])
             must(bool(session),"SMF session address pool missing")
             for item in session:
