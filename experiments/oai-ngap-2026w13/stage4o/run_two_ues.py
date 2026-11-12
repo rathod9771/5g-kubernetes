@@ -57,7 +57,7 @@ class DualUEProbe(DualDuProbe):
           ' imsi = "'+SIM2["imsi"]+'";\n'
           ' key = "'+SIM2["key"]+'";\n'
           ' opc = "'+SIM2["opc"]+'";\n'
-          ' pdu_sessions = ({ dnn = "internet"; nssai_sst = 1; nssai_sd = 0x010203; });\n};\n')
+          ' pdu_sessions = ({ dnn = "internet"; nssai_sst = 1; nssai_sd = 0xffffff; });\n};\n')
         conf.chmod(0o600)
         sh("docker","run","-d","--name",name("ue-small"),
            "--network",NETWORK,"--ip","172.29.76.41",
