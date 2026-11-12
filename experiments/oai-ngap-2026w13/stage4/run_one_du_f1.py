@@ -2,7 +2,7 @@
 """Real one-DU F1-C SCTP/F1AP test in disposable GitHub Docker bridge.
 
 No second DU, no UE, no subscriber identifiers, no Kubernetes/OSM, no HP access.
-Proves only CU-side request/response log events for macro DU ID 100.
+Proves only CU-side request/response log events for small DU ID 101.
 """
 import argparse
 import datetime
@@ -16,15 +16,15 @@ import traceback
 
 import yaml
 
-NET = "oai-ngap-stage4b-f1"
-PREFIX = "oai-ngap-stage4b-"
+NET = "oai-ngap-stage4c-f1"
+PREFIX = "oai-ngap-stage4c-"
 IP = {"amf": "172.29.74.10", "nrf": "172.29.74.11",
-      "cu": "172.29.74.20", "macro": "172.29.74.30"}
+      "cu": "172.29.74.20", "small": "172.29.74.30"}
 NAMES = {x: PREFIX + x for x in IP}
 CORE = "gradiant/open5gs:2.7.6"
 NGAP = re.compile(r"Received NGSetupResponse from AMF", re.I)
-F1REQ = re.compile(r"Received F1 Setup Request from gNB_DU 100", re.I)
-F1RESP = re.compile(r"DU 100 .*sending F1 Setup Response", re.I)
+F1REQ = re.compile(r"Received F1 Setup Request from gNB_DU 101", re.I)
+F1RESP = re.compile(r"DU 101 .*sending F1 Setup Response", re.I)
 
 
 class TestFailure(RuntimeError):
@@ -83,7 +83,7 @@ class Trial:
         self.out.joinpath(f"{stage}-containers.txt").write_text(
             run("docker", "ps", "-a", "--filter", f"network={NET}",
                 "--format", "{{.Names}} {{.Status}} {{.Image}}", check=False))
-        for name in ("cu", "macro"):
+        for name in ("cu", "small"):
             self.out.joinpath(f"{stage}-{name}-sctp.txt").write_text(
                 run("docker", "exec", NAMES[name], "cat",
                     "/proc/net/sctp/assocs", check=False, timeout=10))
@@ -102,7 +102,7 @@ class Trial:
         raise TestFailure(
             f"TIMEOUT {stage}: {regex.pattern}; "
             f"CU tail={self.logs('cu')[-4500:]}\n"
-            f"macro tail={self.logs('macro')[-4500:]}")
+            f"small tail={self.logs('small')[-4500:]}")
 
     def prepare(self):
         for name in NAMES.values():
@@ -127,14 +127,14 @@ class Trial:
         rendered = pathlib.Path(self.args.rendered)
         cu_conf = configmap(rendered / "cu.yaml", "hcran-oai-cu-config")
         cu_conf = cu_conf.replace("POD_IP", IP["cu"]).replace("AMF_IP", IP["amf"])
-        du_conf = configmap(rendered / "macro.yaml", "hcran-oai-macro-config")
-        du_conf = du_conf.replace("POD_IP", IP["macro"]).replace("CU_IP", IP["cu"])
-        if 'gNB_DU_ID = 100;' not in du_conf:
-            raise TestFailure("macro DU ID must equal 100")
+        du_conf = configmap(rendered / "small.yaml", "hcran-oai-small-config")
+        du_conf = du_conf.replace("POD_IP", IP["small"]).replace("CU_IP", IP["cu"])
+        if 'gNB_DU_ID = 101;' not in du_conf:
+            raise TestFailure("small DU ID must equal 101")
         if "172.29.74.20" not in du_conf or "172.29.74.10" not in cu_conf:
             raise TestFailure("placeholder substitution incomplete")
         (configs / "cu.conf").write_text(cu_conf)
-        (configs / "macro.conf").write_text(du_conf)
+        (configs / "small.conf").write_text(du_conf)
         self.event("T0-config-and-bridge", "PASS")
 
         for name, binary in (("nrf", "nrfd"), ("amf", "amfd")):
@@ -154,22 +154,22 @@ class Trial:
 
     def test(self):
         self.prepare()
-        self.await_logs("T1-CU-real-NGSetupResponse", NGAP, 100, ("nrf", "amf", "cu"))
+        self.await_logs("T1-CU-real-NGSetupResponse", NGAP, 101, ("nrf", "amf", "cu"))
         configs = self.out / "configs"
-        run("docker", "run", "-d", "--name", NAMES["macro"],
-            "--network", NET, "--ip", IP["macro"],
+        run("docker", "run", "-d", "--name", NAMES["small"],
+            "--network", NET, "--ip", IP["small"],
             "--cpus", "1.5", "--memory", "3g",
-            "-v", str(configs / "macro.conf") + ":/opt/oai-gnb/etc/gnb.conf:ro",
+            "-v", str(configs / "small.conf") + ":/opt/oai-gnb/etc/gnb.conf:ro",
             "--entrypoint", "/opt/oai-gnb/bin/nr-softmodem",
             self.args.du_image, "-O", "/opt/oai-gnb/etc/gnb.conf", "--rfsim")
-        self.event("T2-macro-DU-start", "PASS")
-        self.await_logs("T3-F1SetupRequest-from-DU-100",
-                        F1REQ, 120, ("cu", "macro", "amf"))
-        self.await_logs("T4-F1SetupResponse-to-DU-100",
-                        F1RESP, 45, ("cu", "macro", "amf"))
-        self.require_live("cu", "macro", "amf")
+        self.event("T2-small-DU-start", "PASS")
+        self.await_logs("T3-F1SetupRequest-from-DU-101",
+                        F1REQ, 120, ("cu", "small", "amf"))
+        self.await_logs("T4-F1SetupResponse-to-DU-101",
+                        F1RESP, 45, ("cu", "small", "amf"))
+        self.require_live("cu", "small", "amf")
         self.capture("final")
-        self.event("STAGE4B", "PASS", scope="real CU/macro DU F1 Setup only; no UE")
+        self.event("STAGE4C", "PASS", scope="real CU/small DU F1 Setup only; no UE")
 
     def close(self):
         try:
@@ -193,7 +193,7 @@ def main():
         trial.test()
         return 0
     except Exception as error:
-        trial.event("STAGE4B", "FAIL", error=str(error))
+        trial.event("STAGE4C", "FAIL", error=str(error))
         trial.out.joinpath("error.txt").write_text(traceback.format_exc())
         print(str(error), file=sys.stderr)
         return 1
