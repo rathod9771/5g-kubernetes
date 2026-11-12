@@ -69,7 +69,7 @@ def main():
                            "amf_id":{"region":2,"set":1}}]
             amf["tai"]=[{"plmn_id":plmn,"tac":1}]
             amf["plmn_support"]=[{"plmn_id":plmn,
-                                   "s_nssai":[{"sst":1,"sd":"010203"}]}]
+                                   "s_nssai":[{"sst":1,"sd":"ffffff"}]}]
             amf.setdefault("time",{}).setdefault("t3512",{})["value"]=540
             amf["amf_name"]="stage4k-hcran-ci"
         if f.stem=="smf":
