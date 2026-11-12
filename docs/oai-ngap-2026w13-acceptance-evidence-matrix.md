@@ -16,8 +16,9 @@ OSM catalog/NS, H-CRAN deployments or production dashboard.
 | Dual F1-C + NGAP | Both DUs and AMF simultaneously in CU's SCTP peers; 15 s retention | PASS isolated — [Stage 4D run 43162695243](https://github.com/rathod9771/5g-kubernetes/actions/runs/43162695243) |
 | Dual-DU NGAP fault recovery | 3 intentional AMF stop/restart cycles, 4 NG Setup Responses total including initial; 5 redials; no repeated F1 Setup for either DU | PASS isolated — [Stage 4E run 43163998295](https://github.com/rathod9771/5g-kubernetes/actions/runs/43163998295) |
 | OSM/lifecycle offline guard tests | 109 tests passed using synthetic IDs and mocks, no real deployment | PASS offline simulation only — [Stage 4H run 43165822749](https://github.com/rathod9771/5g-kubernetes/actions/runs/43165822749) |
-| E2-enabled CU | Source compilation linked `nr-softmodem` and `e2_agent` once; initial job failed a metadata assertion after compilation; corrected workflow retry is separate | **In verification**, not accepted until complete green job |
-| Live E2 Setup / FlexRIC KPM + RC | No confirmed live FlexRIC E2 Setup or xApp subscription/indication/control | NOT VERIFIED |
+| E2-enabled CU | Patched `2026.w13` with `--build-e2 --noavx512 --noavx2`, build and image packaging passed | **PASS compile/package only** — [Stage 4F run 43165182823](https://github.com/rathod9771/5g-kubernetes/actions/runs/43165182823) |
+| Real E2 Setup / FlexRIC | First pinned FlexRIC build failed on an unrelated monitoring example requiring custom ASN.1 compiler; focused RIC + KPM/RC build retry started | **NOT VERIFIED** — [Stage 4G retry 43167220273](https://github.com/rathod9771/5g-kubernetes/actions/runs/43167220273) |
+| Live KPM indications / RC control | No confirmed xApp subscription, indications, or E2SM-RC action acknowledgement | NOT VERIFIED |
 | UE NAS registration and PDU establishment | No UE and no subscriber in any dual-DU isolated trial | NOT VERIFIED |
 | F1-U / NG-U traffic and throughput | F1-U UDP ports checked statically, no actual DRB/TEID data exchange | NOT VERIFIED |
 | Staging upgrade/rollback, OSM NS/KNF delivery | No staging credentials or approved change window; no OSM live operation | NOT VERIFIED |
@@ -30,8 +31,8 @@ not an end-to-end UE service or a Rel-15/16 protocol conformance certificate.
 A passing offline OSM simulation does **not** authorize a real catalog or NS
 mutation.
 
-The next gating work is E2-enabled CU compatibility with a version-matched
-FlexRIC nearRT-RIC, followed by genuine UE registration/PDU/F1-U tests on
+The E2-enabled CU build now passes; the next gating work is actual E2 Setup
+and KPM/RC function checks with version-matched FlexRIC, followed by genuine UE registration/PDU/F1-U tests on
 an **isolated** appropriately resourced full 5GC staging environment, then
 documented OSM-controlled deployment and rollback. Only after those results
 and explicit operator approval should an image be considered for HP integration.
