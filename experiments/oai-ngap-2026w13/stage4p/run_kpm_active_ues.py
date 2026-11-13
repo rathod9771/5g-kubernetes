@@ -194,7 +194,12 @@ class KPMProbe(DualUEProbe):
                         p.kill();out,_=p.communicate(timeout=5)
                         raise RuntimeError(ue+" ping timeout "+out[-600:])
                     (self.out/(ue+"-KPM-traffic-ping.txt")).write_text(out)
-                    if p.returncode!=0 or "12 received" not in out:
+                    counts=re.search(
+                        r"(\d+)\s+packets transmitted,\s+(\d+)\s+(?:packets )?received",
+                        out)
+                    if p.returncode!=0 or not counts or (
+                        int(counts.group(1))!=12 or int(counts.group(2))!=12
+                    ):
                         raise RuntimeError(ue+" ping failed under subscribed KPM: "+out[-900:])
                 self.record("T35-two-UE-traffic-after-KPM-subscription","PASS",
                             two_ue_ping_replies=24)
