@@ -183,6 +183,9 @@ jobs:
           assert re.fullmatch('[0-9a-f]{64}',report['post_fault_pcap_sha256'])
           print('PASS: real single-UE TS24.501 cause9 -> SUCI -> PDU -> postfault F1U/NGU; staging NO_GO')
           PY
+          "$RUNNER_TEMP/f1-stage5h-venv/bin/python" \
+            "$GITHUB_WORKSPACE/qualification/experiments/oai-ngap-2026w13/stage5h/evidence_contract.py" \
+            "$RUNNER_TEMP/f1-stage5h-evidence"
 
       - name: Erase synthetic SIM material before evidence upload
         if: always()
