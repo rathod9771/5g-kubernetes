@@ -191,6 +191,36 @@ class HCRAN3GPPTests(unittest.TestCase):
                 self.assertNotEqual(compromised.returncode, 0)
                 self.assertIn("requires explicit privileged=false", compromised.stderr)
 
+    def test_hcran_render_does_not_expose_manual_telnet_or_e2_control(self):
+        # Runtime F1 handover used a disposable CLI-enabled image. Production
+        # H-CRAN charts must never add the unauthenticated CI telnet listener.
+        for component, chart, suffix in (
+            ("cu", "helm/cran-oai/cu", ""),
+            ("macro", "helm/cran-oai/du", "-macro"),
+            ("small", "helm/cran-oai/du", "-small"),
+        ):
+            with self.subTest(component=component):
+                run = render(chart, suffix, "hcran-oai-" + component)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                docs = objects(run.stdout)
+                for obj in docs:
+                    if obj.get("kind") == "ConfigMap":
+                        body = "\n".join(str(x) for x in obj.get("data", {}).values())
+                        self.assertNotIn("telnetsrv", body.lower())
+                        self.assertNotIn("near_ric_ip_addr", body.lower())
+                    if obj.get("kind") == "Deployment":
+                        pod = obj["spec"]["template"]["spec"]
+                        for ctr in pod.get("containers", []):
+                            self.assertNotIn("--telnetsrv", repr(ctr))
+                            self.assertNotIn("--telnetsrv.shrmod", repr(ctr))
+                            self.assertTrue(all(p.get("containerPort") not in
+                                                (9090, 36421, 36422)
+                                                for p in ctr.get("ports", [])))
+                    if obj.get("kind") == "Service":
+                        ports = obj["spec"].get("ports", [])
+                        self.assertTrue(all(p["port"] not in (9090, 36421, 36422)
+                                            for p in ports))
+
     def test_3gpp_gate_excludes_ric_and_fails_closed(self):
         path=ROOT/"scripts/ci_oai_ngap_readiness.py"
         spec=importlib.util.spec_from_file_location("hcran_readiness",path)
