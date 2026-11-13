@@ -28,7 +28,7 @@ jobs:
       CORE_IMG: gradiant/open5gs:2.7.6
       MONGO_IMG: mongo:6.0
       CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
-      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w25
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w45
       UE_IMG: oaisoftwarealliance/oai-nr-ue:2026.w45
     steps:
       - name: Checkout isolated qualification branch
