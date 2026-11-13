@@ -402,12 +402,28 @@ The artifact `14029551684` includes a *postfault-only*, redacted
 rather than trusting the legacy truncated 60-KiB UE log. It preserves a
 verifiable RRC/NAS → NGAP chronological path even on experiment failure.
 
-[Stage5H rerun 43411113725](https://github.com/rathod9771/5g-kubernetes/actions/runs/43411113725)
-is a separate controlled **A/B experiment**: drain 15 seconds of prefault
-user-plane traffic, stop only AMF, then check for an unsolicited Service
-Request before deliberately sending new UL data **after** the new NGAP
-association. It must fail closed if the premature request recurs. This
-experiment is for diagnosis; it is NOT production UE recovery. **NO_GO**.
+[Stage5H A/B rerun 43411113725](https://github.com/rathod9771/5g-kubernetes/actions/runs/43411113725)
+**FAILED reproducibly**. After waiting 15 seconds following all successful
+F1 handover and ping traffic, the UE still generated **one** unprompted
+44-byte Service Request upon RRC IDLE transition, entered RRCSetupComplete,
+and the CU again logged **"No AMF is associated to the gNB"** before NG Setup
+reconnected. The test fail-closed guard `T102A-pre-NGAP-service-request-race`
+recorded `premature_service_requests=1`. Redacted protocol trace and
+bounded F1/prefault captures are available in artifact `14028814178`.
+
+This eliminates *immediately prior* handover ping traffic as a sufficient
+explanation for the failure, but it does not prove that no older buffered
+packet existed. The actual unmet capability is bounded recovery from a
+Service Request sent while NGAP has no AMF association. No cause-#9 Service
+Reject was delivered, and the Stage5G cause-9 code path **was not executed**
+in either Stage5H run.
+
+**Engineering acceptance next:** isolate OAI 5GMM state transition on
+Service Request timeout (3GPP T3517 procedure) and the NAS/RRC retry or
+new registration after AMF reconnection; eliminate stale RRC_CONNECTED/SRB
+state; prove fresh NAS→NGAP initial UE signalling and successful PDU + both
+F1-U/NG-U directions without recreating UE or DU. Preserve a strict upper
+bound on retry frequency and test the negative cases. **NO_GO**.
 
 ## Stage 5G — isolated Release 16 NAS cause-#9 fallback (candidate only)
 
