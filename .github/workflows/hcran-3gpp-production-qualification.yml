@@ -113,7 +113,7 @@ jobs:
           assert result['deploy_authorized'] is False
           assert result['real_f1_handover_observed'] is False
           assert result['ue_pdu_session_continuity_observed'] is False
-          print('PASS: pinned F1 handover implementation exists; runtime handover still NOT VERIFIED')
+          print('PASS: pinned F1 handover source exists; this source-audit alone cannot prove runtime. Stage 4Z run 43391519669 separately passed isolated RFsim mobility; staging remains NO_GO')
           PY
           echo "::warning::Green offline checks are NOT production authorization. Staging security and F1 handover require real synthetic UE and 5GC runtime evidence."
 
