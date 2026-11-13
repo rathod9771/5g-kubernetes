@@ -35,7 +35,7 @@ def probe(opts):
     root=Path(__file__).resolve().parents[1]
     sys.path.insert(0,str(root/"stage5e"))
     import amf_mo_service_resumption as stage5e
-    base=stage5e.create_probe(opts)  # installs AMF-only core launcher
+    base=stage5e.build(opts)  # installs AMF-only core launcher; Stage5E exposes build(), not create_probe()
     original_ue=base.__class__.ue  # original proven Stage4Z, not Stage5E
     from run_ue_registration import IPS, name, sh
 
@@ -58,6 +58,8 @@ def probe(opts):
         before_id=ue_id()
         before_ip=self.ue_ip()
         cut=len(self.logs("ue"))
+        self._stage5h_ue_offset=cut
+        self._stage5h_cu_offset=len(self.logs("cu"))
         prev_ng=len(NGAP.findall(self.logs("cu")))
         if amf_count()!=1 or prev_ng<1:
             raise RuntimeError("Pre-fault AMF/NGAP missing")
@@ -144,7 +146,48 @@ def probe(opts):
                     mode=evidence["mode"],f1u_ngu=gtpu["packet_counts"],
                     unchanged_ue=True,production_decision="NO_GO")
 
-    base.ue=types.MethodType(stage,base)
+    def instrumented_stage(self):
+        try:
+            return stage(self)
+        finally:
+            # Capture the *actual* post-fault NAS/RRC/NGAP sequence before
+            # superclass cleanup removes Docker containers. Unlike Probe.capture()
+            # this extracts from complete logs, not a truncated final 60 KiB.
+            # Key material, synthetic subscriber secrets and full log dumps are
+            # deliberately NOT uploaded.
+            from run_ue_registration import SIM
+            keys=tuple(str(v) for v in SIM.values() if v)
+            allow=(
+                "Service Request","Service Reject","Registration Request",
+                "Registration Accept","PDU Session Establishment",
+                "RRC moved into IDLE","RRC Release","NR_NAS_CONN_RELEASE_IND",
+                "NAS_INITIAL_UL_TRANSFER","Stage5G","NAS_MO_UL_DATA",
+                "RRCSetup","RRC Setup","RRCReconfigurationComplete",
+                "UE Context Release", "Received NGSetupResponse",
+                "NG Setup", "NGAP", "F1AP",
+            )
+            report={"schema":"hcran-stage5h-protocol-trace-v1",
+                    "scope":"postfault only, selected NAS/RRC/NGAP markers",
+                    "production_decision":"NO_GO"}
+            for role in ("ue","cu"):
+                try:
+                    raw=self.logs(role)
+                    offset=getattr(self,"_stage5h_"+role+"_offset",len(raw))
+                    selected=[]
+                    for line in raw[offset:].splitlines():
+                        if not any(word in line for word in allow):
+                            continue
+                        for secret in keys:
+                            line=line.replace(secret,"[SYNTH]")
+                        selected.append(line[:450])
+                    report[role]={"total_filtered":len(selected),
+                                  "lines":selected[-400:],
+                                  "offset_chars":offset}
+                except Exception as e:
+                    report[role]={"capture_error":type(e).__name__}
+            (self.out/"stage5h-postfault-protocol-trace.json").write_text(
+                json.dumps(report,indent=2)+"\n")
+    base.ue=types.MethodType(instrumented_stage,base)
     return base
 
 
