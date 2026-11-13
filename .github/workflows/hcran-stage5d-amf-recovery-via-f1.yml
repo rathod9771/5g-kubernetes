@@ -7,8 +7,7 @@ on:
     paths:
       - .github/workflows/hcran-stage5d-amf-recovery-via-f1.yml
       - experiments/oai-ngap-2026w13/stage5d/**
-      - .github/workflows/hcran-stage5d-real-f1-handover.yml
-      - experiments/oai-ngap-2026w13/stage5d/f1_handover_runtime.py
+      - experiments/oai-ngap-2026w13/stage4z/f1_handover_runtime.py
       - experiments/oai-ngap-2026w13/stage4z/evidence_contract.py
   workflow_dispatch:
 
@@ -131,7 +130,7 @@ jobs:
             --verify-gtpu \
             2>&1 | tee "$RUNNER_TEMP/f1-stage5d-console.txt"
           "$RUNNER_TEMP/f1-stage5d-venv/bin/python" \
-            "$GITHUB_WORKSPACE/qualification/experiments/oai-ngap-2026w13/stage5d/evidence_contract.py" \
+            "$GITHUB_WORKSPACE/qualification/experiments/oai-ngap-2026w13/stage4z/evidence_contract.py" \
             "$RUNNER_TEMP/f1-stage5d-evidence/stage4z-f1-handover-evidence.json"
           python3 - <<'PY'
           import json, os, pathlib
