@@ -166,9 +166,10 @@ An isolated source-pinned rebuild is specified in
 `scripts/hcran_build_pinned_f1_cu.sh` and
 `.github/workflows/hcran-f1-cu-build-v2.yml`, compiling OAI upstream commit
 `4941f44043e6dcec81b2041e83dbae4bee6f737d` plus the reviewed NGAP
-retry patch and its telnetsrv/CI modules. Build run `43388901151` was
-**in progress when this section was authored**; never infer a successful
-candidate artifact without checking that run's actual conclusion.
+retry patch and its telnetsrv/CI modules. Build run `43388901151`
+**PASSED compilation, linkage, image packaging, and artifact upload**.
+This produced a disposable image archive artifact `14019769912`;
+it is neither a hardened production image nor a tested handover result.
 
 The disposable runtime harness
 `experiments/oai-ngap-2026w13/stage4z/f1_handover_runtime.py` and the
