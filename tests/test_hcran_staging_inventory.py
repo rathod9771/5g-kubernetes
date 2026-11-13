@@ -26,7 +26,7 @@ def fixture():
     for role in roles:
         deployments.append({
             "metadata": {"name": role, "generation": 3},
-            "spec": {"replicas": 1, "template": {"spec": {"containers": [{
+            "spec": {"replicas": 1, "template": {"spec": {"automountServiceAccountToken": False, "containers": [{
                 "name": "cu" if role.endswith("-cu") else "du",
                 "image": "registry.invalid/hcran@sha256:" + sha,
                 "securityContext": {
@@ -40,11 +40,14 @@ def fixture():
                        "updatedReplicas": 1, "observedGeneration": 3,
                        "unavailableReplicas": 0},
         })
+        desired_security = copy.deepcopy(
+            deployments[-1]["spec"]["template"]["spec"]["containers"][0]["securityContext"])
         pods.append({
             "metadata": {"name": role + "-hash", "labels": {"app": role}},
-            "spec": {"nodeName": "staging-node",
+            "spec": {"nodeName": "staging-node", "automountServiceAccountToken": False,
                      "containers": [{"name": "cu" if role.endswith("-cu") else "du",
-                                     "image": "registry.invalid/hcran@sha256:" + sha}]},
+                                     "image": "registry.invalid/hcran@sha256:" + sha,
+                                     "securityContext": desired_security}]},
             "status": {
                 "phase": "Running",
                 "conditions": [{"type": "Ready", "status": "True"}],
@@ -133,6 +136,18 @@ class StagingInventoryTests(unittest.TestCase):
                 selector={"app":"another-deployment"}),
             "container_not_running": lambda s, p: s["pods"]["items"][0]["status"]["containerStatuses"][0].update(
                 state={"waiting": {"reason": "CrashLoopBackOff"}}),
+            "pod_added_privileged": lambda s, p: s["pods"]["items"][0]["spec"]["containers"][0]["securityContext"].update(
+                privileged=True),
+            "pod_removed_token_guard": lambda s, p: s["pods"]["items"][0]["spec"].update(
+                automountServiceAccountToken=True),
+            "deployment_removed_token_guard": lambda s, p: s["deployments"]["items"][0]["spec"]["template"]["spec"].update(
+                automountServiceAccountToken=True),
+            "pod_host_access": lambda s, p: s["pods"]["items"][0]["spec"].update(hostNetwork=True),
+            "pod_token_projection": lambda s, p: s["pods"]["items"][0]["spec"].update(
+                volumes=[{"name": "service-token", "projected": {
+                    "sources": [{"serviceAccountToken": {"path": "token"}}]}}]),
+            "pod_injected_init_container": lambda s, p: s["pods"]["items"][0]["spec"].update(
+                initContainers=[{"name": "unreviewed-init", "image": "unknown"}]),
         }
         for label, mutate in changes.items():
             with self.subTest(label=label):
