@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   du-radio-recovery-without-ue-restarts:
-    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4p-dual-ue-amf-recovery'
+    if: github.ref == 'refs/heads/experiment/hcran-production-qualification-20261113'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
