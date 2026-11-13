@@ -4,7 +4,7 @@
 No production connectivity; fixed synthetic 208/93 subscriber, never any
 user's IMSI or security keys. Fail closed if real runtime proof is absent.
 """
-import argparse, datetime, json, pathlib, re, shutil, subprocess, sys, time, traceback
+import argparse, datetime, json, os, pathlib, re, shutil, subprocess, sys, time, traceback
 import yaml
 from pymongo import MongoClient
 from gtpu_wire import analyze
@@ -191,6 +191,18 @@ class Probe:
         cu=configmap(render/"cu.yaml","ConfigMap","hcran-oai-cu-config")["data"]["gnb.conf"]
         du=configmap(render/"macro.yaml","ConfigMap","hcran-oai-macro-config")["data"]["gnb.conf"]
         cu=cu.replace("POD_IP",IPS["cu"]).replace("AMF_IP",IPS["core"])
+        # Experimental Stage 4P ONLY: turn on E2 for a disposable CU
+        # without changing canonical H-CRAN chart values or production pods.
+        e2_ric=os.getenv("HCRAN_CI_E2_RIC","")
+        if e2_ric:
+            if e2_ric!="172.29.76.1":
+                raise RuntimeError("E2 RIC address outside isolated CI bridge")
+            if "e2_agent" in cu:
+                raise RuntimeError("Conflicting duplicate E2 configuration")
+            cu += ('\ne2_agent = {\n'
+                   '  near_ric_ip_addr = "'+e2_ric+'";\n'
+                   '  sm_dir = "/usr/local/lib/flexric/";\n'
+                   '};\n')
         du=du.replace("POD_IP",IPS["macro"]).replace("CU_IP",IPS["cu"])
         if "gNB_DU_ID = 100;" not in du:raise RuntimeError("wrong H-CRAN macro DU identity")
         if IPS["core"] not in cu or IPS["cu"] not in du:raise RuntimeError("IP substitution failed")
