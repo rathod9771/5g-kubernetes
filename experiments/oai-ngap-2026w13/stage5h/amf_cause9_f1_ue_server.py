@@ -65,6 +65,14 @@ def probe(opts):
             raise RuntimeError("Pre-fault AMF/NGAP missing")
         self.record("T100-before-AMF-real-two-way-F1-and-PDU","PASS",
                     pdu_ip=before_ip,ue_process_unchanged=True)
+        # Experimental A/B isolation of pre-NGAP uplink-SR races:
+        # drain residual ICMP/TUN traffic from prior F1 handovers
+        # BEFORE inducing AMF outage. No UE/CU/DU restart allowed.
+        self.record("T100A-prefault-UL-traffic-quiescence","OBSERVED",
+                    seconds=15)
+        time.sleep(15)
+        if ue_id()!=before_id or self.ue_ip()!=before_ip:
+            raise RuntimeError("UE changed during prefault quiescence")
         stop='found=0; for f in /proc/[0-9]*/comm; do [ -f "$f" ] || continue; if [ "$(cat "$f")" = "open5gs-amfd" ]; then kill -TERM "$(echo "$f" | cut -d/ -f3)"; found=1; fi; done; test "$found" = 1'
         sh("docker","exec",name("core"),"/bin/sh","-ec",stop,timeout=25)
         stop_end=time.monotonic()+25
@@ -85,6 +93,18 @@ def probe(opts):
             time.sleep(3)
         else:
             raise RuntimeError("No new NG Setup Response")
+        # If SR fired during AMF outage, NGAP had no associated AMF
+        # to forward the initial UE message. A retry must be implemented
+        # and qualified separately; do NOT misclassify this as cause-9.
+        premature=self.logs("ue")[cut:].count(
+            "Generate initial NAS message: Service Request")
+        self.record("T102A-pre-NGAP-service-request-race","OBSERVED",
+                    premature_service_requests=premature)
+        if premature:
+            raise RuntimeError(
+                "UE Service Request fired while AMF disconnected; "
+                "source-pinned UE needs bounded T3517/retry/RRC recovery, "
+                "not a cause-9 registration workaround")
         # Real UE-originated app data triggers TS24.501 mobile originated SR.
         # Never inject arbitrary RRC or fake NAS. Do not let optional ping
         # process exit code 137 mask the real UE lifecycle checks.
