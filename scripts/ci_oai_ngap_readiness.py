@@ -45,6 +45,9 @@ NOT_VERIFIED = {
     "STAGING_3_CYCLE_DUAL_DU_RECOVERY": "Offline AMF fault cycle not reproduced on qualified staging topology with UE",
     "STAGING_OSM_ROLLBACK": "No actual OSM-controlled staging rollback and restored image digest",
     "STAGING_HEALTH_PERFORMANCE": "No sustained resource/PSI/restarts/registration SLO window",
+    "SECURITY_ALGORITHM_NEGOTIATION_AND_COMPATIBILITY": "Baseline OAI CU includes NEA0 and NIA0 options; NEA2/NIA2-only staging candidate has only static Helm tests, no real UE and Open5GS compatibility or security-procedure evidence",
+    "HCRAN_POD_PRIVILEGE_AND_NETWORK_ISOLATION_REVIEW": "Current gNB CU and DU containers run privileged; no reviewed least-privilege, Pod Security, network isolation, secret delivery or production exception decision",
+    "F1_HANDOVER_UE_RFSIM_AND_CU_TELNET_BUILD": "Upstream 2026.w13 contains inter-DU F1 handover code; patched CU build lacks explicit telnetsrv module and no UE-server two-DU mobility runtime evidence",
     "PROVENANCE_ROLLBACK_APPROVAL": "Experimental artifact is expiring, no approved immutable release and operator signoff",
 }
 
