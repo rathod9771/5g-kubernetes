@@ -122,3 +122,119 @@ live inventory and capacity checks.
 
 **Decision:** NO-GO. Green chart/unit/inventory CI is not permission to
 deploy. Runtime recovery, mobility, RF and OSM staging acceptance remain open.
+
+## November 13 production qualification additions — source/CI only
+
+**No H-CRAN image or Kubernetes/OSM workload has been released or deployed.**
+The following are *staging candidate controls*, not green conformance tests.
+
+### Stage 4W inter-DU mobility source feasibility
+
+OAI `2026.w13` at
+`openair2/RRC/NR/rrc_gNB_mobility.c` implements an F1 mobility path including
+`nr_rrc_trigger_f1_ho`, `nr_HO_F1_trigger_telnet`, target-DU selection and
+F1 UE Context operations. The pinned upstream
+`doc/handover-tutorial.md` requires **UE-as-RFsim-server**, both DUs as
+clients, distinct SSB position bitmaps, and a gNB built with
+`--build-lib telnetsrv` for manual `ci trigger_f1_ho`. The older patched CU
+artifact was built without an explicit telnetsrv module. Do **not** send a
+remote telnet control to the running HP cluster.
+
+A SHA-pinned audit is provided by
+`scripts/hcran_stage4w_mobility_preflight.py`. It returns
+`PINNED_SOURCE_HAS_F1_HANDOVER_PATH` but `runtime_status=BLOCKED`.
+The temporary Helm overlays
+`helm/cran-oai/du/values-hcran-mobility-macro.yaml` and
+`values-hcran-mobility-small.yaml` render SSB bitmaps 1 and 2 respectively
+and connect to a test-only `oai-ue-rfsim` server name. These overlays are
+for a **disposable, one-UE/two-DU runner**, never the active two-UE deployment.
+Actual macro→small and small→macro transitions, packet interruption, UE IP
+continuity and correlated F1AP/RRC evidence have **not** passed.
+
+### Security hardening, not yet qualified at runtime
+
+The legacy OAI H-CRAN CU config advertises `nea0` and allows `nia0`;
+the CU and DU Pods are also privileged. We added opt-in, isolated
+compatibility profiles:
+
+- `helm/cran-oai/cu/values-hcran-secure-staging.yaml`:
+  NEA2 and NIA2 only, static Helm validation and negative tests;
+- `helm/cran-oai/{cu,du}/values-hcran-pod-security-staging.yaml`:
+  `privileged: false`, `allowPrivilegeEscalation: false`,
+  `capabilities.drop: [ALL]`, `seccompProfile.type: RuntimeDefault`.
+  This policy must undergo complete SCTP, RFsim, NGAP and GTP-U runtime
+  compatibility testing. `readOnlyRootFilesystem` remains false pending
+  verified OAI temporary-file handling.
+
+The baseline configuration has been preserved, so none of this evidence
+means the live HP pods are secure. UP integrity is a separate optional
+3GPP capability/policy decision; the overlay does **not** claim that
+`drb_integrity=no` has been reviewed or altered.
+
+The isolated Stage 4X GitHub workflow
+`.github/workflows/hcran-nea2-dual-ue-isolated.yml` attempts two real
+synthetic UEs and checks NAS/PDU and F1-U/NG-U through the NEA2/NIA2
+candidate. A successful run alone does not decode or establish the negotiated
+security mode and is not a staging-cluster signoff. Never count an incomplete
+or failed run as a pass.
+
+### Read-only staging inventory and CPU/IO-pressure gate
+
+A bounded evaluator at `scripts/hcran_staging_inventory.py` reads
+Deployments, Pods, Services, and the public CU ConfigMap through **GET
+only**, never Secrets or UE subscriber data. It requires a separate per-node
+pressure snapshot, exact 1/1 CU/macro/small pod availability, zero current
+restarts, immutable image digest in Deployment specs, no E2 agent or E2
+service port, NEA2/NIA2 policy and a nonprivileged container security
+context.
+
+A synthetic healthy fixture can return
+`READY_FOR_ISOLATED_STAGING_TEST_ONLY`. Even that output includes
+`production_decision=NO_GO` and never authorizes rollout. An incomplete or
+unhealthy real snapshot returns `BLOCKED`.
+
+Operator command example (safe read-only **after establishing an isolated
+staging context and on-node pressure evidence**):
+
+```bash
+# Run this on each actual RAN node. Use the Kubernetes nodeName, not an alias.
+python3 scripts/hcran_node_pressure.py \
+  --node <kubernetes-node-name> --output /tmp/hcran-node-pressure.json
+
+# For a single-node staging test, the JSON above is the pressure input.
+# For multi-node staging, combine all node entries in a reviewed JSON file.
+python3 scripts/hcran_staging_inventory.py \
+  --live-read-only \
+  --context <explicit-staging-context> \
+  --namespace <isolated-staging-namespace> \
+  --pressure /tmp/hcran-node-pressure.json \
+  --report /tmp/hcran-staging-inventory.json
+```
+
+This makes no mutations, and will likely **block** the existing high-load HP
+node. CPU PSI `some avg10 <25`, IO PSI `some avg10 <10` and 1-minute
+load/logical-CPU ratio `<1.5` are conservative **project staging safety
+thresholds**, not 3GPP values. They are adjustable only by documented review.
+Prometheus/Grafana scrape success, protocol evidence, and long-duration SLO
+qualification are separate checks.
+
+### What actually permits a production release
+
+The current `scripts/ci_oai_ngap_readiness.py` report is an **inventory,
+not a production approval authority**. It remains NO-GO until all recorded
+3GPP-oriented service, safety, security, mobility, stability and OSM staging
+gates have direct evidence. Each result needs an exact image digest,
+test topology, run time, independent observer, packet or event samples,
+negative test, and reproducible pass/fail criteria.
+
+A reviewed staging release must separately demonstrate: NAS/PDU session
+creation and modification/release; F1 mobility in both directions with
+preserved user-plane traffic; appropriate RRC failure handling; AMF/core
+outage recovery; sustained throughput/packet loss under bounded node
+pressure; active Prometheus/Grafana data; and *actual* OSM-managed upgrade
+plus rollback with restored state/digests. Security should be qualified
+with authorized test SIMs/keys and no credential leakage.
+
+**No automatic deploy, merge into main, OSM catalog replacement or HP
+Kubernetes mutation may be triggered by passing these offline checks.**
+Operator authorization and a reversible change window remain required.
