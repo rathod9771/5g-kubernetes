@@ -155,6 +155,45 @@ unassisted UE PDU service did **not** recover within 150 seconds. Stage 4U
 only proved supervisor-triggered synthetic UE process restarts. Such restarts
 must not be relabeled as native UE self-recovery.
 
+## Stage 4Z — reproducible F1 mobility experiment, NOT a release gate pass
+
+The actual patched CU image used by the earlier successful dual-UE trials
+**lacks both** `libtelnetsrv.so` and `libtelnetsrv_ci.so` (GitHub-hosted
+binary audit run `43388023099`). Consequently the upstream OAI manual
+F1 handover command cannot be assumed available in that image.
+
+An isolated source-pinned rebuild is specified in
+`scripts/hcran_build_pinned_f1_cu.sh` and
+`.github/workflows/hcran-f1-cu-build-v2.yml`, compiling OAI upstream commit
+`4941f44043e6dcec81b2041e83dbae4bee6f737d` plus the reviewed NGAP
+retry patch and its telnetsrv/CI modules. Build run `43388901151` was
+**in progress when this section was authored**; never infer a successful
+candidate artifact without checking that run's actual conclusion.
+
+The disposable runtime harness
+`experiments/oai-ngap-2026w13/stage4z/f1_handover_runtime.py` and the
+associated opt-in GitHub workflow
+`.github/workflows/hcran-stage4z-real-f1-handover.yml`
+use a **single test UE as RFsim server** and two independently
+configured DU clients (SSB position bitmaps 1 and 2), as required by
+the pinned OAI handover tutorial. Only an explicitly approved synthetic
+experiment may expose the unauthenticated telnet CI interface on the
+runner's disposable Docker bridge; **never enable this telnet interface
+on a production CU**.
+
+Stage 4Z requires both macro→small and small→macro transitions, a
+post-command RRCReconfigurationComplete log, updated F1 UE context,
+source DU release, unchanged UE PDU IP, 6/6 post-handover ICMP replies
+and nonzero bidirectional GTP-U F1-U and NG-U packet counts in
+the *target DU* for each transition. An ACK or sent telnet command
+alone is explicitly insufficient. The independently unit-tested
+`stage4z/evidence_contract.py` rejects fabricated completeness,
+but its synthetic unit tests do not prove a live handover.
+
+A Stage 4Z success, if later obtained, remains **disposable RFsim
+integration evidence**, not 3GPP conformance, physical radio mobility
+or production permission.
+
 ## 6. Stage 3 — real OSM staging lifecycle
 
 Require an approved immutable OCI digest, versioned Helm/OSM NSD+KDU,
