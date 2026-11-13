@@ -44,6 +44,7 @@ NON_PACKAGE_FILES = frozenset((
     'scripts/hcran_stage4w_mobility_preflight.py',
     'scripts/hcran_staging_inventory.py', 'scripts/hcran_node_pressure.py',
     'scripts/hcran_build_pinned_f1_cu.sh',
+    'scripts/hcran_build_pinned_w45_ue_cause9.sh',
     'scripts/hcran_as_security_log_audit.py',
     'scripts/hcran_stage4w_mobility_preflight.py', 'scripts/hcran_staging_inventory.py',
     'scripts/hcran_node_pressure.py',
