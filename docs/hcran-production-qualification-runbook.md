@@ -378,6 +378,37 @@ algorithm conformance, adverse security test matrix, or production
 security certification. All staging acceptance and independent review
 remain mandatory, and the release decision is **NO_GO**.
 
+## Stage 5H — actual RRC/NAS timing failure after AMF-only restart (negative evidence)
+
+[Stage5H run 43409824705](https://github.com/rathod9771/5g-kubernetes/actions/runs/43409824705)
+**FAILED**, but its first 52.4 seconds independently PASSED real synthetic
+UE registration/PDU and bidirectional F1 macro→small→macro handover on
+W45 DU/UE, a test-only pinned CU and disposable Open5GS.
+
+During the deliberate AMF-only restart, the UE entered **RRC_IDLE** and
+generated a real **44-byte Service Request**. RRC then performed random access,
+received RRC Setup and sent RRC Setup Complete with the buffered NAS payload,
+but the CU NGAP log explicitly recorded **"No AMF is associated to the gNB"**
+and **"No matching AMF found"** when it attempted to send the initial UE
+message. The CU received a new NG Setup Response only **later**. No
+post-fault NAS Service Reject cause #9, new Registration Accept, PDU Accept
+or GTP-U was demonstrated, so the experimental cause-#9 registration fallback
+**was not exercised in this trial**. This is a lost/premature Service Request
+race and/or missing bounded UE-side T3517 retry/abort sequence; it does not
+justify claiming that the fallback is correct or incorrect.
+
+The artifact `14029551684` includes a *postfault-only*, redacted
+`stage5h-postfault-protocol-trace.json` obtained from full Docker logs,
+rather than trusting the legacy truncated 60-KiB UE log. It preserves a
+verifiable RRC/NAS → NGAP chronological path even on experiment failure.
+
+[Stage5H rerun 43411113725](https://github.com/rathod9771/5g-kubernetes/actions/runs/43411113725)
+is a separate controlled **A/B experiment**: drain 15 seconds of prefault
+user-plane traffic, stop only AMF, then check for an unsolicited Service
+Request before deliberately sending new UL data **after** the new NGAP
+association. It must fail closed if the premature request recurs. This
+experiment is for diagnosis; it is NOT production UE recovery. **NO_GO**.
+
 ## Stage 5G — isolated Release 16 NAS cause-#9 fallback (candidate only)
 
 **Trigger and reason:** Stage 5E run
