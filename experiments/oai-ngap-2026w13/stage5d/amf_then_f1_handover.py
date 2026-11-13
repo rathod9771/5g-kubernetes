@@ -29,7 +29,27 @@ def create_probe(opts):
     import f1_handover_runtime as stage4z
     base=stage4z.build_probe(opts)
     previous_ue=base.ue
+    import run_ue_registration as core_runner
     from run_ue_registration import IPS, name, sh
+
+    # Stage4O is pinned to the old bootstrap where the core launcher uses
+    # wait -n. That exits PID 1 as soon as AMF stops, turning an AMF-only
+    # fault into a FULL CORE outage. Reproduce Stage4P's validated
+    # 'wait' behavior only inside this disposable runner. No host/OSM writes.
+    bootstrap_sh=core_runner.sh
+    def preserve_non_amf_core(*argv,**kwargs):
+        cmd=tuple(str(x) for x in argv)
+        if cmd[:2]==("docker","run") and "--name" in cmd:
+            idx=cmd.index("--name")
+            if idx+1<len(cmd) and cmd[idx+1]==name("core"):
+                launcher=base.priv/"start-core.sh"
+                contents=launcher.read_text()
+                if not contents.endswith("done\\nwait -n\\n"):
+                    raise RuntimeError("Core bootstrap format changed: cannot safely isolate AMF fault")
+                launcher.write_text(contents[:-len("wait -n\\n")]+"wait\\n")
+                base.record("T79-AMF-only-core-launcher-keeps-other-NFs-alive","PASS")
+        return bootstrap_sh(*cmd,**kwargs)
+    core_runner.sh=preserve_non_amf_core
 
     def count_amf():
         script='n=0; for f in /proc/[0-9]*/comm; do [ -f "$f" ] || continue; if [ "$(cat "$f")" = "open5gs-amfd" ]; then n=$((n+1)); fi; done; echo "$n"'
