@@ -1,0 +1,13 @@
+# NOT PRODUCTION-READY: explicit non-privileged container policy for isolated trials.
+# Apply this only after the canonical H-CRAN values file. Runtime validation
+# must prove SCTP/F1, GTP-U, OAI timing and UE service remain operational.
+securePodCandidate: true
+containerSecurityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+  readOnlyRootFilesystem: false # OAI currently writes /tmp config/logs
