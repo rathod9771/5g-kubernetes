@@ -90,13 +90,13 @@ def build_probe(args):
                     raise RuntimeError("RIC/E2 is forbidden in H-CRAN F1 trial")
             if "gNB_DU_ID = 100;" not in macro or "gNB_DU_ID = 101;" not in small:
                 raise RuntimeError("Macro/small DU ID mismatch")
-            if 'ciphering_algorithms = ( "nea2" );' not in cu:
+            if not re.search(r'ciphering_algorithms\s*=\s*\(\s*"nea2"\s*\)\s*;',cu):
                 raise RuntimeError("F1 mobility candidate must use strict NEA2 staging CU")
-            if 'integrity_algorithms = ( "nia2" );' not in cu:
+            if not re.search(r'integrity_algorithms\s*=\s*\(\s*"nia2"\s*\)\s*;',cu):
                 raise RuntimeError("F1 mobility candidate must use strict NIA2 staging CU")
             if 'ssb_PositionsInBurst_Bitmap' not in macro or 'ssb_PositionsInBurst_Bitmap' not in small:
                 raise RuntimeError("Missing distinct SSB positions")
-            if 'serveraddr = "'+IPS["ue"]+'";' not in macro or 'serveraddr = "'+IPS["ue"]+'";' not in small:
+            if not all(re.search(r'serveraddr\s*=\s*"'+re.escape(IPS["ue"])+r'"\s*;',v) for v in (macro,small)):
                 raise RuntimeError("DU RFsim must explicitly point at UE RF server")
 
         def telnet_command(self, cmd):
