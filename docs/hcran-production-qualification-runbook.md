@@ -345,13 +345,38 @@ NGAP reconnect. The test actively generates UE application uplink traffic
 to request NAS service, then requires **both** restored PDU interfaces,
 6/6 ICMP replies each, fresh NAS resumption logs, and independent
 F1-U/NG-U data-plane proof. It must fail closed on a missing UE or
-missing GTP-U. **Pending actual workflow results:** no PASS can be claimed
-from source inspection alone.
+missing GTP-U. First run `43398545726` failed **before UE registration** due the
+new UE 2026.w45 RFsim beam-map format being incompatible with the older
+DU 2026.w25 RFsim receiver (reported
+`transmitter has enabled beam simulation while this receiver has not`).
+This is a **version-compatibility failure, not recovery evidence**.
+The follow-up isolates this variable using DU and UE both 2026.w45
+(run `43398893326`); its final NAS/UP recovery outcome requires
+independent inspection. No PASS can be claimed from source inspection
+or a still-running job alone.
 
 A 5G Service Request restoring existing PDU service need not produce
 a *new Registration Accept or PDU Session Establishment Accept*.
 The acceptance contract therefore focuses on real service-state
 restoration and post-fault GTP-U, not merely fresh initial-attach logs.
+
+## Stage 5F — observed AS NEA2/NIA2 security procedure (positive evidence)
+
+[Run 43399191636](https://github.com/rathod9771/5g-kubernetes/actions/runs/43399191636),
+sanitized artifact `14023533861`, **PASSED** a read-only audit of actual
+Stage 4Z CU+UE logs from successful runtime handover. The CU selected
+AS ciphering algorithm **2/NEA2** and integrity algorithm **2/NIA2**,
+sent SecurityModeCommand, received UE SecurityModeComplete, and proceeded
+to UE RRC reconfiguration, registration and PDU establishment. The
+UE also logged receipt/response to the security-mode procedure.
+Only proof hashes and Boolean claims were exported; raw logs and subscriber
+identities were not republished by this audit.
+
+This establishes a **logged real AS security-mode procedure**, not
+independent PDCP on-wire ciphertext verification, NAS security-mode
+algorithm conformance, adverse security test matrix, or production
+security certification. All staging acceptance and independent review
+remain mandatory, and the release decision is **NO_GO**.
 
 ## 6. Stage 3 — real OSM staging lifecycle
 
