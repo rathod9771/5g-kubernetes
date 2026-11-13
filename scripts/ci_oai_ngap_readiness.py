@@ -26,6 +26,8 @@ KNOWN = [
     ("HCRAN_DUAL_F1_MACRO_UE_USER_PLANE", 43193089291, "oai-hcran-dual-f1-live-traffic-"),
     ("HCRAN_DUAL_F1_SMALL_UE_USER_PLANE", 43193891521, "oai-hcran-small-ue-userplane-"),
     ("HCRAN_TWO_UE_CONCURRENT_USER_PLANE", 43194751671, "oai-hcran-dual-ue-traffic-"),
+    ("HCRAN_BOUNDED_TWO_UE_SOAK", 43224919656, "oai-hcran-dual-ue-soak-"),
+    ("HCRAN_SUPERVISED_SYNTHETIC_UE_RECOVERY_AFTER_AMF", 43367213888, "oai-hcran-supervised-ue-recovery-"),
     ("HCRAN_ASSISTED_TWO_UE_RECOVERY_AFTER_FULL_5GC_RESTART", 43209876014, "oai-hcran-assisted-dual-ue-recovery-"),
     ("HCRAN_CONTROLLED_TWO_UE_RECOVERY_AFTER_AMF_ONLY_FAULT", 43220775040, "oai-hcran-controlled-ue-reattach-"),
     ("OSM_OFFLINE_SIMULATION", 43165822749, "oai-ngap-stage4h-offline-osm-"),
@@ -35,9 +37,9 @@ KNOWN = [
 NOT_VERIFIED = {
     "RC_CONTROL_ACKNOWLEDGEMENT": "No live E2SM-RC control and outcome evidence",
     "MULTI_CYCLE_NAS_PDU_SERVICE_SLO": "Only single bounded isolated UE attach and PDU proved; no repeated registrations or sustained service SLO",
-    "DATA_PLANE_THROUGHPUT_AND_LOSS": "Four loss-free internal ICMP probes are positive connectivity proof, not a throughput or loss-under-load benchmark",
+    "DATA_PLANE_THROUGHPUT_AND_LOSS": "Stage 4T passed 6 rounds with 60/60 ICMP replies per UE over ~97 s; not a sustained throughput or load-under-pressure benchmark",
     "FULL_5GC_RESTART_AUTO_UE_DATA_RECOVERY": "Stage 4P run 43208820608 FAILED: NGAP reconnected in 36.19 s, F1-C remained connected, but both UE TUNs/DRBs were released and data did not recover automatically",
-    "AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY": "AMF-only restart tested in 43218236191 and 43219517357. Both DUs retained F1-C and patched NGAP reconnected, but BOTH UEs lost NAS/PDU/TUN service and did not auto-recover within 150s. Controlled simulator restart passed only in 43220775040; autonomous recovery is a NO-GO",
+    "AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY": "AMF-only failure tests 43218236191 and 43219517357: patched NGAP reconnected but both UEs failed to restore NAS/PDU/TUN unassisted within 150 s. Stage 4U (43367213888) achieved supervised recovery by explicitly restarting each synthetic UE once; native UE self-recovery is still NO-GO",
     "INDEPENDENT_STAGING_OBSERVER_CLOCK": "No independent timestamped observer and clock-offset acceptance in staging",
     "STAGING_3_CYCLE_DUAL_DU_RECOVERY": "Offline AMF fault cycle not reproduced on qualified staging topology with UE",
     "STAGING_OSM_ROLLBACK": "No actual OSM-controlled staging rollback and restored image digest",
@@ -93,7 +95,7 @@ def main():
         "production_deployment_authorized": False,
         "verified_ci_and_offline_evidence": observed,
         "outstanding_runtime_and_release_gates": missing,
-        "rule": "Two concurrent UE/PDU/F1-U/NG-U isolated functional smoke tests passed, and real KPM indications have passed, but effective RC control, automatic UE service recovery after AMF loss, sustained staging SLO, actual OSM rollback and release approval remain required.",
+        "rule": "Concurrent dual-UE user plane, KPM indication delivery, bounded soak, and explicitly supervised test-UE recovery passed in isolated CI. Intrinsic UE recovery, effective RC control, sustained staging SLO, actual OSM-controlled rollback, immutable artifact distribution and operator approval remain required.",
     }
     dst.write_text(json.dumps(report, indent=2) + "\n")
     print(f"Production decision: NO_GO. CI historical evidence: "
