@@ -22,7 +22,7 @@ jobs:
     env:
       CORE_IMG: gradiant/open5gs:2.7.6
       MONGO_IMG: mongo:6.0
-      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w25
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w45
       UE_IMG: oaisoftwarealliance/oai-nr-ue@sha256:bc18556a4afd6d3030767c0a7127abd51f2fff2a0bc5a04988c24ee258aea512
       CU_IMG: oai-hcran-f1-telnet-test-2
     steps:
