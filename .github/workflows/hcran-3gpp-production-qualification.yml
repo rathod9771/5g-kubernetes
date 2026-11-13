@@ -12,6 +12,8 @@ on:
       - tests/test_hcran_3gpp_contract.py
       - tests/test_hcran_stage4w_preflight.py
       - tests/test_hcran_staging_inventory.py
+      - tests/test_hcran_stage4z_evidence_contract.py
+      - experiments/oai-ngap-2026w13/stage4z/**
       - scripts/hcran_staging_inventory.py
       - scripts/hcran_node_pressure.py
       - scripts/hcran_stage4w_mobility_preflight.py
@@ -51,6 +53,8 @@ jobs:
           python3 -m unittest discover -s tests -p test_hcran_3gpp_contract.py -v
           python3 -m unittest discover -s tests -p test_hcran_stage4w_preflight.py -v
           python3 -m unittest discover -s tests -p test_hcran_staging_inventory.py -v
+          python3 -m py_compile experiments/oai-ngap-2026w13/stage4z/f1_handover_runtime.py
+          python3 -m unittest discover -s tests -p test_hcran_stage4z_evidence_contract.py -v
 
       - name: Download immutable tagged OAI mobility source for read-only audit
         shell: bash
