@@ -103,6 +103,33 @@ class HCRAN3GPPTests(unittest.TestCase):
             self.assertIs(profile["e2Agent"]["enabled"], False)
             self.assertIs(profile["ric"]["enabled"], False)
 
+    def test_guarded_security_staging_overlay_has_no_null_cipher_or_integrity(self):
+        cu = "helm/cran-oai/cu"
+        overlay = cu + "/values-hcran-secure-staging.yaml"
+        result = render(cu, "", "hcran-oai-secure-staging", ("-f", overlay))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = next(d for d in objects(result.stdout) if d["kind"] == "ConfigMap")["data"]["gnb.conf"]
+        self.assertRegex(config, r'ciphering_algorithms\\s*=\\s*\\(\\s*"nea2"\\s*\\)')
+        self.assertRegex(config, r'integrity_algorithms\\s*=\\s*\\(\\s*"nia2"\\s*\\)')
+        self.assertNotIn('"nea0"', config)
+        self.assertNotIn('"nia0"', config)
+        self.assertIn('drb_integrity = "no"', config)
+
+    def test_guarded_security_rejects_weak_staging_override(self):
+        cu = "helm/cran-oai/cu"
+        overlay = cu + "/values-hcran-secure-staging.yaml"
+        attempts = [
+            ("--set-string", "radioSecurity.cipheringAlgorithms[0]=nea0"),
+            ("--set-string", "radioSecurity.integrityAlgorithms[0]=nia0"),
+            ("--set-string", "radioSecurity.cipheringAlgorithms[0]=nea1"),
+            ("--set-string", "radioSecurity.integrityAlgorithms[0]=nia1"),
+        ]
+        for args in attempts:
+            with self.subTest(args=args):
+                result = render(cu, "", "hcran-oai-secure-staging", ("-f", overlay, *args))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("requires only NEA2", result.stderr)
+
     def test_3gpp_gate_excludes_ric_and_fails_closed(self):
         path=ROOT/"scripts/ci_oai_ngap_readiness.py"
         spec=importlib.util.spec_from_file_location("hcran_readiness",path)
