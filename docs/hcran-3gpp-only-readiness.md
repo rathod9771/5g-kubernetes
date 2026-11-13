@@ -171,12 +171,21 @@ means the live HP pods are secure. UP integrity is a separate optional
 3GPP capability/policy decision; the overlay does **not** claim that
 `drb_integrity=no` has been reviewed or altered.
 
-The isolated Stage 4X GitHub workflow
-`.github/workflows/hcran-nea2-dual-ue-isolated.yml` attempts two real
-synthetic UEs and checks NAS/PDU and F1-U/NG-U through the NEA2/NIA2
-candidate. A successful run alone does not decode or establish the negotiated
-security mode and is not a staging-cluster signoff. Never count an incomplete
-or failed run as a pass.
+**Stage 4X isolated experiment PASSED:** [GitHub run 43378042762](https://github.com/rathod9771/5g-kubernetes/actions/runs/43378042762) executed
+`.github/workflows/hcran-nea2-dual-ue-isolated.yml` against the pinned
+patched CU, two DUs and disposable Open5GS. With only NEA2/NIA2 listed in
+the CU configuration, both UEs completed real registration and PDU setup,
+received IPs `10.45.0.2` and `10.45.0.3`, sent 6/6 ICMP replies each,
+and demonstrated bidirectional macro/small F1-U 14/12 each and NG-U 28/24
+G-PDUs in approximately 39.5 s of harness runtime. [Evidence artifact](https://github.com/rathod9771/5g-kubernetes/actions/runs/43378042762/artifacts/14015437694).
+The secure CU configuration is therefore **functionally compatible with
+the two simulated UE sessions** in this bounded trial.
+
+**Still NOT VERIFIED:** independently decoded negotiated AS security algorithms
+from the RRC SecurityModeCommand/Complete procedure, NAS security protection,
+security downgrade/reject cases, longer soak, non-privileged Kubernetes Pod
+compatibility, security review and immutable release image provenance. An
+offline pass is not a staging-cluster signoff or permission to deploy.
 
 ### Read-only staging inventory and CPU/IO-pressure gate
 
