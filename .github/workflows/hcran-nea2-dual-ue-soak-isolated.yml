@@ -148,7 +148,7 @@ jobs:
             'osm_staging_rollback_proven':False,
             'production_decision':'NO_GO'
           }
-          (base/'stage4y-3gpp-scope.json').write_text(json.dumps(scope,indent=2)+'\\n')
+          (base/'stage4y-3gpp-scope.json').write_text(json.dumps(scope,indent=2)+'\n')
           print('PASS: strict CU security profile and six dual-UE rounds; 60/60 ICMP per UE; NO-GO')
           PY
 
