@@ -5,6 +5,7 @@ on:
       - experiment/hcran-production-qualification-20261113
     paths:
       - .github/workflows/hcran-f1-cu-build-v2.yml
+      - scripts/hcran_build_pinned_f1_cu.sh
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,3 +26,29 @@ jobs:
           test -f experiments/oai-ngap-2026w13/ngap-retry-v2.patch
           test -f scripts/hcran_build_pinned_f1_cu.sh
           echo "PASS build script and source patch present; not production"
+
+      - name: Build OAI pinned patched CU and handover CI modules
+        shell: bash
+        env:
+          OAI_SOURCE: ${{ runner.temp }}/hcran-f1-oai-source
+          OUTPUT: ${{ runner.temp }}/hcran-f1-build-evidence
+          IMAGE: oai-hcran-f1-telnet-test-${{ github.run_number }}
+        run: bash scripts/hcran_build_pinned_f1_cu.sh
+
+      - name: Upload successful candidate for disposable F1 handover tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-f1-telnet-candidate-${{ github.run_number }}
+          path: ${{ runner.temp }}/hcran-f1-candidate-archive/hcran-f1-patched-telnet.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload build logs after success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-f1-build-evidence-${{ github.run_number }}
+          path: ${{ runner.temp }}/hcran-f1-build-evidence/
+          if-no-files-found: warn
+          retention-days: 7
