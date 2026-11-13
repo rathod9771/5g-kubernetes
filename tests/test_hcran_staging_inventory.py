@@ -1,5 +1,6 @@
 """Adversarial offline staging preflight tests; no Kubernetes API access."""
 import copy
+import datetime as dt
 import importlib.util
 import pathlib
 import unittest
@@ -20,7 +21,7 @@ def fixture():
     services = []
     for role in roles:
         deployments.append({
-            "metadata": {"name": role},
+            "metadata": {"name": role, "generation": 3},
             "spec": {"replicas": 1, "template": {"spec": {"containers": [{
                 "name": "cu" if role.endswith("-cu") else "du",
                 "image": "registry.invalid/hcran@sha256:" + sha,
@@ -31,17 +32,22 @@ def fixture():
                     "seccompProfile": {"type": "RuntimeDefault"},
                 },
             }]}}},
-            "status": {"readyReplicas": 1, "availableReplicas": 1},
+            "status": {"readyReplicas": 1, "availableReplicas": 1,
+                       "updatedReplicas": 1, "observedGeneration": 3,
+                       "unavailableReplicas": 0},
         })
         pods.append({
             "metadata": {"name": role + "-hash", "labels": {"app": role}},
-            "spec": {"nodeName": "staging-node"},
+            "spec": {"nodeName": "staging-node",
+                     "containers": [{"name": "cu" if role.endswith("-cu") else "du",
+                                     "image": "registry.invalid/hcran@sha256:" + sha}]},
             "status": {
                 "phase": "Running",
                 "conditions": [{"type": "Ready", "status": "True"}],
                 "containerStatuses": [{
                     "name": "cu" if role.endswith("-cu") else "du",
                     "ready": True, "restartCount": 0,
+                    "state": {"running": {"startedAt": "2026-11-13T01:00:00Z"}},
                 }],
             },
         })
@@ -50,7 +56,9 @@ def fixture():
         if role.endswith("-cu"):
             ports += [{"name":"ngap", "port":38412, "protocol":"SCTP"},
                       {"name":"ngu", "port":2152, "protocol":"UDP"}]
-        services.append({"metadata":{"name":role}, "spec":{"ports":ports}})
+        services.append({"metadata":{"name":role},
+                         "spec":{"ports":ports, "selector":{"app":role},
+                                  "type":"ClusterIP"}})
     return {
         "pods": {"items": pods},
         "deployments": {"items": deployments},
@@ -59,7 +67,9 @@ def fixture():
            'security = { ciphering_algorithms = ( "nea2" ); '
            'integrity_algorithms = ( "nia2" ); };'}},
     }, {"nodes": [{
-        "node": "staging-node", "cpu_some_avg10": 2.0,
+        "node": "staging-node",
+        "collected_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "cpu_some_avg10": 2.0,
         "io_some_avg10": 1.0, "load_per_cpu": 0.5,
     }]}
 
@@ -99,6 +109,26 @@ class StagingInventoryTests(unittest.TestCase):
             "high_io_pressure": lambda s, p: p["nodes"][0].update(io_some_avg10=30.0),
             "no_node_observation": lambda s, p: p.update(nodes=[]),
             "unexpected_node": lambda s, p: p["nodes"][0].update(node="other-node"),
+            "stale_node_pressure": lambda s, p: p["nodes"][0].update(
+                collected_utc="2026-01-01T00:00:00Z"),
+            "future_node_pressure": lambda s, p: p["nodes"][0].update(
+                collected_utc="2035-01-01T00:00:00Z"),
+            "missing_node_pressure_timestamp": lambda s, p: p["nodes"][0].pop("collected_utc"),
+            "nan_pressure": lambda s, p: p["nodes"][0].update(cpu_some_avg10=float("nan")),
+            "old_rollout": lambda s, p: s["deployments"]["items"][0]["status"].update(
+                observedGeneration=2),
+            "updated_pod_missing": lambda s, p: s["deployments"]["items"][0]["status"].update(
+                updatedReplicas=0),
+            "pod_image_mismatch": lambda s, p: s["pods"]["items"][0]["spec"]["containers"][0].update(
+                image="registry.invalid/other@sha256:" + "b"*64),
+            "pod_pending_deletion": lambda s, p: s["pods"]["items"][0]["metadata"].update(
+                deletionTimestamp="2026-11-13T00:00:00Z"),
+            "service_exposed": lambda s, p: s["services"]["items"][0]["spec"].update(
+                type="NodePort"),
+            "wrong_service_selector": lambda s, p: s["services"]["items"][0]["spec"].update(
+                selector={"app":"another-deployment"}),
+            "container_not_running": lambda s, p: s["pods"]["items"][0]["status"]["containerStatuses"][0].update(
+                state={"waiting": {"reason": "CrashLoopBackOff"}}),
         }
         for label, mutate in changes.items():
             with self.subTest(label=label):
