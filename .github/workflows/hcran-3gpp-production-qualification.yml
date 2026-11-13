@@ -1,0 +1,92 @@
+name: H-CRAN 3GPP security + F1 mobility capability preflight (NO DEPLOY)
+
+on:
+  push:
+    branches:
+      - experiment/hcran-production-qualification-20261113
+    paths:
+      - .github/workflows/hcran-3gpp-production-qualification.yml
+      - helm/cran-oai/cu/**
+      - helm/cran-oai/du/**
+      - helm/cran-srsran/cu/**
+      - tests/test_hcran_3gpp_contract.py
+      - tests/test_hcran_stage4w_preflight.py
+      - scripts/hcran_stage4w_mobility_preflight.py
+      - scripts/ci_oai_ngap_readiness.py
+      - docs/hcran-3gpp-only-readiness.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hcran-production-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-go-qualification:
+    if: github.ref == 'refs/heads/experiment/hcran-production-qualification-20261113'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout only the experimental qualification branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Helm renderer
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Validate security, RIC exclusion, mobility render and negative cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          python3 -m unittest discover -s tests -p test_hcran_3gpp_contract.py -v
+          python3 -m unittest discover -s tests -p test_hcran_stage4w_preflight.py -v
+
+      - name: Download immutable tagged OAI mobility source for read-only audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hcran-qualification"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --max-time 50 \
+            https://raw.githubusercontent.com/OPENAIRINTERFACE/openairinterface5g/2026.w13/openair2/RRC/NR/rrc_gNB_mobility.c \
+            --output "$RUNNER_TEMP/hcran-qualification/rrc_gNB_mobility.c"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --max-time 50 \
+            https://raw.githubusercontent.com/OPENAIRINTERFACE/openairinterface5g/2026.w13/doc/handover-tutorial.md \
+            --output "$RUNNER_TEMP/hcran-qualification/handover-tutorial.md"
+          python3 scripts/hcran_stage4w_mobility_preflight.py \
+            --mobility-source "$RUNNER_TEMP/hcran-qualification/rrc_gNB_mobility.c" \
+            --handover-tutorial "$RUNNER_TEMP/hcran-qualification/handover-tutorial.md" \
+            --stage3-workflow .github/workflows/oai-ngap-2026w13-stage3.yml \
+            --out "$RUNNER_TEMP/hcran-qualification/stage4w-source-review.json"
+
+      - name: Assert true runtime capabilities remain NO-GO
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          path=pathlib.Path(os.environ['RUNNER_TEMP'])/'hcran-qualification'/'stage4w-source-review.json'
+          result=json.loads(path.read_text())
+          assert result['source_support']=='PINNED_SOURCE_HAS_F1_HANDOVER_PATH'
+          assert result['runtime_status']=='BLOCKED'
+          assert result['release_decision']=='NO_GO'
+          assert result['deploy_authorized'] is False
+          assert result['real_f1_handover_observed'] is False
+          assert result['ue_pdu_session_continuity_observed'] is False
+          print('PASS: pinned F1 handover implementation exists; runtime handover still NOT VERIFIED')
+          PY
+          echo "::warning::Green offline checks are NOT production authorization. Staging security and F1 handover require real synthetic UE and 5GC runtime evidence."
+
+      - name: Upload bounded preflight evidence (never credentials)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-3gpp-production-preflight-NO-GO-${{ github.run_number }}
+          path: ${{ runner.temp }}/hcran-qualification/stage4w-source-review.json
+          if-no-files-found: warn
+          retention-days: 7
