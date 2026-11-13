@@ -136,6 +136,14 @@ def assess(pods, deployments, services, cu_config, pressure):
                 statuses = pod.get("status", {}).get("containerStatuses", [])
                 if statuses and statuses[0].get("restartCount", -1) != 0:
                     reasons.append("Container has restarts in current observation")
+                if statuses:
+                    actual_image_id = statuses[0].get("imageID", "")
+                    actual_container_id = statuses[0].get("containerID", "")
+                    if not isinstance(actual_image_id, str) or not re.search(
+                            r"sha256:[0-9a-fA-F]{64}", actual_image_id):
+                        reasons.append("Running Pod lacks a valid actual image digest identity")
+                    if not isinstance(actual_container_id, str) or "://" not in actual_container_id:
+                        reasons.append("Running Pod lacks concrete container runtime identity")
                 pod_spec = pod.get("spec", {})
                 pod_containers = pod_spec.get("containers", [])
                 if (len(pod_containers) != 1 or
