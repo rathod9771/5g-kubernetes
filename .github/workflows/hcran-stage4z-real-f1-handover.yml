@@ -7,6 +7,8 @@ on:
     paths:
       - experiments/oai-ngap-2026w13/stage4z/TRIGGER-ONCE.txt
       - .github/workflows/hcran-stage4z-real-f1-handover.yml
+      - experiments/oai-ngap-2026w13/stage4z/f1_handover_runtime.py
+      - experiments/oai-ngap-2026w13/stage4z/evidence_contract.py
   workflow_dispatch:
 
 permissions:
