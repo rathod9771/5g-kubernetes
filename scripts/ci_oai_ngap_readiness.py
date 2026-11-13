@@ -28,7 +28,7 @@ KNOWN = [
     ("HCRAN_REAL_TWO_WAY_F1_HANDOVER_RF_SIM", 43391519669, "hcran-stage4z-real-f1-handover-attempt-"),
     ("HCRAN_NONPRIVILEGED_DOCKER_CU_DUAL_DU_TRAFFIC", 43395469675, "hcran-stage5b-nonprivileged-ran-attempt-"),
     ("HCRAN_EXTENDED_24_ROUND_NEA2_NIA2_DUAL_UE_GTPU", 43396068709, "hcran-stage5c-NEA2-NIA2-extended-soak-"),
-    ("HCRAN_OBSERVED_AS_SECURITY_NE2_NI2_SMC_RRC", 43399191636, "hcran-stage5f-as-security-log-proof-"),
+    ("HCRAN_OBSERVED_AS_SECURITY_NEA2_NIA2_SMC", 43399191636, "hcran-stage5f-as-security-log-proof-"),
     ("HCRAN_SUPERVISED_SYNTHETIC_UE_RECOVERY_AFTER_AMF", 43367213888, "oai-hcran-supervised-ue-recovery-"),
     ("HCRAN_ASSISTED_TWO_UE_RECOVERY_AFTER_FULL_5GC_RESTART", 43209876014, "oai-hcran-assisted-dual-ue-recovery-"),
     ("HCRAN_CONTROLLED_TWO_UE_RECOVERY_AFTER_AMF_ONLY_FAULT", 43220775040, "oai-hcran-controlled-ue-reattach-"),
