@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GitHub evidence inventory and fail-closed 5G H-CRAN production readiness gate.
+"""3GPP Rel-15/16 H-CRAN-only evidence inventory and fail-closed release gate.
 
 The script NEVER deploys, connects to Kubernetes, accesses subscribers, or
 authorizes promotion. A green *inventory* CI job is not a green production gate.
@@ -16,10 +16,6 @@ KNOWN = [
     ("HCRAN_STATIC", 43160947977, "oai-ngap-stage4a-hcran-no-go-"),
     ("DUAL_DU_F1C", 43162695243, "oai-ngap-stage4d"),
     ("THREE_AMF_FAULT_CYCLES", 43163998295, "oai-ngap-stage4e-dual-du-f1-"),
-    ("E2_ENABLED_CU_BUILD", 43165182823, "oai-ngap-e2-build-candidate-"),
-    ("FLEXRIC_E2_SETUP", 43173532767, "oai-ngap-stage4g-flexric-e2-"),
-    ("KPM_RC_MONITOR_XAPP_SUBSCRIPTIONS", 43183404348, "oai-ngap-stage4i-xapp-monitor-"),
-    ("KPM_REAL_UE_INDICATIONS_SST1_SD010203", 43223244340, "oai-hcran-E2-real-KPM-dual-UE-slice-matched-"),
     ("HCRAN_DUAL_UE_STATIC_PREREQUISITES", 43186660857, "oai-hcran-ue-prerequisites-"),
     ("HCRAN_REAL_UE_NAS_PDU_ONE_DU", 43190810958, "oai-hcran-real-ue-pdu-"),
     ("HCRAN_REAL_F1U_NGU_GTPU_ONE_DU", 43192172149, "oai-hcran-real-gtpu-"),
@@ -35,7 +31,12 @@ KNOWN = [
 # Verification of these gates requires real positive evidence, not inferred
 # success from compile, static renders, F1-C setup, or a synthetic test.
 NOT_VERIFIED = {
-    "RC_CONTROL_ACKNOWLEDGEMENT": "No live E2SM-RC control and outcome evidence",
+    "INTRA_GNB_INTER_DU_MOBILITY": "No macro-to-small or small-to-macro inter-DU mobility / UE context transfer proven with active PDU service; TS 38.401/38.473/38.331",
+    "F1AP_UE_CONTEXT_MODIFICATION_RELEASE": "Selected F1 Setup and user-plane operation passed, but complete UE Context Modification/Release procedures are not qualified",
+    "RRC_REESTABLISHMENT_AFTER_RADIO_FAILURE": "No verified RRC re-establishment or compliant session continuity following simulated radio-link failure",
+    "NAS_SECURITY_AND_REGISTRATION_EDGE_CASES": "Basic NAS Registration Accept passed; registration reject, authentication/retry, security and deregistration matrix not executed",
+    "PDU_SESSION_MODIFICATION_RELEASE_AND_QOS": "PDU setup passed; PDU Session Modification, Release, QFI/5QI treatment and negative cases not qualified",
+    "NR_RF_PHY_MAC_AND_MOBILITY_PERFORMANCE": "RFSIM connectivity is not an RF/PHY/MAC conformance or dynamic radio mobility test",
     "MULTI_CYCLE_NAS_PDU_SERVICE_SLO": "Only single bounded isolated UE attach and PDU proved; no repeated registrations or sustained service SLO",
     "DATA_PLANE_THROUGHPUT_AND_LOSS": "Stage 4T passed 6 rounds with 60/60 ICMP replies per UE over ~97 s; not a sustained throughput or load-under-pressure benchmark",
     "FULL_5GC_RESTART_AUTO_UE_DATA_RECOVERY": "Stage 4P run 43208820608 FAILED: NGAP reconnected in 36.19 s, F1-C remained connected, but both UE TUNs/DRBs were released and data did not recover automatically",
@@ -87,7 +88,12 @@ def main():
                for key, reason in NOT_VERIFIED.items()]
     # Manual staging signoff MUST NOT be extrapolated from GitHub Actions.
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "hcran_architecture": "3GPP NR gNB-CU + macro DU + small DU over F1; NG to 5GC",
+        "hcran_ric_required": False,
+        "e2sm_kpm_and_rc_release_gates": False,
+        "monitoring": "Prometheus/Grafana; verify live scrape reachability separately",
+        "cluster_ric_removal_confirmed": False,
         "generated_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "scope": "CI evidence inventory; no access to real HP cluster",
         "source_repository": "rathod9771/5g-kubernetes",
@@ -95,7 +101,7 @@ def main():
         "production_deployment_authorized": False,
         "verified_ci_and_offline_evidence": observed,
         "outstanding_runtime_and_release_gates": missing,
-        "rule": "Concurrent dual-UE user plane, KPM indication delivery, bounded soak, and explicitly supervised test-UE recovery passed in isolated CI. Intrinsic UE recovery, effective RC control, sustained staging SLO, actual OSM-controlled rollback, immutable artifact distribution and operator approval remain required.",
+        "rule": "Only 3GPP-oriented F1/NG/NAS/PDU and GTP-U historical CI evidence is counted. Near-RT RIC/E2SM-KPM/RC are explicitly out of scope. Basic dual-UE traffic, bounded soak and supervised synthetic UE restart passed in isolated CI; 3GPP UE mobility, protocol negative cases, native recovery, RF test, sustained performance, staging rollback and operator authorization remain unverified.",
     }
     dst.write_text(json.dumps(report, indent=2) + "\n")
     print(f"Production decision: NO_GO. CI historical evidence: "

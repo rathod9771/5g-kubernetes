@@ -1,3 +1,6 @@
+# H-CRAN uses the 3GPP CU/DU F1 and NG interfaces only.
+# RIC/E2SM-KPM are NOT part of this scenario's runtime or release gate.
+# Prometheus/Grafana are external monitoring services, not E2 agents.
 fullname: hcran-oai-cu
 ranType: hcran
 replicaCount: 1
@@ -15,3 +18,9 @@ radio:
   gnbId: 3585
   cellId: 58736641
 experimentalTransport: true
+
+# Explicit fail-closed capability flags, enforced by the CU chart.
+e2Agent:
+  enabled: false
+ric:
+  enabled: false

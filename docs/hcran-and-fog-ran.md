@@ -1,5 +1,6 @@
 # Experimental H-CRAN and Fog-RAN profiles
 
+> **Current H-CRAN policy (2026-11-13):** Near-RT RIC, E2SM-KPM and E2SM-RC are excluded from the H-CRAN implementation and acceptance gate. Use Prometheus/Grafana for monitoring. The authoritative new readiness matrix is [H-CRAN 3GPP-only readiness](hcran-3gpp-only-readiness.md). Other O-RAN scenarios are not changed. No live HP workloads have been modified.\n\n
 Status: **STATIC VALIDATED**, with runtime acceptance outstanding. No new topology
 has been deployed by this development task. Generation readiness is not radio
 acceptance, Release certification, or proof of multi-DU interoperability.

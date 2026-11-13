@@ -24,7 +24,7 @@ RESEARCHER = ('scripts/telecom/', 'tests/test_telecom_', 'config/telecom/', 'doc
 # Original-orchestrator files that are not OSM package inputs (dashboard, installer,
 # lifecycle, monitoring, docs, tests, workflows). Anything else is unknown.
 NON_PACKAGE_PREFIXES = ('docs/', 'tests/', 'ran-selector/', 'scripts/assurance/', 'scripts/installer/',
-                        'scripts/experiments/', 'monitoring/', 'layer3-autonomous/', 'deploy/', 'usrp-gnb/',
+                        'scripts/experiments/', 'experiments/oai-ngap-2026w13/', 'monitoring/', 'layer3-autonomous/', 'deploy/', 'usrp-gnb/',
                         '.github/')
 NON_PACKAGE_FILES = frozenset((
     'README.md', 'INSTALLATION.md', '.gitignore', 'install.sh', 'uninstall.sh', 'deploy.sh', 'orchestrator.sh',
@@ -40,7 +40,7 @@ NON_PACKAGE_FILES = frozenset((
     'scripts/image_metadata.py', 'scripts/preflight.sh', 'scripts/common.sh', 'scripts/instantiate-with-retry.sh',
     'scripts/enable-oran-oai-e2.sh', 'scripts/deploy-oran-oai-rfsim.sh', 'scripts/build-cudu-batch.sh',
     'scripts/build-private-installer.sh', 'scripts/build-ran-batch.sh', 'scripts/build-ran-nsds.sh',
-    'scripts/rename-ran-packages.sh',
+    'scripts/rename-ran-packages.sh', 'scripts/ci_oai_ngap_readiness.py',
 ))
 SHA = re.compile(r'[0-9a-f]{40}')
 

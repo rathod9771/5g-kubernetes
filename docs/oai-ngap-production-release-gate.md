@@ -1,5 +1,6 @@
 # NGAP V2 production release gate — current decision: NO-GO
 
+> **Superseded for H-CRAN by:** [3GPP-only H-CRAN readiness](hcran-3gpp-only-readiness.md) (2026-11-13). Historical E2SM-KPM/RC experiments remain archived as research evidence; they are no longer H-CRAN requirements or release gates. This document preserves the earlier experiment narrative, not the current production acceptance policy.\n\n
 The CI inventory workflow `.github/workflows/oai-ngap-production-evidence.yml`
 queries read-only GitHub evidence and produces `report.json`. A successfully
 executed **inventory** workflow does not indicate a production-ready image.
