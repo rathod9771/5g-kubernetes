@@ -1,12 +1,19 @@
-name: OAI NGAP production evidence inventory (NO GO, NO DEPLOY)
+name: H-CRAN 3GPP-only F1/NG/NAS/PDU evidence gate (NO GO, NO DEPLOY)
 
 on:
   push:
     branches:
-      - experiment/oai-ngap-prod-readiness-gate
+      - experiment/hcran-3gpp-only-no-ric-20261113
     paths:
       - .github/workflows/oai-ngap-production-evidence.yml
       - scripts/ci_oai_ngap_readiness.py
+      - tests/test_hcran_3gpp_contract.py
+      - config/scenarios.json
+      - helm/cran-oai/cu/**
+      - helm/cran-oai/du/**
+      - helm/cran-srsran/cu/**
+      - helm/cran-srsran/du/**
+      - docs/hcran-3gpp-only-readiness.md
   workflow_dispatch:
 
 permissions:
@@ -15,7 +22,7 @@ permissions:
 
 jobs:
   offline-evidence:
-    if: github.ref == 'refs/heads/experiment/oai-ngap-prod-readiness-gate'
+    if: github.ref == 'refs/heads/experiment/hcran-3gpp-only-no-ric-20261113'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -23,6 +30,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Install Helm for 3GPP-oriented H-CRAN render verification
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Verify CU and dual DUs exclude E2/RIC and preserve F1/NG
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          python3 -m unittest discover -s tests -p test_hcran_3gpp_contract.py -v
+
       - name: Validate pinned GitHub run evidence and export NO GO result
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -37,14 +55,19 @@ jobs:
           assert data['production_decision']=='NO_GO'
           assert data['production_deployment_authorized'] is False
           assert len(data['outstanding_runtime_and_release_gates'])>=10
-          print("PASS: production is explicitly blocked pending runtime and staging evidence")
+          assert data['e2sm_kpm_and_rc_release_gates'] is False
+          assert data['hcran_ric_required'] is False
+          assert data['cluster_ric_removal_confirmed'] is False
+          gates={x['gate'] for x in data['verified_ci_and_offline_evidence']}
+          assert not any('KPM' in x or 'E2_' in x or 'FLEXRIC' in x for x in gates)
+          print("PASS: no RIC/E2 H-CRAN gates; production still blocked pending 3GPP runtime and staging evidence")
           PY
           echo "::warning::This evidence-inventory job can pass while deployment decision remains NO-GO."
       - name: Upload signed-off only after future staged evidence (currently NO GO)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ngap-prod-readiness-NO-GO-${{ github.run_number }}
+          name: hcran-3gpp-only-readiness-NO-GO-${{ github.run_number }}
           path: ${{ runner.temp }}/ngap-readiness/report.json
           if-no-files-found: warn
           retention-days: 7
