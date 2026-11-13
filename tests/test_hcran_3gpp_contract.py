@@ -130,6 +130,37 @@ class HCRAN3GPPTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("requires only NEA2", result.stderr)
 
+    def test_disposable_handover_du_overlays_use_one_ue_rf_server(self):
+        chart = "helm/cran-oai/du"
+        rendered = {}
+        for role, expected_bitmap in (("macro", 1), ("small", 2)):
+            with self.subTest(role=role):
+                overlay = f"{chart}/values-hcran-mobility-{role}.yaml"
+                result = render(chart, "-" + role, "hcran-oai-" + role,
+                                ("-f", overlay))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                conf = next(d for d in objects(result.stdout) if d["kind"] == "ConfigMap")["data"]["gnb.conf"]
+                self.assertIn('serveraddr = "oai-ue-rfsim";', conf)
+                self.assertIn(f"ssb_PositionsInBurst_Bitmap                                  = {expected_bitmap};", conf)
+                self.assertIsNone(FORBIDDEN.search(conf))
+                rendered[role] = conf
+        self.assertNotEqual(rendered["macro"], rendered["small"])
+
+    def test_disposable_mobility_rf_sim_fail_closed(self):
+        chart = "helm/cran-oai/du"
+        overlay = chart + "/values-hcran-mobility-small.yaml"
+        for args in [
+            ("--set-string", "mobilityRfsim.serverAddr="),
+            ("--set", "mobilityRfsim.ssbPositionsBitmap=0"),
+            ("--set", "mobilityRfsim.ssbPositionsBitmap=3"),
+            ("--set-string", "rf.mode=usrp"),
+        ]:
+            with self.subTest(args=args):
+                result = render(chart, "-small", "hcran-oai-small",
+                                ("-f", overlay, *args))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("F1 mobility RFsim overlay", result.stderr)
+
     def test_3gpp_gate_excludes_ric_and_fails_closed(self):
         path=ROOT/"scripts/ci_oai_ngap_readiness.py"
         spec=importlib.util.spec_from_file_location("hcran_readiness",path)
