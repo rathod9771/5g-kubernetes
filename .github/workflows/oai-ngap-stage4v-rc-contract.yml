@@ -34,7 +34,8 @@ jobs:
           set -euo pipefail
           python3 -m py_compile \
             experiments/oai-ngap-2026w13/stage4v/rc_effect_contract.py \
-            experiments/oai-ngap-2026w13/stage4v/test_rc_effect_contract.py
+            experiments/oai-ngap-2026w13/stage4v/test_rc_effect_contract.py \
+            experiments/oai-ngap-2026w13/stage4v/audit_pinned_rc_handler.py
           python3 -m unittest discover -s \
             experiments/oai-ngap-2026w13/stage4v \
             -p 'test_rc_effect_contract.py' -v
@@ -60,6 +61,21 @@ jobs:
           print("PASS: invalid or incomplete RC proof is rejected; RC gate remains NO-GO")
           PY
           echo "::warning::Stage 4V tests evidence structure and false-positive rejection only; no RC CONTROL transmitted."
+
+      - name: Audit SHA-pinned upstream OAI E2SM-RC handler without executing control
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/stage4v-rc-evidence"
+          mkdir -p "$out"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+            --retry 2 --max-time 40 \
+            'https://raw.githubusercontent.com/OPENAIRINTERFACE/openairinterface5g/2026.w13/openair2/E2AP/RAN_FUNCTION/O-RAN/ran_func_rc.c' \
+            --output "$RUNNER_TEMP/oai-2026w13-ran_func_rc.c"
+          python3 experiments/oai-ngap-2026w13/stage4v/audit_pinned_rc_handler.py \
+            "$RUNNER_TEMP/oai-2026w13-ran_func_rc.c" \
+            --report "$out/pinned-rc-source-audit-NO-GO.json"
+          echo "::warning::Pinned source shows a print-only QoS mapping handler and a control outcome, not verified RAN-state mutation."
 
       - name: Upload non-production contract evidence
         if: always()
