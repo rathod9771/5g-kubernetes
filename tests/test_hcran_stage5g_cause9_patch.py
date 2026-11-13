@@ -71,7 +71,7 @@ class Cause9Patch(unittest.TestCase):
         builder=(ROOT/"scripts/hcran_build_pinned_w45_ue_cause9.sh").read_text()
         self.assertIn('UPSTREAM=dfb296ab867050a7bde81b393fa31b757ada2c83',builder)
         self.assertIn('UPSTREAM_NAS_BLOB=60f009118ef1db9ba29f6f85075ffee0f73d459d',builder)
-        self.assertIn('git diff --check',builder)
+        self.assertIn('git -C "$OAI_SOURCE" diff --check',builder)
         self.assertIn('test "$(git -C "$OAI_SOURCE" diff --name-only)"',builder)
         self.assertNotIn('kubectl apply',builder)
         self.assertNotIn('osm ns-',builder)
