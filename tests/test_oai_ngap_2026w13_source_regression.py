@@ -11,9 +11,16 @@ import subprocess
 import tempfile
 import unittest
 
-ROOT = pathlib.Path(os.environ.get("OAI_SOURCE_DIR", ""))
-if not ROOT.is_dir():
-    raise SystemExit("OAI_SOURCE_DIR must point to patched OAI 2026.w13 checkout")
+SOURCE_DIR = os.environ.get("OAI_SOURCE_DIR", "").strip()
+if not SOURCE_DIR:
+    # This suite extracts and compiles patched upstream C code. A generic
+    # repository checkout lacks that source. Missing a source tree must not
+    # turn mocked tests into fabricated success; run them in their dedicated
+    # source-regression job with OAI_SOURCE_DIR explicitly set.
+    raise unittest.SkipTest("OAI_SOURCE_DIR not provided: requires dedicated OAI source-regression job")
+ROOT = pathlib.Path(SOURCE_DIR)
+if not ROOT.is_dir() or not (ROOT / "openair3/NGAP/ngap_gNB.c").is_file():
+    raise SystemExit("OAI_SOURCE_DIR must point to the patched OAI 2026.w13 source tree")
 
 
 def load(path):
