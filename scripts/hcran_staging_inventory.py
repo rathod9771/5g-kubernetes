@@ -8,7 +8,8 @@ A ready result permits consideration of a separately approved staging TEST,
 not deployment or 3GPP conformance. Multi-node PSI needs independent checks.
 """
 import argparse
-import hashlib
+import datetime as dt
+import math
 import json
 import pathlib
 import re
@@ -60,7 +61,8 @@ def _ready_pod(pod):
                for c in conditions):
         return False
     statuses = pod.get("status", {}).get("containerStatuses", [])
-    return len(statuses) == 1 and statuses[0].get("ready") is True
+    return (len(statuses) == 1 and statuses[0].get("ready") is True
+            and statuses[0].get("state", {}).get("running") is not None)
 
 
 def _protocol_ports(svc):
@@ -89,8 +91,16 @@ def assess(pods, deployments, services, cu_config, pressure):
             if dep.get("spec", {}).get("replicas") != 1:
                 reasons.append("Deployment desired replica count is not exactly one")
             status = dep.get("status", {})
-            if status.get("readyReplicas") != 1 or status.get("availableReplicas") != 1:
-                reasons.append("Deployment is not ready and available (1/1)")
+            generation = dep.get("metadata", {}).get("generation")
+            observed = status.get("observedGeneration")
+            if (not isinstance(generation, int) or isinstance(generation, bool)
+                    or not isinstance(observed, int) or isinstance(observed, bool)
+                    or observed < generation):
+                reasons.append("Deployment controller has not observed latest generation")
+            if (status.get("readyReplicas") != 1 or status.get("availableReplicas") != 1
+                    or status.get("updatedReplicas") != 1
+                    or status.get("unavailableReplicas", 0) not in (None, 0)):
+                reasons.append("Deployment rollout is not current, ready and available (1/1)")
             containers = dep.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
             if len(containers) != 1:
                 reasons.append("Deployment must have exactly one RAN container")
@@ -115,10 +125,22 @@ def assess(pods, deployments, services, cu_config, pressure):
             else:
                 pod = matching[0]
                 if not _ready_pod(pod):
-                    reasons.append("Pod/containers not Ready")
+                    reasons.append("Pod/containers not Ready/running")
                 statuses = pod.get("status", {}).get("containerStatuses", [])
                 if statuses and statuses[0].get("restartCount", -1) != 0:
                     reasons.append("Container has restarts in current observation")
+                pod_containers = pod.get("spec", {}).get("containers", [])
+                if (len(pod_containers) != 1 or
+                        pod_containers[0].get("image") != image or
+                        pod_containers[0].get("name") != spec.get("name")):
+                    reasons.append("Running Pod image/identity differs from desired Deployment template")
+                if pod.get("metadata", {}).get("deletionTimestamp"):
+                    reasons.append("Running Pod has pending deletion timestamp")
+            selector = svc.get("spec", {}).get("selector", {})
+            if selector.get("app") != name or len(selector) != 1:
+                reasons.append("Service selector does not exclusively target its H-CRAN role")
+            if svc.get("spec", {}).get("type", "ClusterIP") != "ClusterIP":
+                reasons.append("H-CRAN Service type is not internal ClusterIP")
             ports = _protocol_ports(svc)
             expected = {("SCTP", 38472), ("UDP", 38472)}
             if name == "hcran-oai-cu":
@@ -165,11 +187,20 @@ def assess(pods, deployments, services, cu_config, pressure):
                     blockers.append("Duplicate node pressure observation")
                     pressure_ok = False
                 observed_names.add(p["node"])
+                try:
+                    stamp = dt.datetime.fromisoformat(
+                        str(p.get("collected_utc", "")).replace("Z", "+00:00"))
+                    age = (dt.datetime.now(dt.timezone.utc) - stamp).total_seconds()
+                    if stamp.tzinfo is None or not -30 <= age <= 300:
+                        raise ValueError("Node sample must be UTC-offset-aware and less than five minutes old")
+                except (ValueError, TypeError, OverflowError):
+                    blockers.append(f"{p['node']}: missing, future or stale node pressure timestamp")
+                    pressure_ok = False
                 for field, maximum in PRESSURE_THRESHOLDS.items():
                     value = p.get(field)
                     if (isinstance(value, bool) or not isinstance(value, (float, int))
-                            or not (0 <= value < maximum)):
-                        blockers.append(f"{p['node']}: {field} missing or above staging threshold {maximum}")
+                            or not math.isfinite(value) or not (0 <= value < maximum)):
+                        blockers.append(f"{p['node']}: {field} missing, invalid or above staging threshold {maximum}")
                         pressure_ok = False
             pod_nodes = {p.get("spec", {}).get("nodeName") for p in pds
                          if p.get("metadata", {}).get("labels", {}).get("app") in EXPECTED}
