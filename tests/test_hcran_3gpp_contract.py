@@ -200,7 +200,7 @@ class HCRAN3GPPTests(unittest.TestCase):
         for excluded in ("E2_", "KPM_", "FLEXRIC", "RC_CONTROL", "NEAR_RT_RIC"):
             self.assertFalse(any(excluded in name for name in all_gate_names),
                              f"RIC gate found: {excluded}")
-        for gate in ("INTRA_GNB_INTER_DU_MOBILITY", "RRC_REESTABLISHMENT_AFTER_RADIO_FAILURE",
+        for gate in ("INTRA_GNB_INTER_DU_MOBILITY_STAGING_AND_RADIO_QUALIFICATION", "RRC_REESTABLISHMENT_AFTER_RADIO_FAILURE",
                      "PDU_SESSION_MODIFICATION_RELEASE_AND_QOS",
                      "AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY", "STAGING_OSM_ROLLBACK"):
             self.assertIn(gate,module.NOT_VERIFIED)
