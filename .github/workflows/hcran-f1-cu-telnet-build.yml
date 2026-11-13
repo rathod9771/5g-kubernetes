@@ -1,4 +1,4 @@
-name: H-CRAN Stage 4Z patched CU + F1 telnet CI build (NO DEPLOY)
+name: H-CRAN pinned F1 handover CU build - isolated no deploy
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - experiment/hcran-production-qualification-20261113
     paths:
       - .github/workflows/hcran-f1-cu-telnet-build.yml
-      - experiments/oai-ngap-2026w13/ngap-retry-v2.patch
+      - scripts/hcran_build_pinned_f1_cu.sh
   workflow_dispatch:
 
 permissions:
@@ -17,127 +17,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-handover-capable-cu:
-    if: github.ref == 'refs/heads/experiment/hcran-production-qualification-20261113'
+  build-cu:
     runs-on: ubuntu-24.04
-    timeout-minutes: 65
+    timeout-minutes: 90
     env:
-      OAI_UPSTREAM: 4941f44043e6dcec81b2041e83dbae4bee6f737d
       OAI_SOURCE: ${{ runner.temp }}/hcran-f1-oai-source
       OUTPUT: ${{ runner.temp }}/hcran-f1-build-evidence
-      IMAGE: oai-hcran-2026w13-f1-telnet:experimental-${{ github.run_number }}
+      IMAGE: oai-hcran-f1-telnet:experimental-${{ github.run_number }}
     steps:
-      - name: Checkout isolated qualification patch
+      - name: Checkout isolated branch
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Verify runner and obtain exact pinned upstream OAI source
+      - name: Compile pinned patched CU and handover CI modules
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$OUTPUT"
-          { uname -a; free -h; df -h /; } > "$OUTPUT/runner.txt"
-          git clone --no-checkout --filter=blob:none \
-            https://github.com/OPENAIRINTERFACE/openairinterface5g.git "$OAI_SOURCE"
-          cd "$OAI_SOURCE"
-          git checkout --detach "$OAI_UPSTREAM"
-          test "$(git rev-parse HEAD)" = "$OAI_UPSTREAM"
-          git rev-parse HEAD > "$OUTPUT/upstream-source-commit.txt"
-          test "$(git hash-object openair2/RRC/NR/rrc_gNB_mobility.c)" = \
-            3c59cdfc1660d3381506768e728897b35bfabe1d
-          test "$(git hash-object common/utils/telnetsrv/telnetsrv_ci.c)" != ""
-          git apply --check "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
-          git apply "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
-          git diff --check
-          test "$(git diff --name-only)" = "openair3/NGAP/ngap_gNB.c"
-          git diff --binary > "$OUTPUT/applied-ngap-patch.diff"
-          sha256sum "$OUTPUT/applied-ngap-patch.diff" > "$OUTPUT/ngap-patch-sha256.txt"
+        run: bash scripts/hcran_build_pinned_f1_cu.sh
 
-      - name: Install SIMU build dependencies for pinned OAI
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$OAI_SOURCE/cmake_targets"
-          ./build_oai -I -w SIMU > "$OUTPUT/build-dependencies.log" 2>&1 || {
-            tail -n 125 "$OUTPUT/build-dependencies.log"
-            exit 1
-          }
-
-      - name: Build patched CU and actual telnet/CI shared modules
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$OAI_SOURCE/cmake_targets"
-          ./build_oai --gNB -w SIMU --noavx512 --noavx2 \
-            --build-tool-opt "-j2" > "$OUTPUT/gnb-build.log" 2>&1 || {
-              tail -n 160 "$OUTPUT/gnb-build.log"
-              exit 1
-            }
-          ./build_oai --build-lib telnetsrv --build-tool-opt "-j2" \
-            > "$OUTPUT/telnetsrv-build.log" 2>&1 || {
-              tail -n 160 "$OUTPUT/telnetsrv-build.log"
-              exit 1
-            }
-          BIN="$OAI_SOURCE/cmake_targets/ran_build/build/nr-softmodem"
-          test -x "$BIN"
-          test -f "$OAI_SOURCE/cmake_targets/ran_build/build/libtelnetsrv.so"
-          test -f "$OAI_SOURCE/cmake_targets/ran_build/build/libtelnetsrv_ci.so"
-          sha256sum "$BIN" "$OAI_SOURCE"/cmake_targets/ran_build/build/libtelnetsrv*.so \
-            > "$OUTPUT/binary-sha256.txt"
-          grep -iE 'TELNET|f1|handover' "$OUTPUT/telnetsrv-build.log" | tail -60 \
-            > "$OUTPUT/build-target-check.txt" || true
-
-      - name: Package mutually ABI-matched patched CU plus telnet shared objects
-        shell: bash
-        run: |
-          set -euo pipefail
-          CONTEXT="$RUNNER_TEMP/hcran-f1-image-build"
-          mkdir -p "$CONTEXT/lib"
-          cp "$OAI_SOURCE/cmake_targets/ran_build/build/nr-softmodem" "$CONTEXT/nr-softmodem"
-          cp "$OAI_SOURCE"/cmake_targets/ran_build/build/libtelnetsrv*.so "$CONTEXT/lib/"
-          cat > "$CONTEXT/Dockerfile" <<'EOF'
-          FROM oaisoftwarealliance/oai-gnb:2026.w13
-          LABEL org.opencontainers.image.description="H-CRAN isolated F1 mobility candidate; NO DEPLOY" \
-                org.opencontainers.image.version="2026.w13-stage4z-f1-experimental"
-          COPY --chmod=0755 nr-softmodem /opt/oai-gnb/bin/nr-softmodem
-          COPY lib/ /opt/oai-gnb/lib/
-          ENV LD_LIBRARY_PATH="/opt/oai-gnb/lib:/opt/oai-gnb/lib64:/usr/local/lib"
-          EOF
-          docker build --pull -t "$IMAGE" "$CONTEXT" > "$OUTPUT/docker-build.log" 2>&1 || {
-            tail -n 70 "$OUTPUT/docker-build.log"
-            exit 1
-          }
-          docker run --rm --network none --entrypoint /bin/sh "$IMAGE" -ec '
-            set -e
-            test -x /opt/oai-gnb/bin/nr-softmodem
-            test -f /opt/oai-gnb/lib/libtelnetsrv.so
-            test -f /opt/oai-gnb/lib/libtelnetsrv_ci.so
-            ldd /opt/oai-gnb/bin/nr-softmodem
-            ldd /opt/oai-gnb/lib/libtelnetsrv.so
-            ldd /opt/oai-gnb/lib/libtelnetsrv_ci.so
-          ' > "$OUTPUT/image-linkage.txt"
-          if grep -E 'not found' "$OUTPUT/image-linkage.txt"; then
-            echo "Missing dynamic library dependency in compiled candidate" >&2
-            exit 1
-          fi
-          docker image inspect "$IMAGE" --format '{{.Id}}' \
-            > "$OUTPUT/candidate-local-image-id.txt"
-          printf '%s\n' 'NOT PROD READY: functional F1 handover not yet demonstrated' \
-            > "$OUTPUT/qualification.txt"
-
-      - name: Preserve candidate image as ephemeral test-only archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/hcran-f1-candidate-archive"
-          docker save "$IMAGE" | gzip -1 \
-            > "$RUNNER_TEMP/hcran-f1-candidate-archive/hcran-f1-patched-telnet.tar.gz"
-          gzip -t "$RUNNER_TEMP/hcran-f1-candidate-archive/hcran-f1-patched-telnet.tar.gz"
-          sha256sum "$RUNNER_TEMP/hcran-f1-candidate-archive/hcran-f1-patched-telnet.tar.gz" \
-            > "$OUTPUT/candidate-image-archive.sha256"
-
-      - name: Upload candidate only after successful compilation and linkage
+      - name: Upload successful ephemeral test-only image
         uses: actions/upload-artifact@v4
         with:
           name: hcran-f1-telnet-candidate-${{ github.run_number }}
@@ -146,7 +43,7 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-      - name: Upload build logs even on error
+      - name: Preserve diagnostics even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -154,4 +51,3 @@ jobs:
           path: ${{ runner.temp }}/hcran-f1-build-evidence/
           if-no-files-found: warn
           retention-days: 7
-          compression-level: 2
