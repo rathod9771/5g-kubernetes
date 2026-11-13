@@ -278,7 +278,7 @@ def build_probe(args):
             if not accepted:
                 raise RuntimeError("Stage4Z mobility evidence incomplete: "+str(issues))
             (self.out/"stage4z-f1-handover-evidence.json").write_text(
-                json.dumps(report,indent=2)+"\\n")
+                json.dumps(report,indent=2)+"\n")
             self.capture("after-bidirectional-f1-handover")
             self.record("STAGE4Z", "PASS",
                         scope="real macro<->small F1 mobility; PDU IP retained and bidirectional F1-U/NG-U",
