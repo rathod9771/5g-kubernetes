@@ -1,0 +1,9 @@
+# Additive Helm overlay ONLY for disposable, isolated security compatibility tests.
+# Required command: helm template ... -f values-hcran.yaml -f values-hcran-secure-staging.yaml
+# This is not an authorization or a demonstrated NEA2/NIA2 UE+Open5GS interop result.
+radioSecurity:
+  hardenedCandidate: true
+  cipheringAlgorithms:
+    - nea2
+  integrityAlgorithms:
+    - nia2
