@@ -157,6 +157,25 @@ must not be relabeled as native UE self-recovery.
 
 ## Stage 4Z — reproducible F1 mobility experiment, NOT a release gate pass
 
+**Stage 4Z real isolated success (13 November 2026):** run `43391519669`,
+artifact `14021245591`. One synthetic OAI UE completed macro DU 100 →
+small DU 101 → macro DU 100 handover. For **each** transition, the harness
+observed post-command UE RRCReconfigurationComplete, target F1 association
+update and source-context release, retained UE PDU IPv4, 6/6 successful
+ICMP replies, and actual target F1-U **12 UL / 12 DL** and NG-U
+**12 UL / 12 DL** G-PDUs. The baseline macro leg had F1-U 14 UL / 12 DL
+and NG-U 14 UL / 12 DL. Raw pcaps were checksummed and the independent
+structural evidence validator returned PASS.
+
+This **qualifies the isolated RFsim two-way mobility use case**, not
+radio/RF handover performance, repeated or stressed mobility, formal
+3GPP conformance, the running HP cluster, or production availability.
+The build's CLI telnet endpoint is unauthenticated and must never be enabled
+in a production deployment. The production release gate now requires
+separate staging mobility, controlled interface security, and operator
+approval. **NO-GO** remains in force.
+
+
 The actual patched CU image used by the earlier successful dual-UE trials
 **lacks both** `libtelnetsrv.so` and `libtelnetsrv_ci.so` (GitHub-hosted
 binary audit run `43388023099`). Consequently the upstream OAI manual
@@ -191,9 +210,8 @@ alone is explicitly insufficient. The independently unit-tested
 `stage4z/evidence_contract.py` rejects fabricated completeness,
 but its synthetic unit tests do not prove a live handover.
 
-A Stage 4Z success, if later obtained, remains **disposable RFsim
-integration evidence**, not 3GPP conformance, physical radio mobility
-or production permission.
+The completed Stage 4Z test is **disposable RFsim integration evidence**,
+not 3GPP conformance, physical radio mobility, or production permission.
 
 ## 6. Stage 3 — real OSM staging lifecycle
 
