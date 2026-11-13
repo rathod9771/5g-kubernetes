@@ -6,6 +6,7 @@ Run once per actual node carrying a RAN pod, with --node set to Kubernetes
 It does not assess any 3GPP procedure or authorize deployment.
 """
 import argparse
+import datetime as dt
 import json
 import os
 import pathlib
@@ -34,6 +35,7 @@ def collect(node):
     load = os.getloadavg()[0]
     return {"nodes": [{
         "node": node,
+        "collected_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "cpu_some_avg10": some_avg10("/proc/pressure/cpu"),
         "io_some_avg10": some_avg10("/proc/pressure/io"),
         "load_per_cpu": round(load / count, 5),
