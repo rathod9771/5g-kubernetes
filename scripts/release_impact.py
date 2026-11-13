@@ -41,6 +41,8 @@ NON_PACKAGE_FILES = frozenset((
     'scripts/enable-oran-oai-e2.sh', 'scripts/deploy-oran-oai-rfsim.sh', 'scripts/build-cudu-batch.sh',
     'scripts/build-private-installer.sh', 'scripts/build-ran-batch.sh', 'scripts/build-ran-nsds.sh',
     'scripts/rename-ran-packages.sh', 'scripts/ci_oai_ngap_readiness.py',
+    'scripts/hcran_stage4w_mobility_preflight.py',
+    'scripts/hcran_staging_inventory.py', 'scripts/hcran_node_pressure.py',
     'scripts/hcran_stage4w_mobility_preflight.py', 'scripts/hcran_staging_inventory.py',
     'scripts/hcran_node_pressure.py',
 ))
