@@ -129,7 +129,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/stage5a-input/oai-ngap-stage3-portable.tar.gz"
+          archive="$RUNNER_TEMP/stage5g-input/oai-ngap-stage3-portable.tar.gz"
           gzip -t "$archive"
           sha256sum "$archive" > "$RUNNER_TEMP/hcran-stage5g-evidence/cu-image-archive.sha256"
           docker load -i "$archive" | tee "$RUNNER_TEMP/hcran-stage5g-evidence/cu-load.txt"
