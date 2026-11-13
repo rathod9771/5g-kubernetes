@@ -117,7 +117,7 @@ def probe(opts):
         self.record("T104-nas-cause9-to-SUCI-and-PDU","PASS",steps=len(STAGES))
         new_ip=self.ue_ip()
         # 5GC may allocate a different PDU IPv4 after fresh registration.
-        if not re.fullmatch(r"10\\.45\\.\\d+\\.\\d+",new_ip):
+        if not re.fullmatch(r"10\.45\.\d+\.\d+",new_ip):
             raise RuntimeError("No valid new synthetic PDU address")
         if ue_id()!=before_id:
             raise RuntimeError("UE process replaced")
@@ -139,7 +139,7 @@ def probe(opts):
             "production_decision":"NO_GO",
         }
         (self.out/"stage5h-cause9-runtime.json").write_text(
-            json.dumps(evidence,indent=2)+"\\n")
+            json.dumps(evidence,indent=2)+"\n")
         self.record("STAGE5H","PASS",
                     mode=evidence["mode"],f1u_ngu=gtpu["packet_counts"],
                     unchanged_ue=True,production_decision="NO_GO")
