@@ -6,6 +6,7 @@ on:
       - experiment/hcran-production-qualification-20261113
     paths:
       - experiments/oai-ngap-2026w13/stage4z/TRIGGER-ONCE.txt
+      - .github/workflows/hcran-stage4z-real-f1-handover.yml
   workflow_dispatch:
 
 permissions:
@@ -74,19 +75,19 @@ jobs:
               > "$RUNNER_TEMP/f1-stage4z-render/$role.yaml"
           done
           "$RUNNER_TEMP/f1-stage4z-venv/bin/python" - <<'PY'
-          import os,pathlib,yaml
+          import os,pathlib,yaml,re
           d=pathlib.Path(os.environ['RUNNER_TEMP'])/'f1-stage4z-render'
           def get(name):
               docs=[x for x in yaml.safe_load_all((d/(name+'.yaml')).read_text()) if isinstance(x,dict)]
               return next(x for x in docs if x.get('kind')=='ConfigMap')['data']['gnb.conf']
           cu,macro,small=get('cu'),get('macro'),get('small')
           assert 'e2_agent' not in cu and 'near_ric_ip_addr' not in cu
-          assert 'ciphering_algorithms = ( "nea2" );' in cu
-          assert 'integrity_algorithms = ( "nia2" );' in cu
+          assert re.search(r'ciphering_algorithms\s*=\s*\(\s*"nea2"\s*\)\s*;',cu)
+          assert re.search(r'integrity_algorithms\s*=\s*\(\s*"nia2"\s*\)\s*;',cu)
           assert 'gNB_DU_ID = 100;' in macro and 'gNB_DU_ID = 101;' in small
-          assert 'serveraddr = "172.29.76.40";' in macro and 'serveraddr = "172.29.76.40";' in small
-          assert 'ssb_PositionsInBurst_Bitmap                                  = 1;' in macro
-          assert 'ssb_PositionsInBurst_Bitmap                                  = 2;' in small
+          assert all(re.search(r'serveraddr\s*=\s*"172\.29\.76\.40"\s*;',v) for v in (macro,small))
+          assert re.search(r'ssb_PositionsInBurst_Bitmap\s*=\s*1\s*;',macro)
+          assert re.search(r'ssb_PositionsInBurst_Bitmap\s*=\s*2\s*;',small)
           print('PASS: isolated one-UE-server/two-DU F1 handover input configs; RIC disabled')
           PY
 
