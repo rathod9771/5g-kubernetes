@@ -243,6 +243,9 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
+{{- if and (eq (.Values.ranType | default "cran") "hcran") (.Values.securePodCandidate | default false) }}
+      automountServiceAccountToken: false
+{{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
