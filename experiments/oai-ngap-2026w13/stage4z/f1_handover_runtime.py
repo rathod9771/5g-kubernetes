@@ -75,7 +75,7 @@ def build_probe(args):
                "-v", str(self.priv/"macro.conf")+":/opt/oai-gnb/etc/gnb.conf:ro",
                "--entrypoint", "/opt/oai-gnb/bin/nr-softmodem",
                self.opts.du_image, "-O", "/opt/oai-gnb/etc/gnb.conf",
-               "--rfsim", "--rfsimulator.serveraddr", IPS["ue"])
+               "--rfsim")
             self.record("T62-macro-DU-100-UE-server-client-mode", "PASS")
             self.wait_log("T61-NGSetupResponse", "cu", NGAP, 90, ("core", "cu", "macro"))
             self.wait_log("T63-macro-F1SetupRequest", "cu", F1REQ, 90,
@@ -221,7 +221,7 @@ def build_probe(args):
                "-v", str(self.priv/"small.conf")+":/opt/oai-gnb/etc/gnb.conf:ro",
                "--entrypoint", "/opt/oai-gnb/bin/nr-softmodem",
                self.opts.du_image, "-O", "/opt/oai-gnb/etc/gnb.conf",
-               "--rfsim", "--rfsimulator.serveraddr", IPS["ue"])
+               "--rfsim")
             self.record("T69-small-DU-101-joined-UE-server-bridge", "PASS")
             self.wait_log("T69a-small-F1SetupRequest", "cu", SMALL_REQ, 120,
                           ("core","cu","macro","small","ue"))
