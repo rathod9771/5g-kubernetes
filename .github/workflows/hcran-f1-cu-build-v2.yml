@@ -1,0 +1,27 @@
+name: HCRAN pinned F1 build and preflight
+on:
+  push:
+    branches:
+      - experiment/hcran-production-qualification-20261113
+    paths:
+      - .github/workflows/hcran-f1-cu-build-v2.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate pinned F1 build script
+        run: bash -n scripts/hcran_build_pinned_f1_cu.sh
+      - name: Check SHA-pinned OAI build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f experiments/oai-ngap-2026w13/ngap-retry-v2.patch
+          test -f scripts/hcran_build_pinned_f1_cu.sh
+          echo "PASS build script and source patch present; not production"
