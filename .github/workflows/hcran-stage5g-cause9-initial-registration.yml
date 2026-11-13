@@ -125,6 +125,29 @@ jobs:
           export GITHUB_WORKSPACE="$PWD"
           bash scripts/hcran_build_pinned_w45_ue_cause9.sh
 
+      - name: Archive bounded source-pinned UE candidate for subsequent RFsim acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$UE_IMG"
+          docker image inspect "$UE_IMG" --format '{{.Id}}'
+          docker tag "$UE_IMG" hcran-stage5g-candidate:source-pinned-w45
+          mkdir -p "$RUNNER_TEMP/stage5g-candidate-archive"
+          docker save hcran-stage5g-candidate:source-pinned-w45 | gzip -1 \
+            > "$RUNNER_TEMP/stage5g-candidate-archive/hcran-stage5g-cause9-ue.tar.gz"
+          gzip -t "$RUNNER_TEMP/stage5g-candidate-archive/hcran-stage5g-cause9-ue.tar.gz"
+          sha256sum "$RUNNER_TEMP/stage5g-candidate-archive/hcran-stage5g-cause9-ue.tar.gz" \
+            > "$RUNNER_TEMP/hcran-stage5g-build-evidence/reusable-image-archive.sha256"
+
+      - name: Upload expiring RESEARCH UE image candidate (not production)
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage5g-source-pinned-UE-image-${{ github.run_number }}
+          path: ${{ runner.temp }}/stage5g-candidate-archive/hcran-stage5g-cause9-ue.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
       - name: Load patched CU and pull test-only core, DU, UE images
         shell: bash
         run: |
