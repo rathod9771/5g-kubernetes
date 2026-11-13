@@ -108,6 +108,15 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/f1-stage5h-ue-image
 
+      - name: Retrieve matching pinned upstream source, patch and executable provenance
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43403818770
+          name: hcran-stage5g-source-build-proof-6
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/f1-stage5h-ue-build-proof
+
       - name: Load patched CU image and pull isolated core and UE images
         shell: bash
         run: |
@@ -124,6 +133,14 @@ jobs:
           done
           candidate="$RUNNER_TEMP/f1-stage5h-ue-image/hcran-stage5g-cause9-ue.tar.gz"
           gzip -t "$candidate"
+          proof="$RUNNER_TEMP/f1-stage5h-ue-build-proof"
+          grep -Fxq dfb296ab867050a7bde81b393fa31b757ada2c83 \
+            "$proof/upstream-source-commit.txt"
+          test -s "$proof/test-only-UE-NAS-cause9.patch"
+          test -s "$proof/ue-executable.sha256"
+          expected="$(awk '{print $1}' "$proof/reusable-image-archive.sha256")"
+          actual="$(sha256sum "$candidate" | awk '{print $1}')"
+          test -n "$expected" && test "$actual" = "$expected"
           sha256sum "$candidate" > "$RUNNER_TEMP/f1-stage5h-evidence/ue-source-pinned-image-archive.sha256"
           docker load -i "$candidate"
           docker image inspect "$UE_IMG" --format '{{.Id}}' \
