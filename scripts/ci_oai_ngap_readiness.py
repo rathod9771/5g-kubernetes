@@ -23,6 +23,7 @@ KNOWN = [
     ("HCRAN_DUAL_F1_SMALL_UE_USER_PLANE", 43193891521, "oai-hcran-small-ue-userplane-"),
     ("HCRAN_TWO_UE_CONCURRENT_USER_PLANE", 43194751671, "oai-hcran-dual-ue-traffic-"),
     ("HCRAN_BOUNDED_TWO_UE_SOAK", 43224919656, "oai-hcran-dual-ue-soak-"),
+    ("HCRAN_NEA2_NIA2_CONFIGURED_TWO_UE_TRAFFIC", 43378042762, "hcran-stage4x-NEA2-NIA2-dual-UE-attempt-"),
     ("HCRAN_SUPERVISED_SYNTHETIC_UE_RECOVERY_AFTER_AMF", 43367213888, "oai-hcran-supervised-ue-recovery-"),
     ("HCRAN_ASSISTED_TWO_UE_RECOVERY_AFTER_FULL_5GC_RESTART", 43209876014, "oai-hcran-assisted-dual-ue-recovery-"),
     ("HCRAN_CONTROLLED_TWO_UE_RECOVERY_AFTER_AMF_ONLY_FAULT", 43220775040, "oai-hcran-controlled-ue-reattach-"),
@@ -45,7 +46,7 @@ NOT_VERIFIED = {
     "STAGING_3_CYCLE_DUAL_DU_RECOVERY": "Offline AMF fault cycle not reproduced on qualified staging topology with UE",
     "STAGING_OSM_ROLLBACK": "No actual OSM-controlled staging rollback and restored image digest",
     "STAGING_HEALTH_PERFORMANCE": "No sustained resource/PSI/restarts/registration SLO window",
-    "SECURITY_ALGORITHM_NEGOTIATION_AND_COMPATIBILITY": "Baseline OAI CU includes NEA0 and NIA0 options; NEA2/NIA2-only staging candidate has only static Helm tests, no real UE and Open5GS compatibility or security-procedure evidence",
+    "SECURITY_ALGORITHM_NEGOTIATION_AND_COMPATIBILITY": "Stage 4X (43378042762) passed two synthetic UEs, PDU sessions and bidirectional traffic under a NEA2/NIA2-only CU configuration. Independent AS/NAS security-mode decoding, adverse security-procedure tests and staging interoperability remain unverified",
     "HCRAN_POD_PRIVILEGE_AND_NETWORK_ISOLATION_REVIEW": "Current gNB CU and DU containers run privileged; no reviewed least-privilege, Pod Security, network isolation, secret delivery or production exception decision",
     "F1_HANDOVER_UE_RFSIM_AND_CU_TELNET_BUILD": "Upstream 2026.w13 contains inter-DU F1 handover code; patched CU build lacks explicit telnetsrv module and no UE-server two-DU mobility runtime evidence",
     "PROVENANCE_ROLLBACK_APPROVAL": "Experimental artifact is expiring, no approved immutable release and operator signoff",
@@ -104,7 +105,7 @@ def main():
         "production_deployment_authorized": False,
         "verified_ci_and_offline_evidence": observed,
         "outstanding_runtime_and_release_gates": missing,
-        "rule": "Only 3GPP-oriented F1/NG/NAS/PDU and GTP-U historical CI evidence is counted. Near-RT RIC/E2SM-KPM/RC are explicitly out of scope. Basic dual-UE traffic, bounded soak and supervised synthetic UE restart passed in isolated CI; 3GPP UE mobility, protocol negative cases, native recovery, RF test, sustained performance, staging rollback and operator authorization remain unverified.",
+        "rule": "Only 3GPP-oriented F1/NG/NAS/PDU and GTP-U historical CI evidence, including Stage 4X security-profile functional traffic, is counted. Near-RT RIC/E2SM-KPM/RC are explicitly out of scope. Basic dual-UE traffic, bounded soak and supervised synthetic UE restart passed in isolated CI; 3GPP UE mobility, protocol negative cases, native recovery, RF test, sustained performance, staging rollback and operator authorization remain unverified.",
     }
     dst.write_text(json.dumps(report, indent=2) + "\n")
     print(f"Production decision: NO_GO. CI historical evidence: "
