@@ -55,7 +55,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/hcran-stage5g-evidence" "$RUNNER_TEMP/hcran-stage5g-render"
           python3 -m venv "$RUNNER_TEMP/hcran-stage5g-venv"
-          "$RUNNER_TEMP/hcran-stage5e-venv/bin/python" -m pip install \
+          "$RUNNER_TEMP/hcran-stage5g-venv/bin/python" -m pip install \
             --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tcpdump
@@ -64,7 +64,7 @@ jobs:
             free -h
             df -h /
             docker info | head -90
-          } > "$RUNNER_TEMP/hcran-stage5e-evidence/runner-preflight.txt"
+          } > "$RUNNER_TEMP/hcran-stage5g-evidence/runner-preflight.txt"
           if ! test -c /dev/net/tun; then
             sudo modprobe tun || true
           fi
@@ -83,17 +83,17 @@ jobs:
             -f qualification/helm/cran-oai/cu/values-hcran-secure-staging.yaml \
             --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
             --set-string image.pullPolicy=IfNotPresent \
-            > "$RUNNER_TEMP/hcran-stage5e-render/cu.yaml"
+            > "$RUNNER_TEMP/hcran-stage5g-render/cu.yaml"
           helm template hcran-oai-macro qualification/helm/cran-oai/du \
             -f qualification/helm/cran-oai/du/values-hcran-macro.yaml \
             --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
             --set-string image.pullPolicy=IfNotPresent \
-            > "$RUNNER_TEMP/hcran-stage5e-render/macro.yaml"
+            > "$RUNNER_TEMP/hcran-stage5g-render/macro.yaml"
           helm template hcran-oai-small qualification/helm/cran-oai/du \
             -f qualification/helm/cran-oai/du/values-hcran-small.yaml \
             --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
             --set-string image.pullPolicy=IfNotPresent \
-            > "$RUNNER_TEMP/hcran-stage5e-render/small.yaml"
+            > "$RUNNER_TEMP/hcran-stage5g-render/small.yaml"
 
       - name: Download verified patched CU from successful Stage 3
         uses: actions/download-artifact@v4
@@ -130,24 +130,24 @@ jobs:
           set -euo pipefail
           archive="$RUNNER_TEMP/stage5a-input/oai-ngap-stage3-portable.tar.gz"
           gzip -t "$archive"
-          sha256sum "$archive" > "$RUNNER_TEMP/hcran-stage5e-evidence/cu-image-archive.sha256"
-          docker load -i "$archive" | tee "$RUNNER_TEMP/hcran-stage5e-evidence/cu-load.txt"
+          sha256sum "$archive" > "$RUNNER_TEMP/hcran-stage5g-evidence/cu-image-archive.sha256"
+          docker load -i "$archive" | tee "$RUNNER_TEMP/hcran-stage5g-evidence/cu-load.txt"
           for img in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG"; do
             docker pull "$img" || exit 1
           done
           docker image inspect "$UE_IMG" --format '{{.Id}}' \
             > "$RUNNER_TEMP/hcran-stage5g-evidence/ue-test-candidate-id.txt"
-          docker image inspect "$CU_IMG" > "$RUNNER_TEMP/hcran-stage5e-evidence/cu-image.json"
-          docker image inspect "$CORE_IMG" > "$RUNNER_TEMP/hcran-stage5e-evidence/core-image.json"
-          docker image inspect "$DU_IMG" > "$RUNNER_TEMP/hcran-stage5e-evidence/du-image.json"
-          docker image inspect "$UE_IMG" > "$RUNNER_TEMP/hcran-stage5e-evidence/ue-image.json"
+          docker image inspect "$CU_IMG" > "$RUNNER_TEMP/hcran-stage5g-evidence/cu-image.json"
+          docker image inspect "$CORE_IMG" > "$RUNNER_TEMP/hcran-stage5g-evidence/core-image.json"
+          docker image inspect "$DU_IMG" > "$RUNNER_TEMP/hcran-stage5g-evidence/du-image.json"
+          docker image inspect "$UE_IMG" > "$RUNNER_TEMP/hcran-stage5g-evidence/ue-image.json"
           docker run --rm --network none --entrypoint /bin/sh "$CORE_IMG" -ec \
             'for nf in nrfd scpd ausfd udmd udrd nssfd pcfd bsfd smfd upfd amfd; do command -v open5gs-$nf >/dev/null; done; test -d /opt/open5gs/etc/open5gs' \
-            | tee "$RUNNER_TEMP/hcran-stage5e-evidence/core-binary-preflight.txt"
+            | tee "$RUNNER_TEMP/hcran-stage5g-evidence/core-binary-preflight.txt"
           docker run --rm --network none --entrypoint /bin/sh "$UE_IMG" -ec \
             'test -x /opt/oai-nr-ue/bin/nr-uesoftmodem; ldd /opt/oai-nr-ue/bin/nr-uesoftmodem' \
-            > "$RUNNER_TEMP/hcran-stage5e-evidence/ue-ldd.txt"
-          if grep -q 'not found' "$RUNNER_TEMP/hcran-stage5e-evidence/ue-ldd.txt"; then
+            > "$RUNNER_TEMP/hcran-stage5g-evidence/ue-ldd.txt"
+          if grep -q 'not found' "$RUNNER_TEMP/hcran-stage5g-evidence/ue-ldd.txt"; then
             echo 'UE binary missing shared-library dependencies' >&2
             exit 1
           fi
@@ -156,11 +156,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/hcran-stage5e-venv/bin/python" -u \
+          "$RUNNER_TEMP/hcran-stage5g-venv/bin/python" -u \
             qualification/experiments/oai-ngap-2026w13/stage5e/run_idle_service_recovery.py \
             --baseline "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13" \
-            --rendered "$RUNNER_TEMP/hcran-stage5e-render" \
-            --output "$RUNNER_TEMP/hcran-stage5e-evidence" \
+            --rendered "$RUNNER_TEMP/hcran-stage5g-render" \
+            --output "$RUNNER_TEMP/hcran-stage5g-evidence" \
             --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
             --verify-gtpu \
             2>&1 | tee "$RUNNER_TEMP/hcran-stage5g-console.log"
@@ -170,8 +170,8 @@ jobs:
         if: always()
         shell: bash
         run: |
-          rm -rf "$RUNNER_TEMP/hcran-stage5e-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
-          test ! -e "$RUNNER_TEMP/hcran-stage5e-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          rm -rf "$RUNNER_TEMP/hcran-stage5g-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          test ! -e "$RUNNER_TEMP/hcran-stage5g-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
 
       - name: Upload source patch and reproducible build proof
         if: always()
@@ -188,7 +188,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hcran-stage5g-cause9-real-service-recovery-${{ github.run_number }}
-          path: ${{ runner.temp }}/hcran-stage5e-evidence/
+          path: ${{ runner.temp }}/hcran-stage5g-evidence/
           if-no-files-found: warn
           retention-days: 7
           compression-level: 2
