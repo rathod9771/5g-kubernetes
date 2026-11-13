@@ -14,6 +14,7 @@ on:
       - tests/test_hcran_staging_inventory.py
       - tests/test_hcran_stage4z_evidence_contract.py
       - tests/test_hcran_stage5g_cause9_patch.py
+      - tests/test_hcran_stage5g_cause9_evidence.py
       - experiments/oai-ngap-2026w13/stage5g/**
       - scripts/hcran_build_pinned_w45_ue_cause9.sh
       - experiments/oai-ngap-2026w13/stage5a/**
@@ -70,6 +71,7 @@ jobs:
           bash -n scripts/hcran_build_pinned_w45_ue_cause9.sh
           python3 -m py_compile experiments/oai-ngap-2026w13/stage5g/patch_oai_ue_cause9.py
           python3 -m unittest discover -s tests -p test_hcran_stage5g_cause9_patch.py -v
+          python3 -m unittest discover -s tests -p test_hcran_stage5g_cause9_evidence.py -v
 
       - name: Download immutable tagged OAI mobility source for read-only audit
         shell: bash
