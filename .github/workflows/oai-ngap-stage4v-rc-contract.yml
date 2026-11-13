@@ -1,0 +1,71 @@
+name: H-CRAN Stage 4V RC effect evidence contract (NO-GO, NO DEPLOY)
+
+on:
+  push:
+    branches:
+      - experiment/oai-ngap-stage4v-rc-effect-proof-contract
+    paths:
+      - .github/workflows/oai-ngap-stage4v-rc-contract.yml
+      - experiments/oai-ngap-2026w13/stage4v/**
+      - docs/oai-ngap-stage4v-rc-control-plan.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hcran-stage4v-rc-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  negative-evidence-contract:
+    if: github.ref == 'refs/heads/experiment/oai-ngap-stage4v-rc-effect-proof-contract'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout isolated H-CRAN experiment (no persisted credentials)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check Python syntax and run adversarial evidence tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            experiments/oai-ngap-2026w13/stage4v/rc_effect_contract.py \
+            experiments/oai-ngap-2026w13/stage4v/test_rc_effect_contract.py
+          python3 -m unittest discover -s \
+            experiments/oai-ngap-2026w13/stage4v \
+            -p 'test_rc_effect_contract.py' -v
+
+      - name: Assert NO-GO even when the validator itself succeeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage4v-rc-evidence"
+          python3 - <<'PY'
+          import importlib.util, json, os, pathlib
+          p = pathlib.Path('experiments/oai-ngap-2026w13/stage4v/rc_effect_contract.py')
+          spec = importlib.util.spec_from_file_location('rc_contract', p)
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          result = module.report({"scope":"isolated-github-hosted-disposable-runner"})
+          assert result["result"] == "REJECTED"
+          assert result["production_decision"] == "NO_GO"
+          assert result["real_rc_effect_verified"] is False
+          assert result["production_deployment_authorized"] is False
+          path = pathlib.Path(os.environ['RUNNER_TEMP']) / "stage4v-rc-evidence" / "contract-no-go.json"
+          path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+          print("PASS: invalid or incomplete RC proof is rejected; RC gate remains NO-GO")
+          PY
+          echo "::warning::Stage 4V tests evidence structure and false-positive rejection only; no RC CONTROL transmitted."
+
+      - name: Upload non-production contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage4v-rc-contract-NO-GO-${{ github.run_number }}
+          path: ${{ runner.temp }}/stage4v-rc-evidence/
+          if-no-files-found: warn
+          retention-days: 7
