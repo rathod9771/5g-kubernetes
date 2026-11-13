@@ -11,6 +11,10 @@ SPEC = importlib.util.spec_from_file_location(
     "hcran_inventory", ROOT / "scripts/hcran_staging_inventory.py")
 gate = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gate)
+PRESSURE_SPEC = importlib.util.spec_from_file_location(
+    "hcran_pressure", ROOT / "scripts/hcran_node_pressure.py")
+pressure_helper = importlib.util.module_from_spec(PRESSURE_SPEC)
+PRESSURE_SPEC.loader.exec_module(pressure_helper)
 
 
 def fixture():
@@ -147,6 +151,22 @@ class StagingInventoryTests(unittest.TestCase):
         report = evaluate(snapshot, None)
         self.assertEqual(report["status"], "BLOCKED")
         self.assertTrue(any("pressure" in message for message in report["blockers"]))
+
+    def test_local_linux_node_pressure_collector_is_timestamped_and_read_only(self):
+        with mock.patch.object(pressure_helper, "some_avg10", side_effect=[1.5, 2.5]) as psi, \
+             mock.patch.object(pressure_helper.os, "cpu_count", return_value=8), \
+             mock.patch.object(pressure_helper.os, "getloadavg", return_value=(4.0, 3.0, 2.0)):
+            data = pressure_helper.collect("staging-node")
+        self.assertEqual(data["nodes"][0]["cpu_some_avg10"], 1.5)
+        self.assertEqual(data["nodes"][0]["io_some_avg10"], 2.5)
+        self.assertEqual(data["nodes"][0]["load_per_cpu"], 0.5)
+        self.assertIn("+00:00", data["nodes"][0]["collected_utc"])
+        self.assertEqual(psi.call_count, 2)
+        snapshot, _ = fixture()
+        report = evaluate(snapshot, data)
+        self.assertEqual(report["status"], "READY_FOR_ISOLATED_STAGING_TEST_ONLY")
+        self.assertEqual(report["production_decision"], "NO_GO")
+        self.assertFalse(report["production_authorized"])
 
     def test_kubectl_live_method_uses_only_get(self):
         response = mock.Mock(returncode=0, stdout='{"items":[]}', stderr="")
