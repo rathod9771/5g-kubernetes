@@ -1,0 +1,8 @@
+# DO NOT DEPLOY: isolated one-UE/two-DU F1 handover RFsim candidate only.
+# Overlay after values-hcran-small.yaml on a disposable GitHub runner.
+# UE must be started as the RFsim server under this isolated DNS name.
+# The CU must be built with OAI telnetsrv and the CI command module.
+mobilityRfsim:
+  enabled: true
+  serverAddr: "oai-ue-rfsim"
+  ssbPositionsBitmap: 2
