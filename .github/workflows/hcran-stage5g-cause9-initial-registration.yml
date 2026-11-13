@@ -110,6 +110,7 @@ jobs:
           set -euo pipefail
           bash -n qualification/scripts/hcran_build_pinned_w45_ue_cause9.sh
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5g/patch_oai_ue_cause9.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5g/verify_cause9_recovery.py
           echo 'PASS: bounded NAS #9 source patch and builder syntactically valid; runtime still unknown'
 
       - name: Compile test-only OAI W45 UE with 3GPP 24.501 cause9 fallback
@@ -164,7 +165,10 @@ jobs:
             --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
             --verify-gtpu \
             2>&1 | tee "$RUNNER_TEMP/hcran-stage5g-console.log"
-          echo 'PASS requires BOTH UE processes unchanged and real MO UL-triggered NAS resumption, post-AMF F1-U and NG-U GTP-U. No DU restart, no RIC, NO_GO.'
+          "$RUNNER_TEMP/hcran-stage5g-venv/bin/python" \
+            qualification/experiments/oai-ngap-2026w13/stage5g/verify_cause9_recovery.py \
+            "$RUNNER_TEMP/hcran-stage5g-evidence"
+          echo 'PASS only if both UEs logged cause #9, a later SUCI-based Registration Request, fresh Registration and PDU Accepts, and post-AMF user-plane packets.'
 
       - name: Purge private synthetic test material before artifact upload
         if: always()
