@@ -293,6 +293,42 @@ on `NR_NAS_CONN_RELEASE_IND` but still carries a
 incomplete synthetic-UE idle service-resumption path, but does not
 establish that all physical 3GPP UEs share this behavior.
 
+### 3GPP Release 16 semantics: resumption is on demand, not unconditional
+
+3GPP TS 24.501 (ETSI TS 124 501 V16.12.0, §§ 5.3.1.3, 5.6.1)
+distinguishes **N1 signalling connection release** from **5GS deregistration**
+and **PDU session deletion**. Receiving RRC Release moves a UE into
+5GMM-IDLE; absent new data, paging, or another applicable trigger, an
+immediate new NAS Registration Accept is **not required as proof of
+compliance**. Therefore Stage 4P/5A observations of no spontaneous
+Registration Accept/PDU Session Accept cannot alone be declared a 3GPP
+protocol violation.
+
+Correct *service-resumption* acceptance after AMF-only restart is:
+(1) the test UE and DU processes stay unchanged; (2) a **fresh** NG
+Setup Response is observed; (3) the pre-existing PDU session/TUN and
+registration state are checked independently; (4) queued **real uplink
+user data**, or authentic paging, causes a Service Request (or a permitted
+fresh registration after security/context loss); (5) Service Accept
+or full security/registration and PDU setup completes; (6) user-plane
+F1-U/NG-U is captured **after** fault and trigger in both directions,
+with 6/6 completed ICMP on each served UE and no stale pcap reuse.
+No post-fault RRC UE context means manual F1 handover is **not** a
+valid replacement for initiating a new NAS/RRC connection.
+
+Stage 5E tests the **uplink-data-triggered** case using the official
+synthetic UE. Passing it would close only the **on-demand isolated
+service-resumption integration subcase**. Production still requires
+bounded interruption/MTTR against an approved SLO, negative cases,
+repeated fault cycles, actual staged 5GC, independent traffic observer
+and controlled rollback.
+
+Standards sources:
+- ETSI TS 124 501 V16.12.0:
+  https://www.etsi.org/deliver/etsi_ts/124500_124599/124501/16.12.00_60/ts_124501v161200p.pdf
+- OpenAirInterface upstream development NAS design:
+  https://github.com/OPENAIRINTERFACE/openairinterface5g/blob/develop/doc/5Gnas.md
+
 ## Stage 5E — newer OAI synthetic UE with idle uplink-triggered Service Request
 
 The **2026.w45 source** adds an idle TUN listener and
