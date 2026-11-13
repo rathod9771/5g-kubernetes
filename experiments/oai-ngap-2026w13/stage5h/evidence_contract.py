@@ -74,17 +74,30 @@ def check(folder):
         issues.append("Captured PCAP checksum mismatch")
     if not isinstance(record.get("nas_event_chain"),list) or record["nas_event_chain"]!=list(FLOW):
         issues.append("Incomplete NAS cause9/SUCI/registration sequence")
+    # Probe.capture() intentionally stores only a 60-KiB rolling tail,
+    # often eliminating the actual postfault NAS messages amid MAC logs.
+    # Stage5H writes a redacted, filtered, *postfault-only* protocol trace
+    # from complete Docker logs while the containers still exist.
     try:
-        logs=ANSI.sub("",(folder/"cleanup-ue.log").read_text(errors="replace"))
-        offset=0
-        for segment in FLOW:
-            idx=logs.find(segment,offset)
-            if idx<0:
-                issues.append("Postfault NAS trace missing "+segment)
-                break
-            offset=idx+len(segment)
-    except OSError:
-        issues.append("Missing synthetic UE NAS log")
+        trace=json.loads((folder/"stage5h-postfault-protocol-trace.json").read_text())
+        if trace.get("schema")!="hcran-stage5h-protocol-trace-v1":
+            issues.append("Wrong protocol trace schema")
+        ue=trace.get("ue")
+        if not isinstance(ue,dict) or not isinstance(ue.get("lines"),list):
+            issues.append("Missing structured postfault UE NAS/RRC log")
+        else:
+            if not isinstance(ue.get("offset_chars"),int) or ue["offset_chars"]<=0:
+                issues.append("UE log offset does not isolate prefault state")
+            logs=ANSI.sub("", "\\n".join(ue["lines"]))
+            offset=0
+            for segment in FLOW:
+                idx=logs.find(segment,offset)
+                if idx<0:
+                    issues.append("Postfault NAS trace missing "+segment)
+                    break
+                offset=idx+len(segment)
+    except (OSError,ValueError,TypeError,KeyError) as exc:
+        issues.append("Missing valid postfault NAS trace: "+str(exc))
     if not all(isinstance(record.get(key),str) and re.fullmatch(r"10\.45\.\d+\.\d+",record[key])
                for key in ("pre_fault_pdu_ip","post_fault_pdu_ip")):
         issues.append("Missing 5GC synthetic PDU address proof")
