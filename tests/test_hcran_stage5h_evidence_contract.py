@@ -38,6 +38,15 @@ def fixture(path):
     (folder/"results.json").write_text(json.dumps(
         [{"stage":x,"status":"PASS"} for x in m.EVENTS]))
     (folder/"cleanup-ue.log").write_text("\n".join(m.FLOW)+"\n")
+    (folder/"stage5h-postfault-protocol-trace.json").write_text(json.dumps({
+      "schema":"hcran-stage5h-protocol-trace-v1",
+      "scope":"postfault only, selected NAS/RRC/NGAP markers",
+      "production_decision":"NO_GO",
+      "ue":{"offset_chars":900,"total_filtered":len(m.FLOW),"lines":list(m.FLOW)},
+      "cu":{"offset_chars":600,"total_filtered":1,
+            "lines":["Received NGSetupResponse from AMF"]},
+    }))
+
     return payload
 
 
@@ -61,7 +70,9 @@ class Contract(unittest.TestCase):
           "false_slo":lambda d,x:x.update(recovery_timing_slo_proven=True),
           "wrong_schema":lambda d,x:x.update(schema="v0"),
           "pdu_ip_invalid":lambda d,x:x.update(post_fault_pdu_ip="0.0.0.0"),
-          "out_of_order_nas":lambda d,x:(d/"cleanup-ue.log").write_text("\n".join(reversed(m.FLOW))),
+          "out_of_order_nas":lambda d,x:(d/"stage5h-postfault-protocol-trace.json").write_text(json.dumps({"schema":"hcran-stage5h-protocol-trace-v1","ue":{"offset_chars":900,"lines":list(reversed(m.FLOW))}})),
+          "missing_postfault_trace":lambda d,x:(d/"stage5h-postfault-protocol-trace.json").unlink(),
+          "no_postfault_offset":lambda d,x:(d/"stage5h-postfault-protocol-trace.json").write_text(json.dumps({"schema":"hcran-stage5h-protocol-trace-v1","ue":{"offset_chars":0,"lines":list(m.FLOW)}})),
           "stale_runtime_chain":lambda d,x:x.update(nas_event_chain=list(reversed(m.FLOW))),
           "missing_event":lambda d,x:(d/"results.json").write_text("[]"),
           "missing_pcap":lambda d,x:(d/"after-cause9-re-registration-gtpu.pcap").unlink(),
