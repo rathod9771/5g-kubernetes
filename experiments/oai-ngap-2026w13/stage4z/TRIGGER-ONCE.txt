@@ -1,0 +1,9 @@
+Stage 4Z runtime experiment trigger (2026-11-13).
+
+Purpose: run real isolated one-UE, two-DU, RIC-free F1 handover test.
+Pinned CU build: GitHub Actions run 43388901151, success.
+Candidate image artifact: hcran-f1-telnet-candidate-2 (ID 14019769912).
+Safety: no HP Kubernetes/OSM/production data, no production image publication.
+Acceptance: real macro-to-small and small-to-macro F1 handover with
+post-handover UE PDU IP preservation, RRC completion and F1-U/NG-U packets.
+A green test MUST NOT authorize production deployment.
