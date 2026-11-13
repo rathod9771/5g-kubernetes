@@ -69,7 +69,6 @@ def build_probe(args):
                self.opts.cu_image, "-O", "/opt/oai-gnb/etc/gnb.conf",
                "--telnetsrv", "--telnetsrv.shrmod", "ci")
             self.record("T60-patched-F1-CU-telnet-image-started", "PASS")
-            self.wait_log("T61-NGSetupResponse", "cu", NGAP, 90, ("core", "cu"))
             sh("docker", "run", "-d", "--name", name("macro"),
                "--network", NETWORK, "--ip", IPS["macro"],
                "--cpus", "1.8", "--memory", "3g",
@@ -78,6 +77,7 @@ def build_probe(args):
                self.opts.du_image, "-O", "/opt/oai-gnb/etc/gnb.conf",
                "--rfsim", "--rfsimulator.serveraddr", IPS["ue"])
             self.record("T62-macro-DU-100-UE-server-client-mode", "PASS")
+            self.wait_log("T61-NGSetupResponse", "cu", NGAP, 90, ("core", "cu", "macro"))
             self.wait_log("T63-macro-F1SetupRequest", "cu", F1REQ, 90,
                           ("core", "cu", "macro"))
             self.wait_log("T64-macro-F1SetupResponse", "cu", F1RESP, 45,
