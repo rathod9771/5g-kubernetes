@@ -263,6 +263,60 @@ This is a bounded **8-minute RFsim functional endurance PASS**, not a
 multi-hour production SLO, physical radio qualification, network capacity
 benchmark, independent Prometheus scrape, or staging release authorization.
 
+## Stage 5D — AMF-only recovery plus manual F1 mobility: BLOCKED
+
+[Run 43397277202](https://github.com/rathod9771/5g-kubernetes/actions/runs/43397277202),
+artifact `14023696456` (read-only logs and pcaps), **FAILED** even with
+one UE acting as RFsim server and a corrected core launcher that preserves
+all non-AMF Open5GS services.
+
+- Before the AMF fault, both F1 handovers in the disposable environment
+  passed with 6/6 ICMP and genuine F1-U/NG-U packets.
+- AMF termination generated SCTP shutdown at the CU. The pinned OAI
+  NGAP handler released its gNB UE context, sent **RRC Release** and removed
+  the CU UE context (log `cleanup-cu.log`, context UE 1). The UE
+  consequently moved to **RRC_IDLE** and its PDU/TUN data-plane resources
+  were released.
+- After a new NGSetupResponse, no fresh NAS/PDU registration occurred.
+  The lab-only `ci trigger_f1_ho` request reported
+  `could not find any UE in RRC`; no subsequent F1 handover completed.
+  A UE-less F1 handover request is not an appropriate recovery mechanism.
+- This is a real runtime **negative result**; native AMF recovery remains
+  `NO_GO`. No OAI process, HP Pod, real subscriber or production
+  Kubernetes resource was restarted/modified.
+
+Source-level context: pinned OAI `2026.w13` source
+`openair3/NAS/NR_UE/nr_nas_msg.c` sets `fiveGMM_mode=FGS_IDLE`
+on `NR_NAS_CONN_RELEASE_IND` but still carries a
+`TODO handle connection release`; UE RRC code
+`nr_rrc_going_to_IDLE` removes SDAP/TUN entities. This indicates an
+incomplete synthetic-UE idle service-resumption path, but does not
+establish that all physical 3GPP UEs share this behavior.
+
+## Stage 5E — newer OAI synthetic UE with idle uplink-triggered Service Request
+
+The **2026.w45 source** adds an idle TUN listener and
+`NAS_MO_UL_DATA_IND` pathway that can initiate a 5GMM Service Request
+on pending uplink data, and it handles NAS Service Accept. This is
+a plausible *standards-based* fix for the synthetic UE idle recovery
+behavior; not yet proven in this H-CRAN setup.
+
+`stage5e/run_idle_service_recovery.py` and
+`hcran-stage5e-native-idle-service-recovery.yml` are isolated trials
+using **only a newer synthetic UE**. Frozen CU/DU/Open5GS are retained.
+Both UE processes must remain unchanged through an AMF-only outage and
+NGAP reconnect. The test actively generates UE application uplink traffic
+to request NAS service, then requires **both** restored PDU interfaces,
+6/6 ICMP replies each, fresh NAS resumption logs, and independent
+F1-U/NG-U data-plane proof. It must fail closed on a missing UE or
+missing GTP-U. **Pending actual workflow results:** no PASS can be claimed
+from source inspection alone.
+
+A 5G Service Request restoring existing PDU service need not produce
+a *new Registration Accept or PDU Session Establishment Accept*.
+The acceptance contract therefore focuses on real service-state
+restoration and post-fault GTP-U, not merely fresh initial-attach logs.
+
 ## 6. Stage 3 — real OSM staging lifecycle
 
 Require an approved immutable OCI digest, versioned Helm/OSM NSD+KDU,
