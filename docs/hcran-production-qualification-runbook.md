@@ -213,6 +213,54 @@ but its synthetic unit tests do not prove a live handover.
 The completed Stage 4Z test is **disposable RFsim integration evidence**,
 not 3GPP conformance, physical radio mobility, or production permission.
 
+## Stage 5A — AMF recovery without UE process restart (negative evidence)
+
+[Isolated run 43395100149](https://github.com/rathod9771/5g-kubernetes/actions/runs/43395100149)
+reproduced an AMF-only outage and patched-CU NGAP reconnect with both F1-C
+DUs surviving. Immediately after reconnect, **both** OAI synthetic UEs
+had no new NAS Registration Accept, no PDU Session Accept, and **no PDU
+TUN interface**. We then attempted an *additional controlled macro DU
+process restart*, not a UE restart. The experiment **FAILED** as RFsim
+connectivity/RRC state was disrupted; it did not establish NAS/PDU recovery
+with the same UE processes. A separate run's PDU restoration after explicit
+UE process recreation is *assisted recovery only* and cannot close native
+resilience acceptance. **AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY stays BLOCKED**.
+
+The RFsim transport is an experimental software model. Failure on socket
+loss is not a determination that physical commercial UE products fail 3GPP
+standards; production target UEs and the actual AMF recovery/NG Reset
+procedure still need qualified acceptance evidence. Do not try to resolve
+this on the overloaded HP host with forced DU restarts.
+
+## Stage 5B — actual RAN least-capability Docker runtime (positive evidence)
+
+[Isolated run 43395469675](https://github.com/rathod9771/5g-kubernetes/actions/runs/43395469675),
+artifact `14022567512`, **PASSED** while all three OAI RAN processes
+(CU, macro DU 100, small DU 101) ran with Docker `--cap-drop ALL`,
+`--security-opt no-new-privileges=true`, no privileged mode, and
+`CapEff=0` verified in each process. Both UEs still registered and
+received independent PDU IPv4 addresses (`10.45.0.2` and `10.45.0.3`),
+with 6/6 ICMP each, macro F1-U 12 UL/12 DL, small F1-U 14 UL/12 DL,
+and NG-U 26 UL/24 DL G-PDUs.
+
+This is a **real Docker functional compatibility PASS** under NEA2/NIA2
+CU configuration, not proof of Kubernetes admission, NetworkPolicy
+enforcement, RBAC, Pod Security Standards or live production security.
+The operational defaults and running HP deployments remain unchanged.
+Use the opt-in Helm `values-hcran-pod-security-staging.yaml` overlays
+only in separately approved disposable staging.
+
+## Stage 5C — extended bounded two-UE stability
+
+The `stage5c/extended_dual_ue_soak.py` workflow targets 24 rounds of
+real dual-UE RFsim traffic with 240/240 ICMP responses per UE, multiple
+SCTP and F1/NG checks each round, real GTP-U pcap, zero restarts, and
+minimum 360 seconds of sampled observation. **The result is pending CI
+verification**; do not claim that its threshold passed until its actual
+GitHub workflow conclusion and artifact are inspected. Even a passing
+run is a short-run integration smoke, not a sustained production SLO
+or real radio performance qualification.
+
 ## 6. Stage 3 — real OSM staging lifecycle
 
 Require an approved immutable OCI digest, versioned Helm/OSM NSD+KDU,
