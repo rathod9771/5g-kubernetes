@@ -54,6 +54,8 @@ def fixture():
                 "containerStatuses": [{
                     "name": "cu" if role.endswith("-cu") else "du",
                     "ready": True, "restartCount": 0,
+                    "imageID": "docker-pullable://registry.invalid/hcran@sha256:" + sha,
+                    "containerID": "containerd://" + "b"*64,
                     "state": {"running": {"startedAt": "2026-11-13T01:00:00Z"}},
                 }],
             },
@@ -148,6 +150,12 @@ class StagingInventoryTests(unittest.TestCase):
                     "sources": [{"serviceAccountToken": {"path": "token"}}]}}]),
             "pod_injected_init_container": lambda s, p: s["pods"]["items"][0]["spec"].update(
                 initContainers=[{"name": "unreviewed-init", "image": "unknown"}]),
+            "missing_runtime_image_id": lambda s, p: s["pods"]["items"][0]["status"]["containerStatuses"][0].pop(
+                "imageID"),
+            "invalid_runtime_image_id": lambda s, p: s["pods"]["items"][0]["status"]["containerStatuses"][0].update(
+                imageID="docker://image:latest"),
+            "missing_container_id": lambda s, p: s["pods"]["items"][0]["status"]["containerStatuses"][0].pop(
+                "containerID"),
         }
         for label, mutate in changes.items():
             with self.subTest(label=label):
