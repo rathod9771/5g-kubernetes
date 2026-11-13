@@ -10,6 +10,7 @@ Must see source-release UE completion, new target DU F1-U UL+DL, preserved
 PDU address, post-handover user-plane connectivity, and reverse handover.
 """
 import argparse
+import hashlib
 import datetime
 import json
 import pathlib
@@ -39,6 +40,7 @@ def build_probe(args):
                                      REG, PDU, NETWORK, configmap, name, sh)
     from dual_du_macro_ue_traffic import REQ as SMALL_REQ, RESP as SMALL_RESP
     import gtpu_wire
+    from evidence_contract import check as verify_evidence
 
     if getattr(args, "verify_gtpu", False) is not True:
         raise RuntimeError("FAIL CLOSED: --verify-gtpu required")
@@ -165,9 +167,10 @@ def build_probe(args):
             if min(count["f1u_ul"], count["f1u_dl"],
                    count["ngu_ul"], count["ngu_dl"]) <= 0:
                 raise RuntimeError(label+": missing DU/NG-U real UL/DL G-PDUs "+str(count))
+            checksum = hashlib.sha256(trace.read_bytes()).hexdigest()
             trace.rename(self.out/(label+"-gtpu.pcap"))
-            self.record(label+"-F1U-NGU", "PASS", counts=count)
-            return count
+            self.record(label+"-F1U-NGU", "PASS", counts=count, pcap_sha256=checksum)
+            return {"packet_counts": count, "pcap_sha256": checksum}
 
         def wait_completed_ho(self, source_pci, start_len, target, timeout=100):
             # Wait for *post-command* completion proof. A mere request/ACK
@@ -209,7 +212,7 @@ def build_probe(args):
             self.wait_log("T68-real-PDU-SessionEstablishmentAccept", "ue", PDU, 120,
                           ("core","cu","macro","ue"))
             initial_ip = self.ue_ip()
-            self.capture_f1_data("baseline-macro", IPS["macro"])
+            baseline_data=self.capture_f1_data("baseline-macro", IPS["macro"])
             # Start target DU only AFTER initial macro UE attaches, per
             # pinned upstream handover tutorial.
             sh("docker", "run", "-d", "--name", name("small"),
@@ -228,18 +231,54 @@ def build_probe(args):
             assoc = sh("docker", "exec", name("cu"), "cat", "/proc/net/sctp/assocs")
             if any(peer not in assoc for peer in (IPS["core"], IPS["macro"], SMALL_IP)):
                 raise RuntimeError("Not all core/macro/small SCTP peers are associated")
+            hops=[]
             for n, old_pci, target_ip, target in (
                     (1, 101, SMALL_IP, "small"),
                     (2, 102, IPS["macro"], "macro")):
                 previous = self.logs("cu")
+                previous_ue = self.logs("ue")
                 self.telnet_command("ci trigger_f1_ho")
                 self.wait_completed_ho(old_pci, len(previous), target)
+                # A real RRC completion must be observed AFTER the command.
+                deadline=time.monotonic()+30
+                while time.monotonic()<deadline:
+                    ue_after=self.logs("ue")[len(previous_ue):]
+                    if re.search(r"rrcReconfigurationComplete|RRCReconfigurationComplete",ue_after,re.I):
+                        break
+                    time.sleep(2)
+                else:
+                    raise RuntimeError("UE did not log post-handover RRCReconfigurationComplete")
                 current_ip = self.ue_ip()
                 if current_ip != initial_ip:
                     raise RuntimeError("UE PDU address changed across F1 handover")
-                self.capture_f1_data("handover-"+str(n)+"-"+target, target_ip)
+                packet=self.capture_f1_data("handover-"+str(n)+"-"+target, target_ip)
+                hops.append({
+                    "from": "macro" if n==1 else "small", "to":target,
+                    "source_pci":old_pci, "pre_pdu_ip":initial_ip,
+                    "post_pdu_ip":current_ip, "f1ap_context_update_confirmed":True,
+                    "source_context_release_confirmed":True,
+                    "rrc_reconfiguration_confirmed":True,
+                    "icmp_sent":6,"icmp_received":6,
+                    "packet_counts":packet["packet_counts"],
+                    "post_ho_pcap_sha256":packet["pcap_sha256"]
+                })
                 self.record("T72-confirmed-F1-mobility-"+target, "PASS",
                             source_pci=old_pci, pdu_ip_continuous=True)
+            report={
+                "schema":"hcran-stage4z-real-f1-handover-v1",
+                "source":"real-isolated-docker-rfsim-pcap",
+                "initial_pdu_ip":initial_ip,
+                "baseline":{"serving_du":"macro","packet_counts":baseline_data["packet_counts"]},
+                "transitions":hops,
+                "rc_ric_required":False,
+                "production_authorized":False,
+                "production_decision":"NO_GO"
+            }
+            accepted, issues=verify_evidence(report)
+            if not accepted:
+                raise RuntimeError("Stage4Z mobility evidence incomplete: "+str(issues))
+            (self.out/"stage4z-f1-handover-evidence.json").write_text(
+                json.dumps(report,indent=2)+"\\n")
             self.capture("after-bidirectional-f1-handover")
             self.record("STAGE4Z", "PASS",
                         scope="real macro<->small F1 mobility; PDU IP retained and bidirectional F1-U/NG-U",
