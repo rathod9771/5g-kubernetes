@@ -7,6 +7,15 @@
 {{- fail "H-CRAN 3GPP profile refuses Near-RT RIC/E2 agent; monitor with Prometheus/Grafana" -}}
 {{- end -}}
 {{- end -}}
+{{- /* Optional secure staging candidate: preserve the prior RFSIM baseline when not selected. */ -}}
+{{- $radioSecurity := .Values.radioSecurity | default dict -}}
+{{- $ciphers := $radioSecurity.cipheringAlgorithms | default (list "nea0") -}}
+{{- $integrities := $radioSecurity.integrityAlgorithms | default (list "nia2" "nia0") -}}
+{{- if and (eq (.Values.ranType | default "cran") "hcran") ($radioSecurity.hardenedCandidate | default false) -}}
+{{- if or (ne (len $ciphers) 1) (ne (first $ciphers) "nea2") (ne (len $integrities) 1) (ne (first $integrities) "nia2") -}}
+{{- fail "H-CRAN secure staging candidate requires only NEA2 ciphering and NIA2 integrity; no NEA0 or NIA0" -}}
+{{- end -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -77,10 +86,10 @@ data:
     );
 
     security = {
-      ciphering_algorithms = ( "nea0" );
-      integrity_algorithms = ( "nia2", "nia0" );
+      ciphering_algorithms = ( {{- range $i, $alg := $ciphers }}{{ if $i }}, {{ end }}"{{ $alg }}"{{ end }} );
+      integrity_algorithms = ( {{- range $i, $alg := $integrities }}{{ if $i }}, {{ end }}"{{ $alg }}"{{ end }} );
       drb_ciphering = "yes";
-      drb_integrity = "no";
+      drb_integrity = "no"; # UP integrity requires separate support and policy validation
     };
 
     log_config : {
