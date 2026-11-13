@@ -11,6 +11,9 @@ on:
       - helm/cran-srsran/cu/**
       - tests/test_hcran_3gpp_contract.py
       - tests/test_hcran_stage4w_preflight.py
+      - tests/test_hcran_staging_inventory.py
+      - scripts/hcran_staging_inventory.py
+      - scripts/hcran_node_pressure.py
       - scripts/hcran_stage4w_mobility_preflight.py
       - scripts/ci_oai_ngap_readiness.py
       - docs/hcran-3gpp-only-readiness.md
@@ -46,6 +49,7 @@ jobs:
           python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
           python3 -m unittest discover -s tests -p test_hcran_3gpp_contract.py -v
           python3 -m unittest discover -s tests -p test_hcran_stage4w_preflight.py -v
+          python3 -m unittest discover -s tests -p test_hcran_staging_inventory.py -v
 
       - name: Download immutable tagged OAI mobility source for read-only audit
         shell: bash
