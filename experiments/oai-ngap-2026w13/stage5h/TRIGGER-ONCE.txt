@@ -1,0 +1,5 @@
+STAGE5H EXPERIMENTAL DISPOSABLE CI TRIGGER
+Source-pinned Stage5G UE artifact: GitHub run 43403818770, image artifact hcran-stage5g-source-pinned-UE-image-6.
+Source run runtime FAILED; independent source-build steps SUCCESS and archived image integrity are gate checked.
+Real UE-server/two-DU test: AMF-only restart, cause #9, fresh SUCI registration, fresh PDU and postfault bidirectional GTP-U.
+No staging/HP/OSM access. No production authorization. NO_GO.
