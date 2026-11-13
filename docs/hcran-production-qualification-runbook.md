@@ -17,9 +17,16 @@ user-plane traffic successfully: 6/6 ICMP replies each, F1-U macro 14/12,
 small 14/12, NG-U 28/24. These results establish **functional compatibility
 of the configured profile** on the isolated runner, not independently decoded
 NAS/AS algorithm negotiation, formal 3GPP conformance, physical RF test or
-production-cluster compatibility. The test retained the previously functioning
-privileged image runtime. It did NOT validate the experimental unprivileged
-Kubernetes Pod security overlays.
+production-cluster compatibility. **Stage 4Y** (`43379180419`): under that same NEA2/NIA2-only CU
+configuration both simulated UEs passed six traffic rounds (60/60 ICMP
+replies each) over 97.18 seconds, with all three CU SCTP peers maintained,
+zero detected container restarts/OOM, macro/small F1-U 126/120 each and
+NG-U 252/240. This is a bounded functional stability smoke, **not a
+multi-hour capacity or production SLO test**.
+
+The tests retained the previously functioning privileged image runtime.
+They did NOT validate the experimental unprivileged Kubernetes Pod security
+overlays or an independently decoded AS/NAS negotiated security algorithm.
 
 The upstream pinned OAI `2026.w13` has F1 intra-CU handover code and a
 manual trigger. Its documentation also specifies a special UE-side RFsim
@@ -107,7 +114,10 @@ The preflight checks three H-CRAN deployment identities, synchronized
 Deployment generation, Pod readiness and image agreement, immutable
 digests, internal Service selectors/ports, NEA2/NIA2 CU configuration,
 absence of RIC/E2 agent directives, explicit non-privileged security
-configuration, and recent per-node CPU/IO pressure readings.
+configuration, **actual Pod versus template security-context identity**,
+disabled Kubernetes service-account token automount, no injected projected
+API tokens/host-network/host-PID privileges, and recent per-node CPU/IO
+pressure readings.
 
 Current **advisory** 10-second pressure gates are CPU PSI some <25%,
 I/O PSI some <10%, load-per-logical-CPU <1.5, with a pressure timestamp
