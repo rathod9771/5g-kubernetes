@@ -36,6 +36,51 @@ jobs:
           ref: 1fb544a39232a37c1af7250e0f3612c9ac0fc738
           path: baseline
 
+      - name: Verify Stage 5G *image build* steps (prior recovery run FAILED)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_run=43403818770
+          result="$(gh api "repos/${{ github.repository }}/actions/runs/$source_run")"
+          test "$(jq -r '.name' <<< "$result")" = 'H-CRAN Stage 5G source-pinned UE cause9 initial registration recovery - NO DEPLOY'
+          test "$(jq -r '.status' <<< "$result")" = completed
+          # The source run failed its *runtime* recovery experiment, but
+          # its compiled image is reusable for the independent Stage5H
+          # topology; NEVER count the former as a qualification PASS.
+          test "$(jq -r '.conclusion' <<< "$result")" = failure
+          gh api "repos/${{ github.repository }}/actions/runs/$source_run/jobs" \
+            --jq '.jobs[0].steps | map({name,conclusion})' \
+            > "$RUNNER_TEMP/stage5h-source-build-steps.json"
+          python3 - <<'PY'
+          import json,os,pathlib
+          steps=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'stage5h-source-build-steps.json').read_text())
+          required=(
+              "Audit source-pinned W45 UE patch and syntax only",
+              "Compile test-only OAI W45 UE with 3GPP 24.501 cause9 fallback",
+              "Archive bounded source-pinned UE candidate for subsequent RFsim acceptance",
+              "Upload expiring RESEARCH UE image candidate (not production)",
+          )
+          for item in required:
+              matching=[x for x in steps if x["name"]==item]
+              assert len(matching)==1 and matching[0]["conclusion"]=="success",item
+          print("PASS: verified source image build and upload; prior runtime failure remains FAIL")
+          PY
+          gh api "repos/${{ github.repository }}/actions/runs/$source_run/artifacts" \
+            --jq '.artifacts | map({name,expired,size_in_bytes})' \
+            > "$RUNNER_TEMP/stage5h-source-artifacts.json"
+          python3 - <<'PY'
+          import json,os,pathlib
+          arts=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'stage5h-source-artifacts.json').read_text())
+          need=("hcran-stage5g-source-build-proof-6","hcran-stage5g-source-pinned-UE-image-6")
+          for name in need:
+              candidates=[x for x in arts if x["name"]==name]
+              assert len(candidates)==1 and candidates[0]["expired"] is False
+              assert candidates[0]["size_in_bytes"]>1000
+          print("PASS: independent exact candidate image and source provenance artifacts exist")
+          PY
+
       - name: Install Helm renderer
         uses: azure/setup-helm@v4
         with:
@@ -70,7 +115,7 @@ jobs:
               -f "$CHART/du/values-hcran-$role.yaml" \
               -f "$CHART/du/values-hcran-mobility-$role.yaml" \
               --set-string mobilityRfsim.serverAddr=172.29.76.40 \
-              --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+              --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w45 \
               > "$RUNNER_TEMP/f1-stage5h-render/$role.yaml"
           done
           "$RUNNER_TEMP/f1-stage5h-venv/bin/python" - <<'PY'
