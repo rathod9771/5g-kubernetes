@@ -101,7 +101,14 @@ def assess(pods, deployments, services, cu_config, pressure):
                     or status.get("updatedReplicas") != 1
                     or status.get("unavailableReplicas", 0) not in (None, 0)):
                 reasons.append("Deployment rollout is not current, ready and available (1/1)")
-            containers = dep.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+            template_spec = dep.get("spec", {}).get("template", {}).get("spec", {})
+            if template_spec.get("automountServiceAccountToken") is not False:
+                reasons.append("Deployment must disable service account token automount")
+            if template_spec.get("hostNetwork", False) or template_spec.get("hostPID", False):
+                reasons.append("Deployment requests host-network or host-PID access")
+            if template_spec.get("initContainers") or template_spec.get("ephemeralContainers"):
+                reasons.append("Unexpected init/ephemeral containers in RAN Deployment")
+            containers = template_spec.get("containers", [])
             if len(containers) != 1:
                 reasons.append("Deployment must have exactly one RAN container")
                 spec = {}
@@ -129,11 +136,25 @@ def assess(pods, deployments, services, cu_config, pressure):
                 statuses = pod.get("status", {}).get("containerStatuses", [])
                 if statuses and statuses[0].get("restartCount", -1) != 0:
                     reasons.append("Container has restarts in current observation")
-                pod_containers = pod.get("spec", {}).get("containers", [])
+                pod_spec = pod.get("spec", {})
+                pod_containers = pod_spec.get("containers", [])
                 if (len(pod_containers) != 1 or
                         pod_containers[0].get("image") != image or
                         pod_containers[0].get("name") != spec.get("name")):
                     reasons.append("Running Pod image/identity differs from desired Deployment template")
+                elif pod_containers[0].get("securityContext") != security:
+                    reasons.append("Running Pod effective securityContext differs from declared Deployment")
+                if pod_spec.get("automountServiceAccountToken") is not False:
+                    reasons.append("Running Pod may mount a Kubernetes service account token")
+                if pod_spec.get("hostNetwork", False) or pod_spec.get("hostPID", False):
+                    reasons.append("Running Pod has host-network or host-PID access")
+                if pod_spec.get("initContainers") or pod_spec.get("ephemeralContainers"):
+                    reasons.append("Running Pod contains unexpected init/ephemeral containers")
+                if any(v.get("projected", {}).get("sources") and
+                       any("serviceAccountToken" in source
+                           for source in v.get("projected", {}).get("sources", []))
+                       for v in pod_spec.get("volumes", [])):
+                    reasons.append("Running Pod contains a projected Kubernetes API token volume")
                 if pod.get("metadata", {}).get("deletionTimestamp"):
                     reasons.append("Running Pod has pending deletion timestamp")
             selector = svc.get("spec", {}).get("selector", {})
