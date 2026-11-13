@@ -103,6 +103,124 @@ class HCRAN3GPPTests(unittest.TestCase):
             self.assertIs(profile["e2Agent"]["enabled"], False)
             self.assertIs(profile["ric"]["enabled"], False)
 
+    def test_guarded_security_staging_overlay_has_no_null_cipher_or_integrity(self):
+        cu = "helm/cran-oai/cu"
+        overlay = cu + "/values-hcran-secure-staging.yaml"
+        result = render(cu, "", "hcran-oai-secure-staging", ("-f", overlay))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = next(d for d in objects(result.stdout) if d["kind"] == "ConfigMap")["data"]["gnb.conf"]
+        self.assertRegex(config, r'ciphering_algorithms\s*=\s*\(\s*"nea2"\s*\)')
+        self.assertRegex(config, r'integrity_algorithms\s*=\s*\(\s*"nia2"\s*\)')
+        self.assertNotIn('"nea0"', config)
+        self.assertNotIn('"nia0"', config)
+        self.assertIn('drb_integrity = "no"', config)
+
+    def test_guarded_security_rejects_weak_staging_override(self):
+        cu = "helm/cran-oai/cu"
+        overlay = cu + "/values-hcran-secure-staging.yaml"
+        attempts = [
+            ("--set-string", "radioSecurity.cipheringAlgorithms[0]=nea0"),
+            ("--set-string", "radioSecurity.integrityAlgorithms[0]=nia0"),
+            ("--set-string", "radioSecurity.cipheringAlgorithms[0]=nea1"),
+            ("--set-string", "radioSecurity.integrityAlgorithms[0]=nia1"),
+        ]
+        for args in attempts:
+            with self.subTest(args=args):
+                result = render(cu, "", "hcran-oai-secure-staging", ("-f", overlay, *args))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("requires only NEA2", result.stderr)
+
+    def test_disposable_handover_du_overlays_use_one_ue_rf_server(self):
+        chart = "helm/cran-oai/du"
+        rendered = {}
+        for role, expected_bitmap in (("macro", 1), ("small", 2)):
+            with self.subTest(role=role):
+                overlay = f"{chart}/values-hcran-mobility-{role}.yaml"
+                result = render(chart, "-" + role, "hcran-oai-" + role,
+                                ("-f", overlay))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                conf = next(d for d in objects(result.stdout) if d["kind"] == "ConfigMap")["data"]["gnb.conf"]
+                self.assertIn('serveraddr = "oai-ue-rfsim";', conf)
+                self.assertIn(f"ssb_PositionsInBurst_Bitmap                                  = {expected_bitmap};", conf)
+                self.assertIsNone(FORBIDDEN.search(conf))
+                rendered[role] = conf
+        self.assertNotEqual(rendered["macro"], rendered["small"])
+
+    def test_disposable_mobility_rf_sim_fail_closed(self):
+        chart = "helm/cran-oai/du"
+        overlay = chart + "/values-hcran-mobility-small.yaml"
+        for args in [
+            ("--set-string", "mobilityRfsim.serverAddr="),
+            ("--set", "mobilityRfsim.ssbPositionsBitmap=0"),
+            ("--set", "mobilityRfsim.ssbPositionsBitmap=3"),
+            ("--set-string", "rf.mode=usrp"),
+        ]:
+            with self.subTest(args=args):
+                result = render(chart, "-small", "hcran-oai-small",
+                                ("-f", overlay, *args))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("F1 mobility RFsim overlay", result.stderr)
+
+    def test_disposable_nonprivileged_pod_security_is_rendered_only_on_request(self):
+        profiles = [
+            ("cu", "helm/cran-oai/cu", ""),
+            ("macro", "helm/cran-oai/du", "-macro"),
+            ("small", "helm/cran-oai/du", "-small"),
+        ]
+        for role, chart, suffix in profiles:
+            with self.subTest(role=role):
+                baseline = render(chart, suffix, "hcran-oai-" + role)
+                self.assertEqual(baseline.returncode, 0, baseline.stderr)
+                before = next(d for d in objects(baseline.stdout) if d["kind"] == "Deployment")
+                self.assertIs(before["spec"]["template"]["spec"]["containers"][0]["securityContext"]["privileged"], True)
+
+                overlay = chart + "/values-hcran-pod-security-staging.yaml"
+                trial = render(chart, suffix, "hcran-oai-" + role, ("-f", overlay))
+                self.assertEqual(trial.returncode, 0, trial.stderr)
+                deployment = next(d for d in objects(trial.stdout) if d["kind"] == "Deployment")
+                self.assertIs(
+                    deployment["spec"]["template"]["spec"]["automountServiceAccountToken"], False)
+                security = deployment["spec"]["template"]["spec"]["containers"][0]["securityContext"]
+                self.assertIs(security["privileged"], False)
+                self.assertIs(security["allowPrivilegeEscalation"], False)
+                self.assertEqual(security["capabilities"]["drop"], ["ALL"])
+                self.assertEqual(security["seccompProfile"]["type"], "RuntimeDefault")
+
+                compromised = render(chart, suffix, "hcran-oai-" + role,
+                                     ("-f", overlay, "--set", "containerSecurityContext.privileged=true"))
+                self.assertNotEqual(compromised.returncode, 0)
+                self.assertIn("requires explicit privileged=false", compromised.stderr)
+
+    def test_hcran_render_does_not_expose_manual_telnet_or_e2_control(self):
+        # Runtime F1 handover used a disposable CLI-enabled image. Production
+        # H-CRAN charts must never add the unauthenticated CI telnet listener.
+        for component, chart, suffix in (
+            ("cu", "helm/cran-oai/cu", ""),
+            ("macro", "helm/cran-oai/du", "-macro"),
+            ("small", "helm/cran-oai/du", "-small"),
+        ):
+            with self.subTest(component=component):
+                run = render(chart, suffix, "hcran-oai-" + component)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                docs = objects(run.stdout)
+                for obj in docs:
+                    if obj.get("kind") == "ConfigMap":
+                        body = "\n".join(str(x) for x in obj.get("data", {}).values())
+                        self.assertNotIn("telnetsrv", body.lower())
+                        self.assertNotIn("near_ric_ip_addr", body.lower())
+                    if obj.get("kind") == "Deployment":
+                        pod = obj["spec"]["template"]["spec"]
+                        for ctr in pod.get("containers", []):
+                            self.assertNotIn("--telnetsrv", repr(ctr))
+                            self.assertNotIn("--telnetsrv.shrmod", repr(ctr))
+                            self.assertTrue(all(p.get("containerPort") not in
+                                                (9090, 36421, 36422)
+                                                for p in ctr.get("ports", [])))
+                    if obj.get("kind") == "Service":
+                        ports = obj["spec"].get("ports", [])
+                        self.assertTrue(all(p["port"] not in (9090, 36421, 36422)
+                                            for p in ports))
+
     def test_3gpp_gate_excludes_ric_and_fails_closed(self):
         path=ROOT/"scripts/ci_oai_ngap_readiness.py"
         spec=importlib.util.spec_from_file_location("hcran_readiness",path)
@@ -112,7 +230,7 @@ class HCRAN3GPPTests(unittest.TestCase):
         for excluded in ("E2_", "KPM_", "FLEXRIC", "RC_CONTROL", "NEAR_RT_RIC"):
             self.assertFalse(any(excluded in name for name in all_gate_names),
                              f"RIC gate found: {excluded}")
-        for gate in ("INTRA_GNB_INTER_DU_MOBILITY", "RRC_REESTABLISHMENT_AFTER_RADIO_FAILURE",
+        for gate in ("INTRA_GNB_INTER_DU_MOBILITY_STAGING_AND_RADIO_QUALIFICATION", "RRC_REESTABLISHMENT_AFTER_RADIO_FAILURE",
                      "PDU_SESSION_MODIFICATION_RELEASE_AND_QOS",
                      "AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY", "STAGING_OSM_ROLLBACK"):
             self.assertIn(gate,module.NOT_VERIFIED)

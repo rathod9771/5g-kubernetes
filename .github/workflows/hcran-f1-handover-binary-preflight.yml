@@ -1,0 +1,83 @@
+name: H-CRAN F1 handover CU image+telnet binary preflight (NO DEPLOY)
+
+on:
+  push:
+    branches:
+      - experiment/hcran-production-qualification-20261113
+    paths:
+      - .github/workflows/hcran-f1-handover-binary-preflight.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: hcran-f1-binary-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-runtime-plugins:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout branch without deployment credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Obtain existing isolated NGAP-patched CU image
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43157479388
+          name: oai-ngap-stage3-portable-4
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/hcran-f1-input
+      - name: Inspect runtime image for mandatory telnet CI module
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hcran-f1-evidence"
+          gzip -t "$RUNNER_TEMP/hcran-f1-input/oai-ngap-stage3-portable.tar.gz"
+          sha256sum "$RUNNER_TEMP/hcran-f1-input/oai-ngap-stage3-portable.tar.gz" \
+            > "$RUNNER_TEMP/hcran-f1-evidence/cu-image-archive.sha256"
+          docker load -i "$RUNNER_TEMP/hcran-f1-input/oai-ngap-stage3-portable.tar.gz" \
+            > "$RUNNER_TEMP/hcran-f1-evidence/image-load.txt"
+          docker run --rm --network none --entrypoint /bin/sh \
+            oai-ngap-2026w13-v2:stage3-portable-4 -ec '
+              echo "=== OAI binary ==="
+              test -x /opt/oai-gnb/bin/nr-softmodem
+              echo "=== Telnet plugin candidates ==="
+              find /opt/oai-gnb /usr/local/lib /usr/lib -type f \
+                \( -iname "*telnetsrv*" -o -iname "*ci.so" \) 2>/dev/null | head -100
+              echo "=== Telnet and CI library symbols ==="
+              find /opt/oai-gnb /usr/local/lib -type f \
+                \( -name "*telnetsrv*" -o -name "libtelnetsrv_ci.so" \) 2>/dev/null | head -100
+              echo "=== Binary linkage ==="
+              ldd /opt/oai-gnb/bin/nr-softmodem
+            ' > "$RUNNER_TEMP/hcran-f1-evidence/runtime-plugins.txt"
+          python3 - <<'PY'
+          import json,os,pathlib,re
+          folder=pathlib.Path(os.environ["RUNNER_TEMP"])/"hcran-f1-evidence"
+          body=(folder/"runtime-plugins.txt").read_text()
+          plugins=sorted(set(re.findall(r"/[^\\s]*libtelnetsrv[^\\s]*",body)))
+          report={
+              "type":"hcran-f1-handover-image-runtime-inspection",
+              "verified_telnet_base_library":any("libtelnetsrv.so" in s for s in plugins),
+              "verified_telnet_ci_library":any("libtelnetsrv_ci.so" in s for s in plugins),
+              "actual_f1_handover_tested":False,
+              "production_authorized":False,
+              "release_decision":"NO_GO",
+              "required_followup":"Build or locate telnetsrv and CI plugin, and prove actual UE handover"
+          }
+          (folder/"module-preflight.json").write_text(json.dumps(report,indent=2)+"\n")
+          print(json.dumps(report,indent=2))
+          PY
+      - name: Upload evidence of actual image modules
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-f1-cu-telnet-preflight-${{ github.run_number }}
+          path: ${{ runner.temp }}/hcran-f1-evidence/
+          if-no-files-found: warn
+          retention-days: 7

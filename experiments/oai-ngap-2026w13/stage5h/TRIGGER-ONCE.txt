@@ -1,0 +1,4 @@
+STAGE5H RERUN B: POST-FAULT NAS CAUSE9 WITH PREFAULT UL QUIESCENCE
+Experimental isolated disposable GitHub runner only.
+Prior failed Stage5H run 43409824705 proved UE SR (44B), RRCSetupComplete and CU NGAP 'No AMF is associated' *before* restored NGSetup; cause9 fallback not exercised.
+Rerun waits 15 seconds after last proven F1 handover/user-plane packet to drain queued UL data, then AMF-only restart. Fail if unsolicited SR is observed before controlled post-AMF UL ping. Capture redacted full postfault UE NAS/RRC and CU NGAP/F1AP order even on failure. Require cause9, initial SUCI registration, fresh PDU, real UL/DL F1U and NGU. NO_GO and no HP/OSM actions.

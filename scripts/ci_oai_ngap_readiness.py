@@ -23,6 +23,12 @@ KNOWN = [
     ("HCRAN_DUAL_F1_SMALL_UE_USER_PLANE", 43193891521, "oai-hcran-small-ue-userplane-"),
     ("HCRAN_TWO_UE_CONCURRENT_USER_PLANE", 43194751671, "oai-hcran-dual-ue-traffic-"),
     ("HCRAN_BOUNDED_TWO_UE_SOAK", 43224919656, "oai-hcran-dual-ue-soak-"),
+    ("HCRAN_NEA2_NIA2_CONFIGURED_TWO_UE_TRAFFIC", 43378042762, "hcran-stage4x-NEA2-NIA2-dual-UE-attempt-"),
+    ("HCRAN_NEA2_NIA2_CONFIGURED_SIX_ROUND_SOAK", 43379180419, "hcran-stage4y-NEA2-NIA2-six-round-soak-"),
+    ("HCRAN_REAL_TWO_WAY_F1_HANDOVER_RF_SIM", 43391519669, "hcran-stage4z-real-f1-handover-attempt-"),
+    ("HCRAN_NONPRIVILEGED_DOCKER_CU_DUAL_DU_TRAFFIC", 43395469675, "hcran-stage5b-nonprivileged-ran-attempt-"),
+    ("HCRAN_EXTENDED_24_ROUND_NEA2_NIA2_DUAL_UE_GTPU", 43396068709, "hcran-stage5c-NEA2-NIA2-extended-soak-"),
+    ("HCRAN_OBSERVED_AS_SECURITY_NEA2_NIA2_SMC", 43399191636, "hcran-stage5f-as-security-log-proof-"),
     ("HCRAN_SUPERVISED_SYNTHETIC_UE_RECOVERY_AFTER_AMF", 43367213888, "oai-hcran-supervised-ue-recovery-"),
     ("HCRAN_ASSISTED_TWO_UE_RECOVERY_AFTER_FULL_5GC_RESTART", 43209876014, "oai-hcran-assisted-dual-ue-recovery-"),
     ("HCRAN_CONTROLLED_TWO_UE_RECOVERY_AFTER_AMF_ONLY_FAULT", 43220775040, "oai-hcran-controlled-ue-reattach-"),
@@ -31,20 +37,23 @@ KNOWN = [
 # Verification of these gates requires real positive evidence, not inferred
 # success from compile, static renders, F1-C setup, or a synthetic test.
 NOT_VERIFIED = {
-    "INTRA_GNB_INTER_DU_MOBILITY": "No macro-to-small or small-to-macro inter-DU mobility / UE context transfer proven with active PDU service; TS 38.401/38.473/38.331",
+    "INTRA_GNB_INTER_DU_MOBILITY_STAGING_AND_RADIO_QUALIFICATION": "Stage 4Z run 43391519669 passed 2-way macro/small F1 handover and PDU traffic in isolated Docker RFsim; no independent staging, RF fading/mobility, production load or repeated handover under fault",
     "F1AP_UE_CONTEXT_MODIFICATION_RELEASE": "Selected F1 Setup and user-plane operation passed, but complete UE Context Modification/Release procedures are not qualified",
     "RRC_REESTABLISHMENT_AFTER_RADIO_FAILURE": "No verified RRC re-establishment or compliant session continuity following simulated radio-link failure",
     "NAS_SECURITY_AND_REGISTRATION_EDGE_CASES": "Basic NAS Registration Accept passed; registration reject, authentication/retry, security and deregistration matrix not executed",
     "PDU_SESSION_MODIFICATION_RELEASE_AND_QOS": "PDU setup passed; PDU Session Modification, Release, QFI/5QI treatment and negative cases not qualified",
     "NR_RF_PHY_MAC_AND_MOBILITY_PERFORMANCE": "RFSIM connectivity is not an RF/PHY/MAC conformance or dynamic radio mobility test",
-    "MULTI_CYCLE_NAS_PDU_SERVICE_SLO": "Only single bounded isolated UE attach and PDU proved; no repeated registrations or sustained service SLO",
-    "DATA_PLANE_THROUGHPUT_AND_LOSS": "Stage 4T passed 6 rounds with 60/60 ICMP replies per UE over ~97 s; not a sustained throughput or load-under-pressure benchmark",
+    "MULTI_CYCLE_NAS_PDU_SERVICE_SLO": "Stage 5C maintained two established PDU services through 24 traffic rounds, but did not exercise repeated NAS re-registration/session lifecycle or production-length service SLOs",
+    "DATA_PLANE_THROUGHPUT_AND_LOSS": "Stage 5C (43396068709) passed 24 rounds, 240/240 ICMP per UE, 492.54 seconds, full F1-U/NG-U G-PDU captures and zero observed restarts under NEA2/NIA2; multi-hour, production-load throughput, RF and staging SLOs remain unqualified",
     "FULL_5GC_RESTART_AUTO_UE_DATA_RECOVERY": "Stage 4P run 43208820608 FAILED: NGAP reconnected in 36.19 s, F1-C remained connected, but both UE TUNs/DRBs were released and data did not recover automatically",
-    "AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY": "AMF-only failure tests 43218236191 and 43219517357: patched NGAP reconnected but both UEs failed to restore NAS/PDU/TUN unassisted within 150 s. Stage 4U (43367213888) achieved supervised recovery by explicitly restarting each synthetic UE once; native UE self-recovery is still NO-GO",
+    "AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY": "AMF-only run 43219517357: NGAP reconnected but W13 UEs entered RRC_IDLE without fresh NAS/PDU/TUN; this alone is not a TS 24.501 failure because 5GMM-IDLE does not mandate spontaneous registration. Stage 5A 43395100149 could not restore sessions by restarting a DU. Stage 5D 43397277202 confirmed an F1 handover is invalid after CU UE context release. Stage 5H run 43409824705 proved an AMF outage race: W45 UE generated 44-byte NAS Service Request and sent RRCSetupComplete while CU reported 'No AMF is associated'; AFTER a later NG Setup Response, no fresh NAS Registration/PDU resumed. The 15-second prefault-quiescence A/B rerun 43411113725 FAILED the same ordering: 1 premature Service Request before new NG Setup; this is not merely transient post-ping traffic. No cause-9 reject was reached in either Stage5H run. Cause-9 fallback did not execute in that run. Require explicit 5GMM T3517/retry or verified post-reconnect fresh NAS Registration/PDU and F1-U/NG-U without UE process restart, plus repeated staging resilience SLO",
     "INDEPENDENT_STAGING_OBSERVER_CLOCK": "No independent timestamped observer and clock-offset acceptance in staging",
     "STAGING_3_CYCLE_DUAL_DU_RECOVERY": "Offline AMF fault cycle not reproduced on qualified staging topology with UE",
     "STAGING_OSM_ROLLBACK": "No actual OSM-controlled staging rollback and restored image digest",
     "STAGING_HEALTH_PERFORMANCE": "No sustained resource/PSI/restarts/registration SLO window",
+    "SECURITY_ALGORITHM_NEGOTIATION_AND_COMPATIBILITY": "Stage 5F run 43399191636 verified CU selected AS algorithms ciphering 2/NEA2 and integrity 2/NIA2, UE received SecurityModeCommand and sent SecurityModeComplete with real NAS/PDU continuation; independent on-wire encryption, NAS security algorithms, adverse security cases and staging interoperability remain unverified",
+    "HCRAN_POD_PRIVILEGE_AND_NETWORK_ISOLATION_REVIEW": "Stage 5B run 43395469675 passed dual-UE service with all Linux capabilities dropped and no privilege escalation in disposable Docker RAN containers; production Kubernetes Pod Security admission, NetworkPolicy enforcement, secret delivery and live Helm release remain unverified",
+    "F1_HANDOVER_PRODUCTION_CONTROL_HARDENING": "Stage 4Z CU included telnetsrv/CI for unauthenticated manual test triggering; production release must disable/remove telnet listener, use approved authenticated mobility control and revalidate RRC/F1 handover",
     "PROVENANCE_ROLLBACK_APPROVAL": "Experimental artifact is expiring, no approved immutable release and operator signoff",
 }
 
@@ -101,7 +110,7 @@ def main():
         "production_deployment_authorized": False,
         "verified_ci_and_offline_evidence": observed,
         "outstanding_runtime_and_release_gates": missing,
-        "rule": "Only 3GPP-oriented F1/NG/NAS/PDU and GTP-U historical CI evidence is counted. Near-RT RIC/E2SM-KPM/RC are explicitly out of scope. Basic dual-UE traffic, bounded soak and supervised synthetic UE restart passed in isolated CI; 3GPP UE mobility, protocol negative cases, native recovery, RF test, sustained performance, staging rollback and operator authorization remain unverified.",
+        "rule": "Only 3GPP-oriented F1/NG/NAS/PDU and GTP-U historical CI evidence, including Stage 4X/4Y security-profile traffic and bounded Stage 4Z F1 mobility, is counted. Near-RT RIC/E2SM-KPM/RC are explicitly out of scope. Basic dual-UE traffic, bounded soak and supervised synthetic UE restart passed in isolated CI; RF and staged mobility qualification, protocol negative cases, native recovery, sustained performance, staging rollback and operator authorization remain unverified.",
     }
     dst.write_text(json.dumps(report, indent=2) + "\n")
     print(f"Production decision: NO_GO. CI historical evidence: "

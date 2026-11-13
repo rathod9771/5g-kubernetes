@@ -1,0 +1,149 @@
+name: H-CRAN 3GPP security + F1 mobility capability preflight (NO DEPLOY)
+
+on:
+  push:
+    branches:
+      - experiment/hcran-production-qualification-20261113
+    paths:
+      - .github/workflows/hcran-3gpp-production-qualification.yml
+      - helm/cran-oai/cu/**
+      - helm/cran-oai/du/**
+      - helm/cran-srsran/cu/**
+      - tests/test_hcran_3gpp_contract.py
+      - tests/test_hcran_stage4w_preflight.py
+      - tests/test_hcran_staging_inventory.py
+      - tests/test_hcran_stage4z_evidence_contract.py
+      - tests/test_hcran_stage5g_cause9_patch.py
+      - tests/test_hcran_stage5g_cause9_evidence.py
+      - tests/test_hcran_stage5h_evidence_contract.py
+      - experiments/oai-ngap-2026w13/stage5g/**
+      - experiments/oai-ngap-2026w13/stage5h/**
+      - scripts/hcran_build_pinned_w45_ue_cause9.sh
+      - experiments/oai-ngap-2026w13/stage5a/**
+      - experiments/oai-ngap-2026w13/stage5b/**
+      - experiments/oai-ngap-2026w13/stage5c/**
+      - experiments/oai-ngap-2026w13/stage5d/**
+      - experiments/oai-ngap-2026w13/stage4z/**
+      - scripts/hcran_staging_inventory.py
+      - scripts/hcran_node_pressure.py
+      - scripts/hcran_stage4w_mobility_preflight.py
+      - scripts/ci_oai_ngap_readiness.py
+      - docs/hcran-3gpp-only-readiness.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: hcran-production-preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-go-qualification:
+    if: github.ref == 'refs/heads/experiment/hcran-production-qualification-20261113'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout only the experimental qualification branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Helm renderer
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Validate security, RIC exclusion, mobility render and negative cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          python3 -m unittest discover -s tests -p test_hcran_3gpp_contract.py -v
+          python3 -m unittest discover -s tests -p test_hcran_stage4w_preflight.py -v
+          python3 -m unittest discover -s tests -p test_hcran_staging_inventory.py -v
+          python3 -m py_compile experiments/oai-ngap-2026w13/stage4z/f1_handover_runtime.py
+          python3 -m py_compile \
+            experiments/oai-ngap-2026w13/stage5a/run_radio_recovery_probe.py \
+            experiments/oai-ngap-2026w13/stage5b/nonprivileged_dual_ue.py \
+            experiments/oai-ngap-2026w13/stage5c/extended_dual_ue_soak.py \
+            experiments/oai-ngap-2026w13/stage5d/amf_then_f1_handover.py
+          python3 -m unittest discover -s tests -p test_hcran_stage4z_evidence_contract.py -v
+          bash -n scripts/hcran_build_pinned_w45_ue_cause9.sh
+          python3 -m py_compile experiments/oai-ngap-2026w13/stage5g/patch_oai_ue_cause9.py
+          python3 -m py_compile experiments/oai-ngap-2026w13/stage5h/amf_cause9_f1_ue_server.py
+          python3 -m py_compile experiments/oai-ngap-2026w13/stage5h/evidence_contract.py
+          python3 -m unittest discover -s tests -p test_hcran_stage5h_evidence_contract.py -v
+          python3 -m unittest discover -s tests -p test_hcran_stage5g_cause9_patch.py -v
+          python3 -m unittest discover -s tests -p test_hcran_stage5g_cause9_evidence.py -v
+
+      - name: Download immutable tagged OAI mobility source for read-only audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hcran-qualification"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --max-time 50 \
+            https://raw.githubusercontent.com/OPENAIRINTERFACE/openairinterface5g/2026.w13/openair2/RRC/NR/rrc_gNB_mobility.c \
+            --output "$RUNNER_TEMP/hcran-qualification/rrc_gNB_mobility.c"
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --max-time 50 \
+            https://raw.githubusercontent.com/OPENAIRINTERFACE/openairinterface5g/2026.w13/doc/handover-tutorial.md \
+            --output "$RUNNER_TEMP/hcran-qualification/handover-tutorial.md"
+          python3 scripts/hcran_stage4w_mobility_preflight.py \
+            --mobility-source "$RUNNER_TEMP/hcran-qualification/rrc_gNB_mobility.c" \
+            --handover-tutorial "$RUNNER_TEMP/hcran-qualification/handover-tutorial.md" \
+            --stage3-workflow .github/workflows/oai-ngap-2026w13-stage3.yml \
+            --out "$RUNNER_TEMP/hcran-qualification/stage4w-source-review.json"
+
+      - name: Inventory 3GPP functional experiments and outstanding production gates
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPORT: ${{ runner.temp }}/hcran-qualification/production-readiness.json
+        run: |
+          set -euo pipefail
+          python3 -B scripts/ci_oai_ngap_readiness.py
+          python3 - <<'PY'
+          import json, os
+          report=json.load(open(os.environ['REPORT']))
+          assert report['production_decision']=='NO_GO'
+          assert report['production_deployment_authorized'] is False
+          assert report['e2sm_kpm_and_rc_release_gates'] is False
+          gates=report['outstanding_runtime_and_release_gates']
+          assert len(gates)>=18
+          unresolved={x['gate'] for x in gates}
+          assert {'AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY',
+                  'INTRA_GNB_INTER_DU_MOBILITY_STAGING_AND_RADIO_QUALIFICATION',
+                  'SECURITY_ALGORITHM_NEGOTIATION_AND_COMPATIBILITY',
+                  'STAGING_OSM_ROLLBACK'} <= unresolved
+          assert any(x['gate']=='HCRAN_NEA2_NIA2_CONFIGURED_TWO_UE_TRAFFIC'
+                     for x in report['verified_ci_and_offline_evidence'])
+          print('PASS: 3GPP evidence inventoried; release NO_GO with',len(gates),'unverified gates')
+          PY
+
+      - name: Assert true runtime capabilities remain NO-GO
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          path=pathlib.Path(os.environ['RUNNER_TEMP'])/'hcran-qualification'/'stage4w-source-review.json'
+          result=json.loads(path.read_text())
+          assert result['source_support']=='PINNED_SOURCE_HAS_F1_HANDOVER_PATH'
+          assert result['runtime_status']=='BLOCKED'
+          assert result['release_decision']=='NO_GO'
+          assert result['deploy_authorized'] is False
+          assert result['real_f1_handover_observed'] is False
+          assert result['ue_pdu_session_continuity_observed'] is False
+          print('PASS: pinned F1 handover source exists; this source-audit alone cannot prove runtime. Stage 4Z run 43391519669 separately passed isolated RFsim mobility; staging remains NO_GO')
+          PY
+          echo "::warning::Green offline checks are NOT production authorization. Staging security and F1 handover require real synthetic UE and 5GC runtime evidence."
+
+      - name: Upload bounded preflight evidence (never credentials)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-3gpp-production-preflight-NO-GO-${{ github.run_number }}
+          path: ${{ runner.temp }}/hcran-qualification/stage4w-source-review.json
+          if-no-files-found: warn
+          retention-days: 7

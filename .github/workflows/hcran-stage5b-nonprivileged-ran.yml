@@ -1,0 +1,158 @@
+name: H-CRAN Stage 5B real nonprivileged CU dual-DU and dual-UE (NO DEPLOY)
+
+on:
+  push:
+    branches:
+      - experiment/hcran-production-qualification-20261113
+    paths:
+      - .github/workflows/hcran-stage5b-nonprivileged-ran.yml
+      - experiments/oai-ngap-2026w13/stage5b/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: hcran-stage5b-nonprivileged-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nonprivileged-dual-ue:
+    if: github.ref == 'refs/heads/experiment/hcran-production-qualification-20261113'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    env:
+      CORE_IMG: gradiant/open5gs:2.7.6
+      MONGO_IMG: mongo:6.0
+      CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w25
+      UE_IMG: oaisoftwarealliance/oai-nr-ue:2026.w13
+
+    steps:
+      - name: Check out current 3GPP-only security profile
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: qualification
+
+      - name: Read-only checkout of verified dual-UE harness (pinned SHA)
+        uses: actions/checkout@v4
+        with:
+          ref: 1fb544a39232a37c1af7250e0f3612c9ac0fc738
+          persist-credentials: false
+          path: baseline
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Isolated runner preflight and pinned Python tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage5b-evidence" "$RUNNER_TEMP/stage5b-render"
+          python3 -m venv "$RUNNER_TEMP/stage5b-venv"
+          "$RUNNER_TEMP/stage5b-venv/bin/python" -m pip install \
+            --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tcpdump
+          test -c /dev/net/tun || sudo modprobe tun
+          test -c /dev/net/tun
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -d /proc/net/sctp
+          { uname -a; free -h; df -h /; } > "$RUNNER_TEMP/stage5b-evidence/runner-preflight.txt"
+
+      - name: Render security-candidate CU and both default RFsim DUs
+        shell: bash
+        run: |
+          set -euo pipefail
+          chart="$GITHUB_WORKSPACE/qualification/helm/cran-oai"
+          helm template hcran-oai-cu "$chart/cu" \
+            -f "$chart/cu/values-hcran.yaml" \
+            -f "$chart/cu/values-hcran-secure-staging.yaml" \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5b-render/cu.yaml"
+          for role in macro small; do
+            helm template "hcran-oai-$role" "$chart/du" \
+              -f "$chart/du/values-hcran-$role.yaml" \
+              --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+              --set-string image.pullPolicy=IfNotPresent \
+              > "$RUNNER_TEMP/stage5b-render/$role.yaml"
+          done
+          "$RUNNER_TEMP/stage5b-venv/bin/python" - <<'PY'
+          import os, pathlib, yaml
+          config = pathlib.Path(os.environ['RUNNER_TEMP'])/'stage5b-render'/'cu.yaml'
+          cm = next(d for d in yaml.safe_load_all(config.read_text()) if d and d.get('kind') == 'ConfigMap')
+          body = cm['data']['gnb.conf']
+          assert 'ciphering_algorithms = (' in body and '"nea2"' in body
+          assert 'integrity_algorithms = (' in body and '"nia2"' in body
+          assert '"nea0"' not in body and '"nia0"' not in body
+          assert 'e2_agent' not in body and 'near_ric_ip_addr' not in body
+          print('PASS: rendered H-CRAN CU offers NEA2/NIA2 only; no E2/RIC')
+          PY
+
+      - name: Download expiring isolated patched CU image (never production)
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43157479388
+          name: oai-ngap-stage3-portable-4
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/stage5b-image
+
+      - name: Load patched CU and disposable 5GC DU UE images
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/stage5b-image/oai-ngap-stage3-portable.tar.gz"
+          gzip -t "$archive"
+          sha256sum "$archive" > "$RUNNER_TEMP/stage5b-evidence/cu-archive.sha256"
+          docker load -i "$archive" | tee "$RUNNER_TEMP/stage5b-evidence/cu-image-load.txt"
+          for img in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG" "$UE_IMG"; do docker pull "$img"; done
+          for img in "$CU_IMG" "$CORE_IMG" "$DU_IMG" "$UE_IMG"; do
+            docker image inspect "$img" --format '{{.RepoTags}} | {{.RepoDigests}} | {{.ID}}' \
+              >> "$RUNNER_TEMP/stage5b-evidence/runtime-image-identity.txt"
+          done
+
+      - name: Verify real CU + DU with cap-drop ALL, no-new-privileges and two UE PDU services
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/stage5b-venv/bin/python" -u \
+            "$GITHUB_WORKSPACE/qualification/experiments/oai-ngap-2026w13/stage5b/nonprivileged_dual_ue.py" \
+            --baseline "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13" \
+            --rendered "$RUNNER_TEMP/stage5b-render" \
+            --output "$RUNNER_TEMP/stage5b-evidence" \
+            --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
+            --verify-gtpu \
+            2>&1 | tee "$RUNNER_TEMP/stage5b-console.log"
+          python3 - <<'PY'
+          import json, os, pathlib
+          items=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'stage5b-evidence'/'results.json').read_text())
+          assert any(i.get('stage')=='STAGE4O' and i.get('status')=='PASS' for i in items)
+          assert any(i.get('stage')=='STAGE5B' and i.get('status')=='PASS' for i in items)
+          details=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'stage5b-evidence'/'stage5b-nonprivileged-evidence.json').read_text())
+          assert all(x['effective_capabilities']=='0' for x in details['ran'].values())
+          assert details['production_decision']=='NO_GO'
+          print('PASS: two synthetic UE services with CU and both DUs cap-drop ALL; not a Kubernetes PSA qualification')
+          PY
+
+      - name: Erase disposable SIM and config material from artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/stage5b-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          test ! -e "$RUNNER_TEMP/stage5b-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+
+      - name: Upload bounded isolated experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage5b-nonprivileged-ran-attempt-${{ github.run_number }}
+          path: ${{ runner.temp }}/stage5b-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2

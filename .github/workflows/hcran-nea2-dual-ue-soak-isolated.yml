@@ -1,0 +1,170 @@
+name: H-CRAN Stage 4Y NEA2-NIA2 six-round dual-UE stability (NO DEPLOY)
+
+on:
+  push:
+    branches:
+      - experiment/hcran-production-qualification-20261113
+    paths:
+      - .github/workflows/hcran-nea2-dual-ue-soak-isolated.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: hcran-stage4y-security-soak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secure-ue-soak:
+    if: github.ref == 'refs/heads/experiment/hcran-production-qualification-20261113'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    env:
+      CORE_IMG: gradiant/open5gs:2.7.6
+      MONGO_IMG: mongo:6.0
+      CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w25
+      UE_IMG: oaisoftwarealliance/oai-nr-ue:2026.w13
+
+    steps:
+      - name: Check out current 3GPP-only security profile
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: qualification
+
+      - name: Read-only checkout of verified Stage 4T soak harness (pinned SHA)
+        uses: actions/checkout@v4
+        with:
+          ref: d1dbb65e3ba6707d11374b8437b352965f2361ed
+          persist-credentials: false
+          path: baseline
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Isolated runner preflight and pinned Python tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage4y-evidence" "$RUNNER_TEMP/stage4y-render"
+          python3 -m venv "$RUNNER_TEMP/stage4y-venv"
+          "$RUNNER_TEMP/stage4y-venv/bin/python" -m pip install \
+            --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tcpdump
+          test -c /dev/net/tun || sudo modprobe tun
+          test -c /dev/net/tun
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -d /proc/net/sctp
+          { uname -a; free -h; df -h /; } > "$RUNNER_TEMP/stage4y-evidence/runner-preflight.txt"
+
+      - name: Render security-candidate CU and both default RFsim DUs
+        shell: bash
+        run: |
+          set -euo pipefail
+          chart="$GITHUB_WORKSPACE/qualification/helm/cran-oai"
+          helm template hcran-oai-cu "$chart/cu" \
+            -f "$chart/cu/values-hcran.yaml" \
+            -f "$chart/cu/values-hcran-secure-staging.yaml" \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage4y-render/cu.yaml"
+          for role in macro small; do
+            helm template "hcran-oai-$role" "$chart/du" \
+              -f "$chart/du/values-hcran-$role.yaml" \
+              --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+              --set-string image.pullPolicy=IfNotPresent \
+              > "$RUNNER_TEMP/stage4y-render/$role.yaml"
+          done
+          "$RUNNER_TEMP/stage4y-venv/bin/python" - <<'PY'
+          import os, pathlib, yaml
+          config = pathlib.Path(os.environ['RUNNER_TEMP'])/'stage4y-render'/'cu.yaml'
+          cm = next(d for d in yaml.safe_load_all(config.read_text()) if d and d.get('kind') == 'ConfigMap')
+          body = cm['data']['gnb.conf']
+          assert 'ciphering_algorithms = (' in body and '"nea2"' in body
+          assert 'integrity_algorithms = (' in body and '"nia2"' in body
+          assert '"nea0"' not in body and '"nia0"' not in body
+          assert 'e2_agent' not in body and 'near_ric_ip_addr' not in body
+          print('PASS: rendered H-CRAN CU offers NEA2/NIA2 only; no E2/RIC')
+          PY
+
+      - name: Download expiring isolated patched CU image (never production)
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43157479388
+          name: oai-ngap-stage3-portable-4
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/stage4y-image
+
+      - name: Load patched CU and disposable 5GC DU UE images
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/stage4y-image/oai-ngap-stage3-portable.tar.gz"
+          gzip -t "$archive"
+          sha256sum "$archive" > "$RUNNER_TEMP/stage4y-evidence/cu-archive.sha256"
+          docker load -i "$archive" | tee "$RUNNER_TEMP/stage4y-evidence/cu-image-load.txt"
+          for img in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG" "$UE_IMG"; do docker pull "$img"; done
+          for img in "$CU_IMG" "$CORE_IMG" "$DU_IMG" "$UE_IMG"; do
+            docker image inspect "$img" --format '{{.RepoTags}} | {{.RepoDigests}} | {{.ID}}' \
+              >> "$RUNNER_TEMP/stage4y-evidence/runtime-image-identity.txt"
+          done
+
+      - name: Real six-round dual-UE NAS/PDU F1-U and NG-U with NEA2/NIA2-only CU config
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/stage4y-venv/bin/python" -u \
+            "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13/stage4t/run_dual_ue_soak.py" \
+            --rendered "$RUNNER_TEMP/stage4y-render" \
+            --output "$RUNNER_TEMP/stage4y-evidence" \
+            --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
+            --verify-gtpu \
+            2>&1 | tee "$RUNNER_TEMP/stage4y-console.log"
+          python3 - <<'PY'
+          import json, os, pathlib
+          base=pathlib.Path(os.environ['RUNNER_TEMP'])/'stage4y-evidence'
+          items=json.loads((base/'results.json').read_text())
+          data=json.loads((base/'dual-UE-soak-evidence.json').read_text())
+          assert any(i.get('stage')=='STAGE4O' and i.get('status')=='PASS' for i in items)
+          assert any(i.get('stage')=='STAGE4T' and i.get('status')=='PASS' for i in items)
+          assert data['round_count']==6 and data['per_ue_pings_sent']==60
+          assert data['per_ue_pings_received']==60
+          assert data['observed_duration_sec']>=60
+          assert data['production_decision']=='NO_GO'
+          scope={
+            'stage':'4Y',
+            'scope':'isolated H-CRAN NEA2/NIA2 CU configuration with six-round dual-UE stability',
+            'effective_encryption_proven_by_onwire_decode':False,
+            'e2_ric_required':False,
+            'native_ue_recovery_proven':False,
+            'real_inter_du_mobility_proven':False,
+            'osm_staging_rollback_proven':False,
+            'production_decision':'NO_GO'
+          }
+          (base/'stage4y-3gpp-scope.json').write_text(json.dumps(scope,indent=2)+'\n')
+          print('PASS: strict CU security profile and six dual-UE rounds; 60/60 ICMP per UE; NO-GO')
+          PY
+
+      - name: Erase disposable SIM and config material from artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/stage4y-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          test ! -e "$RUNNER_TEMP/stage4y-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+
+      - name: Upload bounded isolated experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage4y-NEA2-NIA2-six-round-soak-${{ github.run_number }}
+          path: ${{ runner.temp }}/stage4y-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
