@@ -91,7 +91,7 @@ jobs:
           assert len(gates)>=18
           unresolved={x['gate'] for x in gates}
           assert {'AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY',
-                  'INTRA_GNB_INTER_DU_MOBILITY',
+                  'INTRA_GNB_INTER_DU_MOBILITY_STAGING_AND_RADIO_QUALIFICATION',
                   'SECURITY_ALGORITHM_NEGOTIATION_AND_COMPATIBILITY',
                   'STAGING_OSM_ROLLBACK'} <= unresolved
           assert any(x['gate']=='HCRAN_NEA2_NIA2_CONFIGURED_TWO_UE_TRAFFIC'
