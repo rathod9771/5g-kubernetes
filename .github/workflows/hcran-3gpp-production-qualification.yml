@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: hcran-production-preflight-${{ github.ref }}
@@ -67,6 +68,32 @@ jobs:
             --handover-tutorial "$RUNNER_TEMP/hcran-qualification/handover-tutorial.md" \
             --stage3-workflow .github/workflows/oai-ngap-2026w13-stage3.yml \
             --out "$RUNNER_TEMP/hcran-qualification/stage4w-source-review.json"
+
+      - name: Inventory 3GPP functional experiments and outstanding production gates
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPORT: ${{ runner.temp }}/hcran-qualification/production-readiness.json
+        run: |
+          set -euo pipefail
+          python3 -B scripts/ci_oai_ngap_readiness.py
+          python3 - <<'PY'
+          import json, os
+          report=json.load(open(os.environ['REPORT']))
+          assert report['production_decision']=='NO_GO'
+          assert report['production_deployment_authorized'] is False
+          assert report['e2sm_kpm_and_rc_release_gates'] is False
+          gates=report['outstanding_runtime_and_release_gates']
+          assert len(gates)>=18
+          unresolved={x['gate'] for x in gates}
+          assert {'AMF_ONLY_FAULT_UNASSISTED_UE_RECOVERY',
+                  'INTRA_GNB_INTER_DU_MOBILITY',
+                  'SECURITY_ALGORITHM_NEGOTIATION_AND_COMPATIBILITY',
+                  'STAGING_OSM_ROLLBACK'} <= unresolved
+          assert any(x['gate']=='HCRAN_NEA2_NIA2_CONFIGURED_TWO_UE_TRAFFIC'
+                     for x in report['verified_ci_and_offline_evidence'])
+          print('PASS: 3GPP evidence inventoried; release NO_GO with',len(gates),'unverified gates')
+          PY
 
       - name: Assert true runtime capabilities remain NO-GO
         shell: bash
