@@ -16,6 +16,7 @@ on:
       - tests/test_hcran_stage5g_cause9_patch.py
       - tests/test_hcran_stage5g_cause9_evidence.py
       - experiments/oai-ngap-2026w13/stage5g/**
+      - experiments/oai-ngap-2026w13/stage5h/**
       - scripts/hcran_build_pinned_w45_ue_cause9.sh
       - experiments/oai-ngap-2026w13/stage5a/**
       - experiments/oai-ngap-2026w13/stage5b/**
@@ -70,6 +71,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_hcran_stage4z_evidence_contract.py -v
           bash -n scripts/hcran_build_pinned_w45_ue_cause9.sh
           python3 -m py_compile experiments/oai-ngap-2026w13/stage5g/patch_oai_ue_cause9.py
+          python3 -m py_compile experiments/oai-ngap-2026w13/stage5h/amf_cause9_f1_ue_server.py
           python3 -m unittest discover -s tests -p test_hcran_stage5g_cause9_patch.py -v
           python3 -m unittest discover -s tests -p test_hcran_stage5g_cause9_evidence.py -v
 
