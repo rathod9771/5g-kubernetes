@@ -10,7 +10,7 @@ PATCH=ROOT/"experiments/oai-ngap-2026w13/stage5g/patch_oai_ue_cause9.py"
 HANDLER='static void handle_service_reject(nr_ue_nas_t *nas, const byte_array_t *buffer)\n{'
 REJECT=('  /* Retrying the Service Request would loop forever, and re-registering is not supported:\n'
         '   * terminate as after a Registration Reject. */\n'
-        '  LOG_E(NAS, "Service Reject: cannot connect, exiting\\\n");')
+        '  LOG_E(NAS, "Service Reject: cannot connect, exiting\\n");')
 IDLE='        nas->fiveGMM_mode = FGS_IDLE;\n        // TODO handle connection release'
 
 
