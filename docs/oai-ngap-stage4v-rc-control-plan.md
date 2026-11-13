@@ -13,6 +13,33 @@ tests. The validator never contacts RIC, E2, Kubernetes, OSM or Open5GS and
 never authorizes a production deployment. The successful CI test for its
 contract must never be interpreted as successful runtime RC control.
 
+## Pinned source audit: advertised RC action does not change RAN state
+
+**OAI source tag:** `2026.w13` (Git blob SHA
+`14c357496c4d838fe903640536338c2f62639a18`)
+
+**File:** `openair2/E2AP/RAN_FUNCTION/O-RAN/ran_func_rc.c`
+
+Source review shows that `fill_rc_control()` advertises control
+style 1, "Radio Bearer Control", with control action ID 2,
+"QoS flow mapping configuration". However, `write_ctrl_rc_sm()`
+checks the header and parameter formats, parses DRB ID, QFI and
+mapping indication, **prints the values**, then returns an
+`sm_ag_if_ans_t` control-outcome object. The reviewed handler has no
+call that updates real DRB/QFI mapping state. Even a successful
+`RICcontrolAcknowledge` would not, without independent readback,
+demonstrate an effective control operation.
+
+The Stage 4V workflow now downloads this *public*, read-only OAI source
+file, computes the exact Git-blob hash and fails closed if the source
+changes. Its audit records this known limitation; it does not modify
+upstream code, FlexRIC or the live H-CRAN deployment.
+
+**Engineering implication:** the requested control action requires a
+validated implementation of actual QoS-flow/DRB mapping mutation,
+safe-target selection, and reversal in a disposable CU; a control xApp
+alone is insufficient. Avoid directly patching the live HP image.
+
 ## Required follow-on isolated runtime experiment
 
 1. Establish an explicit supported RC control action from the **pinned** OAI
