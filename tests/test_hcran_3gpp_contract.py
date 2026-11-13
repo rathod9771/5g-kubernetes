@@ -178,6 +178,8 @@ class HCRAN3GPPTests(unittest.TestCase):
                 trial = render(chart, suffix, "hcran-oai-" + role, ("-f", overlay))
                 self.assertEqual(trial.returncode, 0, trial.stderr)
                 deployment = next(d for d in objects(trial.stdout) if d["kind"] == "Deployment")
+                self.assertIs(
+                    deployment["spec"]["template"]["spec"]["automountServiceAccountToken"], False)
                 security = deployment["spec"]["template"]["spec"]["containers"][0]["securityContext"]
                 self.assertIs(security["privileged"], False)
                 self.assertIs(security["allowPrivilegeEscalation"], False)
