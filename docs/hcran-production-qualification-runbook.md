@@ -378,6 +378,46 @@ algorithm conformance, adverse security test matrix, or production
 security certification. All staging acceptance and independent review
 remain mandatory, and the release decision is **NO_GO**.
 
+## Stage 5G — isolated Release 16 NAS cause-#9 fallback (candidate only)
+
+**Trigger and reason:** Stage 5E run
+[43399370756](https://github.com/rathod9771/5g-kubernetes/actions/runs/43399370756)
+proved the 2026.w45 UE resumed enough to send a 5GMM Service Request after
+RRC Release and AMF restart, retaining its PDU TUN and original process.
+The replacement AMF answered with **5GMM cause #9 — UE identity cannot be
+derived by the network**. Upstream OAI UE 2026.w45
+`openair3/NAS/NR_UE/nr_nas_msg.c` has a catch-all Service Reject handler
+which logs `cannot connect, exiting` and terminates, rather than
+performing initial registration for this cause. This is the precise fault
+case targeted by TS 24.501 §5.6.1.5. Earlier dual-UE run
+[43398893326](https://github.com/rathod9771/5g-kubernetes/actions/runs/43398893326)
+also proved retained TUNs and NGAP recovery but 0/6 packet replies per UE.
+
+**Strictly isolated source candidate:** `stage5g/patch_oai_ue_cause9.py`
+modifies *only* the NAS source handler of an exact hash-pinned upstream
+2026.w45 checkout; the builder is
+`scripts/hcran_build_pinned_w45_ue_cause9.sh`.
+For cause #9 only, it invalidates the old 5G-GUTI/NGKSI security
+context, marks 5GMM-DEREGISTERED, and queues a **single**
+SUCI-based initial Registration Request **after** the next
+`NR_NAS_CONN_RELEASE_IND` transitions RRC/NAS to 5GMM-IDLE.
+It must *not* retry a stale protected Service Request or silently
+turn any other cause into registration. The code is a research candidate,
+not an audited 3GPP-complete UE state machine.
+
+**Qualification in progress:** `.github/workflows/hcran-stage5g-cause9-initial-registration.yml`
+builds and loads this image on GitHub-hosted Docker, then uses two
+synthetic subscribers, one unchanged CU and two DUs to require post-AMF
+NAS/PDU resumption and bidirectional actual F1-U/NG-U traffic.
+Do **not** mark native recovery PASS until the final artifact includes
+cause #9, fresh SUCI/Registration Accept, resulting UE/PDU service,
+no UE/DU process restarts and independent post-fault traffic evidence.
+Both the recovery gate and overall production authorization are **NO_GO**.
+
+Do not enable experimental source images, manual telnet or fault injections
+on the HP cluster. This patch deliberately does **not** modify actual
+Open5GS subscriber records or a live cluster.
+
 ## 6. Stage 3 — real OSM staging lifecycle
 
 Require an approved immutable OCI digest, versioned Helm/OSM NSD+KDU,
