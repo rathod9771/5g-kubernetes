@@ -44,9 +44,9 @@ def create_probe(opts):
             if idx+1<len(cmd) and cmd[idx+1]==name("core"):
                 launcher=base.priv/"start-core.sh"
                 contents=launcher.read_text()
-                if not contents.endswith("done\\nwait -n\\n"):
+                if not contents.endswith("done\nwait -n\n"):
                     raise RuntimeError("Core bootstrap format changed: cannot safely isolate AMF fault")
-                launcher.write_text(contents[:-len("wait -n\\n")]+"wait\\n")
+                launcher.write_text(contents[:-len("wait -n\n")]+"wait\n")
                 base.record("T79-AMF-only-core-launcher-keeps-other-NFs-alive","PASS")
         return bootstrap_sh(*cmd,**kwargs)
     core_runner.sh=preserve_non_amf_core
