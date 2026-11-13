@@ -109,8 +109,8 @@ class HCRAN3GPPTests(unittest.TestCase):
         result = render(cu, "", "hcran-oai-secure-staging", ("-f", overlay))
         self.assertEqual(result.returncode, 0, result.stderr)
         config = next(d for d in objects(result.stdout) if d["kind"] == "ConfigMap")["data"]["gnb.conf"]
-        self.assertRegex(config, r'ciphering_algorithms\\s*=\\s*\\(\\s*"nea2"\\s*\\)')
-        self.assertRegex(config, r'integrity_algorithms\\s*=\\s*\\(\\s*"nia2"\\s*\\)')
+        self.assertRegex(config, r'ciphering_algorithms\s*=\s*\(\s*"nea2"\s*\)')
+        self.assertRegex(config, r'integrity_algorithms\s*=\s*\(\s*"nia2"\s*\)')
         self.assertNotIn('"nea0"', config)
         self.assertNotIn('"nia0"', config)
         self.assertIn('drb_integrity = "no"', config)
