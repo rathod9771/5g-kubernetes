@@ -252,14 +252,16 @@ only in separately approved disposable staging.
 
 ## Stage 5C — extended bounded two-UE stability
 
-The `stage5c/extended_dual_ue_soak.py` workflow targets 24 rounds of
-real dual-UE RFsim traffic with 240/240 ICMP responses per UE, multiple
-SCTP and F1/NG checks each round, real GTP-U pcap, zero restarts, and
-minimum 360 seconds of sampled observation. **The result is pending CI
-verification**; do not claim that its threshold passed until its actual
-GitHub workflow conclusion and artifact are inspected. Even a passing
-run is a short-run integration smoke, not a sustained production SLO
-or real radio performance qualification.
+**Stage 5C PASSED**: [isolated GitHub Actions run 43396068709](https://github.com/rathod9771/5g-kubernetes/actions/runs/43396068709),
+artifact `14023447801`. The NEA2/NIA2 CU and two synthetic UE PDU
+services completed **24/24 rounds** with **240/240 ICMP replies per UE**
+over **492.54 seconds**, while checking all three required CU SCTP peers
+and detecting no container restarts/OOM. Real GTP-U pcap showed
+macro F1-U UL/DL **488/480**, small F1-U **492/480**, and combined NG-U
+UL/DL **980/960**. Sampling and packet evidence were saved with checksums.
+This is a bounded **8-minute RFsim functional endurance PASS**, not a
+multi-hour production SLO, physical radio qualification, network capacity
+benchmark, independent Prometheus scrape, or staging release authorization.
 
 ## 6. Stage 3 — real OSM staging lifecycle
 
