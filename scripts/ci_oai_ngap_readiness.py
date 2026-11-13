@@ -25,6 +25,7 @@ KNOWN = [
     ("HCRAN_BOUNDED_TWO_UE_SOAK", 43224919656, "oai-hcran-dual-ue-soak-"),
     ("HCRAN_NEA2_NIA2_CONFIGURED_TWO_UE_TRAFFIC", 43378042762, "hcran-stage4x-NEA2-NIA2-dual-UE-attempt-"),
     ("HCRAN_NEA2_NIA2_CONFIGURED_SIX_ROUND_SOAK", 43379180419, "hcran-stage4y-NEA2-NIA2-six-round-soak-"),
+    ("HCRAN_REAL_TWO_WAY_F1_HANDOVER_RF_SIM", 43391519669, "hcran-stage4z-real-f1-handover-attempt-"),
     ("HCRAN_SUPERVISED_SYNTHETIC_UE_RECOVERY_AFTER_AMF", 43367213888, "oai-hcran-supervised-ue-recovery-"),
     ("HCRAN_ASSISTED_TWO_UE_RECOVERY_AFTER_FULL_5GC_RESTART", 43209876014, "oai-hcran-assisted-dual-ue-recovery-"),
     ("HCRAN_CONTROLLED_TWO_UE_RECOVERY_AFTER_AMF_ONLY_FAULT", 43220775040, "oai-hcran-controlled-ue-reattach-"),
@@ -33,7 +34,7 @@ KNOWN = [
 # Verification of these gates requires real positive evidence, not inferred
 # success from compile, static renders, F1-C setup, or a synthetic test.
 NOT_VERIFIED = {
-    "INTRA_GNB_INTER_DU_MOBILITY": "No macro-to-small or small-to-macro inter-DU mobility / UE context transfer proven with active PDU service; TS 38.401/38.473/38.331",
+    "INTRA_GNB_INTER_DU_MOBILITY_STAGING_AND_RADIO_QUALIFICATION": "Stage 4Z run 43391519669 passed 2-way macro/small F1 handover and PDU traffic in isolated Docker RFsim; no independent staging, RF fading/mobility, production load or repeated handover under fault",
     "F1AP_UE_CONTEXT_MODIFICATION_RELEASE": "Selected F1 Setup and user-plane operation passed, but complete UE Context Modification/Release procedures are not qualified",
     "RRC_REESTABLISHMENT_AFTER_RADIO_FAILURE": "No verified RRC re-establishment or compliant session continuity following simulated radio-link failure",
     "NAS_SECURITY_AND_REGISTRATION_EDGE_CASES": "Basic NAS Registration Accept passed; registration reject, authentication/retry, security and deregistration matrix not executed",
@@ -49,7 +50,7 @@ NOT_VERIFIED = {
     "STAGING_HEALTH_PERFORMANCE": "No sustained resource/PSI/restarts/registration SLO window",
     "SECURITY_ALGORITHM_NEGOTIATION_AND_COMPATIBILITY": "Stages 4X/4Y (43378042762/43379180419) passed real dual-UE traffic and six bounded rounds under a NEA2/NIA2-only CU configuration. Independent AS/NAS security-mode decoding, adverse security-procedure tests and staging interoperability remain unverified",
     "HCRAN_POD_PRIVILEGE_AND_NETWORK_ISOLATION_REVIEW": "Current gNB CU and DU containers run privileged; no reviewed least-privilege, Pod Security, network isolation, secret delivery or production exception decision",
-    "F1_HANDOVER_UE_RFSIM_AND_CU_TELNET_BUILD": "Upstream 2026.w13 contains inter-DU F1 handover code; patched CU build lacks explicit telnetsrv module and no UE-server two-DU mobility runtime evidence",
+    "F1_HANDOVER_PRODUCTION_CONTROL_HARDENING": "Stage 4Z CU included telnetsrv/CI for unauthenticated manual test triggering; production release must disable/remove telnet listener, use approved authenticated mobility control and revalidate RRC/F1 handover",
     "PROVENANCE_ROLLBACK_APPROVAL": "Experimental artifact is expiring, no approved immutable release and operator signoff",
 }
 
@@ -106,7 +107,7 @@ def main():
         "production_deployment_authorized": False,
         "verified_ci_and_offline_evidence": observed,
         "outstanding_runtime_and_release_gates": missing,
-        "rule": "Only 3GPP-oriented F1/NG/NAS/PDU and GTP-U historical CI evidence, including Stage 4X security-profile functional traffic, is counted. Near-RT RIC/E2SM-KPM/RC are explicitly out of scope. Basic dual-UE traffic, bounded soak and supervised synthetic UE restart passed in isolated CI; 3GPP UE mobility, protocol negative cases, native recovery, RF test, sustained performance, staging rollback and operator authorization remain unverified.",
+        "rule": "Only 3GPP-oriented F1/NG/NAS/PDU and GTP-U historical CI evidence, including Stage 4X/4Y security-profile traffic and bounded Stage 4Z F1 mobility, is counted. Near-RT RIC/E2SM-KPM/RC are explicitly out of scope. Basic dual-UE traffic, bounded soak and supervised synthetic UE restart passed in isolated CI; RF and staged mobility qualification, protocol negative cases, native recovery, sustained performance, staging rollback and operator authorization remain unverified.",
     }
     dst.write_text(json.dumps(report, indent=2) + "\n")
     print(f"Production decision: NO_GO. CI historical evidence: "
