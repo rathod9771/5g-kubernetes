@@ -161,6 +161,34 @@ class HCRAN3GPPTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("F1 mobility RFsim overlay", result.stderr)
 
+    def test_disposable_nonprivileged_pod_security_is_rendered_only_on_request(self):
+        profiles = [
+            ("cu", "helm/cran-oai/cu", ""),
+            ("macro", "helm/cran-oai/du", "-macro"),
+            ("small", "helm/cran-oai/du", "-small"),
+        ]
+        for role, chart, suffix in profiles:
+            with self.subTest(role=role):
+                baseline = render(chart, suffix, "hcran-oai-" + role)
+                self.assertEqual(baseline.returncode, 0, baseline.stderr)
+                before = next(d for d in objects(baseline.stdout) if d["kind"] == "Deployment")
+                self.assertIs(before["spec"]["template"]["spec"]["containers"][0]["securityContext"]["privileged"], True)
+
+                overlay = chart + "/values-hcran-pod-security-staging.yaml"
+                trial = render(chart, suffix, "hcran-oai-" + role, ("-f", overlay))
+                self.assertEqual(trial.returncode, 0, trial.stderr)
+                deployment = next(d for d in objects(trial.stdout) if d["kind"] == "Deployment")
+                security = deployment["spec"]["template"]["spec"]["containers"][0]["securityContext"]
+                self.assertIs(security["privileged"], False)
+                self.assertIs(security["allowPrivilegeEscalation"], False)
+                self.assertEqual(security["capabilities"]["drop"], ["ALL"])
+                self.assertEqual(security["seccompProfile"]["type"], "RuntimeDefault")
+
+                compromised = render(chart, suffix, "hcran-oai-" + role,
+                                     ("-f", overlay, "--set", "containerSecurityContext.privileged=true"))
+                self.assertNotEqual(compromised.returncode, 0)
+                self.assertIn("requires explicit privileged=false", compromised.stderr)
+
     def test_3gpp_gate_excludes_ric_and_fails_closed(self):
         path=ROOT/"scripts/ci_oai_ngap_readiness.py"
         spec=importlib.util.spec_from_file_location("hcran_readiness",path)
