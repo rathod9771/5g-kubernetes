@@ -131,6 +131,9 @@ spec:
         sidecar.istio.io/inject: "false"
         checksum/config: "r{{ .Values.configRevision | default 1 }}-{{ toYaml .Values | sha256sum | trunc 8 }}"
     spec:
+{{- if and (eq (.Values.ranType | default "cran") "hcran") (.Values.securePodCandidate | default false) }}
+      automountServiceAccountToken: false
+{{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
