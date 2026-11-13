@@ -16,6 +16,13 @@
 {{- fail "H-CRAN secure staging candidate requires only NEA2 ciphering and NIA2 integrity; no NEA0 or NIA0" -}}
 {{- end -}}
 {{- end -}}
+{{- /* Pod least-privilege is a disposable staging candidate, never assumed production-ready. */ -}}
+{{- $podSec := .Values.containerSecurityContext | default dict -}}
+{{- if and (eq (.Values.ranType | default "cran") "hcran") (.Values.securePodCandidate | default false) -}}
+{{- if or (not (hasKey $podSec "privileged")) ($podSec.privileged | default false) -}}
+{{- fail "H-CRAN Pod security staging candidate requires explicit privileged=false" -}}
+{{- end -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -141,7 +148,11 @@ spec:
         image: {{ required "Supply approved image values with scripts/runtime_images.py" .Values.image.reference | quote }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         securityContext:
+{{- with .Values.containerSecurityContext }}
+{{- toYaml . | nindent 10 }}
+{{- else }}
           privileged: true
+{{- end }}
         {{- with .Values.resources }}
         resources:
           {{- toYaml . | nindent 10 }}
