@@ -1,0 +1,185 @@
+name: HCRAN Stage 5H real cause9 SUCI UE-server F1 recovery - NO DEPLOY
+
+on:
+  push:
+    branches:
+      - experiment/hcran-production-qualification-20261113
+    paths:
+      - experiments/oai-ngap-2026w13/stage5h/TRIGGER-ONCE.txt
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  f1-cause9-recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CORE_IMG: gradiant/open5gs:2.7.6
+      MONGO_IMG: mongo:6.0
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w45
+      UE_IMG: hcran-stage5g-candidate:source-pinned-w45
+      CU_IMG: oai-hcran-f1-telnet-test-2
+    steps:
+      - name: Checkout current RIC-free HCRAN qualification worktree
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: qualification
+
+      - name: Pin and checkout proven Stage 4O / 4K bootstrap baseline
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 1fb544a39232a37c1af7250e0f3612c9ac0fc738
+          path: baseline
+
+      - name: Install Helm renderer
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Prepare bounded isolated Docker runner and Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/f1-stage5h-evidence" "$RUNNER_TEMP/f1-stage5h-render"
+          python3 -m venv "$RUNNER_TEMP/f1-stage5h-venv"
+          "$RUNNER_TEMP/f1-stage5h-venv/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tcpdump
+          test -c /dev/net/tun || sudo modprobe tun
+          test -c /dev/net/tun
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -d /proc/net/sctp
+          { uname -a; free -h; df -h /; } > "$RUNNER_TEMP/f1-stage5h-evidence/host-preflight.txt"
+
+      - name: Render security-hardened CU and UE-server two-DU RFsim profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHART="$GITHUB_WORKSPACE/qualification/helm/cran-oai"
+          helm template hcran-oai-cu "$CHART/cu" -f "$CHART/cu/values-hcran.yaml" \
+            -f "$CHART/cu/values-hcran-secure-staging.yaml" \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            > "$RUNNER_TEMP/f1-stage5h-render/cu.yaml"
+          for role in macro small; do
+            helm template "hcran-oai-$role" "$CHART/du" \
+              -f "$CHART/du/values-hcran-$role.yaml" \
+              -f "$CHART/du/values-hcran-mobility-$role.yaml" \
+              --set-string mobilityRfsim.serverAddr=172.29.76.40 \
+              --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+              > "$RUNNER_TEMP/f1-stage5h-render/$role.yaml"
+          done
+          "$RUNNER_TEMP/f1-stage5h-venv/bin/python" - <<'PY'
+          import os,pathlib,yaml,re
+          d=pathlib.Path(os.environ['RUNNER_TEMP'])/'f1-stage5h-render'
+          def get(name):
+              docs=[x for x in yaml.safe_load_all((d/(name+'.yaml')).read_text()) if isinstance(x,dict)]
+              return next(x for x in docs if x.get('kind')=='ConfigMap')['data']['gnb.conf']
+          cu,macro,small=get('cu'),get('macro'),get('small')
+          assert 'e2_agent' not in cu and 'near_ric_ip_addr' not in cu
+          assert re.search(r'ciphering_algorithms\s*=\s*\(\s*"nea2"\s*\)\s*;',cu)
+          assert re.search(r'integrity_algorithms\s*=\s*\(\s*"nia2"\s*\)\s*;',cu)
+          assert 'gNB_DU_ID = 100;' in macro and 'gNB_DU_ID = 101;' in small
+          assert all(re.search(r'serveraddr\s*=\s*"172\.29\.76\.40"\s*;',v) for v in (macro,small))
+          assert re.search(r'ssb_PositionsInBurst_Bitmap\s*=\s*1\s*;',macro)
+          assert re.search(r'ssb_PositionsInBurst_Bitmap\s*=\s*2\s*;',small)
+          print('PASS: isolated one-UE-server/two-DU F1 handover input configs; RIC disabled')
+          PY
+
+      - name: Download NEW reproducible patched CU image with telnet CI module
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43388901151
+          name: hcran-f1-telnet-candidate-2
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/f1-stage5h-image
+
+      - name: Retrieve source-pinned compiled UE image from Stage 5G build
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43403818770
+          name: hcran-stage5g-source-pinned-UE-image-6
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/f1-stage5h-ue-image
+
+      - name: Load patched CU image and pull isolated core and UE images
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/f1-stage5h-image/hcran-f1-patched-telnet.tar.gz"
+          gzip -t "$archive"
+          sha256sum "$archive" > "$RUNNER_TEMP/f1-stage5h-evidence/cu-image-archive.sha256"
+          docker load -i "$archive" > "$RUNNER_TEMP/f1-stage5h-evidence/cu-image-load.txt"
+          docker image inspect "$CU_IMG" --format '{{.Id}}' > "$RUNNER_TEMP/f1-stage5h-evidence/cu-image-id.txt"
+          docker run --rm --network none --entrypoint /bin/sh "$CU_IMG" -ec \
+            'test -f /opt/oai-gnb/lib/libtelnetsrv.so && test -f /opt/oai-gnb/lib/libtelnetsrv_ci.so'
+          for image in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG"; do
+            docker pull "$image"
+          done
+          candidate="$RUNNER_TEMP/f1-stage5h-ue-image/hcran-stage5g-cause9-ue.tar.gz"
+          gzip -t "$candidate"
+          sha256sum "$candidate" > "$RUNNER_TEMP/f1-stage5h-evidence/ue-source-pinned-image-archive.sha256"
+          docker load -i "$candidate"
+          docker image inspect "$UE_IMG" --format '{{.Id}}' \
+            > "$RUNNER_TEMP/f1-stage5h-evidence/ue-cause9-image-id.txt"
+          docker image inspect "$UE_IMG" --format '{{.Id}}' \
+            > "$RUNNER_TEMP/f1-stage5h-evidence/pinned-W45-UE-image-id.txt"
+          docker run --rm --network none --entrypoint /bin/sh "$UE_IMG" -ec \
+            'test -x /opt/oai-nr-ue/bin/nr-uesoftmodem && ! ldd /opt/oai-nr-ue/bin/nr-uesoftmodem | grep -q "not found"'
+          echo 'Pinned official OAI NR UE W45 index digest required; no latest/develop floating tags'
+
+      - name: Real UE-server cause9 recovery after AMF-only fault and RRC release; actual F1U NGU
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/f1-stage5h-venv/bin/python" -u \
+            "$GITHUB_WORKSPACE/qualification/experiments/oai-ngap-2026w13/stage5h/amf_cause9_f1_ue_server.py" \
+            --baseline "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13" \
+            --rendered "$RUNNER_TEMP/f1-stage5h-render" \
+            --output "$RUNNER_TEMP/f1-stage5h-evidence" \
+            --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
+            --verify-gtpu \
+            2>&1 | tee "$RUNNER_TEMP/f1-stage5h-console.txt"
+          "$RUNNER_TEMP/f1-stage5h-venv/bin/python" \
+            "$GITHUB_WORKSPACE/qualification/experiments/oai-ngap-2026w13/stage4z/evidence_contract.py" \
+            "$RUNNER_TEMP/f1-stage5h-evidence/stage4z-f1-handover-evidence.json"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'f1-stage5h-evidence'
+          events=json.loads((out/'results.json').read_text())
+          assert any(x.get('stage')=='STAGE4Z' and x.get('status')=='PASS' for x in events)
+          assert any(x.get('stage')=='STAGE5H' and x.get('status')=='PASS' for x in events)
+          report=json.loads((out/'stage5h-cause9-runtime.json').read_text())
+          assert report['original_ue_process_unchanged'] is True
+          assert report['manual_f1_handover_after_fault'] is False
+          assert report['native_spontaneous_recovery_proven'] is False
+          assert report['production_authorized'] is False
+          assert report['production_decision']=='NO_GO'
+          assert all(report['actual_postfault_gtpu'][k]>=6 for k in
+                     ('f1u_ul','f1u_dl','ngu_ul','ngu_dl'))
+          assert re.fullmatch('[0-9a-f]{64}',report['post_fault_pcap_sha256'])
+          print('PASS: real single-UE TS24.501 cause9 -> SUCI -> PDU -> postfault F1U/NGU; staging NO_GO')
+          PY
+
+      - name: Erase synthetic SIM material before evidence upload
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/f1-stage5h-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          test ! -e "$RUNNER_TEMP/f1-stage5h-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+
+      - name: Upload actual protocol or failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage5h-real-cause9-UE-server-attempt-${{ github.run_number }}
+          path: ${{ runner.temp }}/f1-stage5h-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
