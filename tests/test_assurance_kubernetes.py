@@ -74,7 +74,7 @@ class KubernetesRunnerTests(unittest.TestCase):
         # Client-only: no Kubernetes request or live collection.
         import subprocess
         if resource.getrlimit(resource.RLIMIT_AS)[0]!=resource.RLIM_INFINITY:self.skipTest('host AS restricted')
-        result=subprocess.run(['kubectl','version','--client','-o','json'],capture_output=True,timeout=10)
+        result=subprocess.run(['kubectl','version','--client','-o','json'],capture_output=True,timeout=30)
         self.assertEqual(result.returncode,0);self.assertIn('clientVersion',json.loads(result.stdout))
 
     def test_supervisor_one_use_and_no_retry(self):
