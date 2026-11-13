@@ -7,22 +7,22 @@ import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
 PATCH=ROOT/"experiments/oai-ngap-2026w13/stage5g/patch_oai_ue_cause9.py"
-HANDLER='static void handle_service_reject(nr_ue_nas_t *nas, const byte_array_t *buffer)\\n{'
-REJECT=('  /* Retrying the Service Request would loop forever, and re-registering is not supported:\\n'
-        '   * terminate as after a Registration Reject. */\\n'
-        '  LOG_E(NAS, "Service Reject: cannot connect, exiting\\\\n");')
-IDLE='        nas->fiveGMM_mode = FGS_IDLE;\\n        // TODO handle connection release'
+HANDLER='static void handle_service_reject(nr_ue_nas_t *nas, const byte_array_t *buffer)\n{'
+REJECT=('  /* Retrying the Service Request would loop forever, and re-registering is not supported:\n'
+        '   * terminate as after a Registration Reject. */\n'
+        '  LOG_E(NAS, "Service Reject: cannot connect, exiting\\\n");')
+IDLE='        nas->fiveGMM_mode = FGS_IDLE;\n        // TODO handle connection release'
 
 
 def source():
-    return ('/* self-contained synthetic source for source-transform contract only */\\n'
-            +HANDLER+'\\n'
-            +'  abort_service_request(nas);\\n'+REJECT+'\\n'
-            +'  nas->fiveGMM_state = FGS_DEREGISTERED;\\n'
-            +'  nas->termination_procedure = true;\\n'
-            +'  send_nas_detach_req(nas, false);\\n'
-            +'}\\nvoid rrcrelease(void) {\\n'
-            +IDLE+'\\n}\\n')
+    return ('/* self-contained synthetic source for source-transform contract only */\n'
+            +HANDLER+'\n'
+            +'  abort_service_request(nas);\n'+REJECT+'\n'
+            +'  nas->fiveGMM_state = FGS_DEREGISTERED;\n'
+            +'  nas->termination_procedure = true;\n'
+            +'  send_nas_detach_req(nas, false);\n'
+            +'}\nvoid rrcrelease(void) {\n'
+            +IDLE+'\n}\n')
 
 
 class Cause9Patch(unittest.TestCase):
@@ -56,9 +56,9 @@ class Cause9Patch(unittest.TestCase):
           'empty':'',
           'remove_reject':original.replace('Service Reject: cannot connect, exiting','other'),
           'remove_idle':original.replace('// TODO handle connection release','// removed'),
-          'duplicate_handler':original+HANDLER+'\\n',
-          'duplicate_idle':original+IDLE+'\\n',
-          'duplicate_reject':original+REJECT+'\\n',
+          'duplicate_handler':original+HANDLER+'\n',
+          'duplicate_idle':original+IDLE+'\n',
+          'duplicate_reject':original+REJECT+'\n',
           'already_patched':original+'stage5g_pending_initial_registration',
         }
         for label,text in cases.items():
