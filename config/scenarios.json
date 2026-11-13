@@ -407,7 +407,7 @@
       },
       "experimental": true,
       "acceptance_status": "STATIC VALIDATED",
-      "source_decision": "Canonical C-RAN charts plus architecture profiles. Legacy package/source trees remain untouched; their stable-AMF fix is retained by canonical CU startup. Multi-DU and physical edge placement require runtime acceptance."
+      "source_decision": "Canonical C-RAN charts plus architecture profiles. Legacy package/source trees remain untouched; their stable-AMF fix is retained by canonical CU startup. Multi-DU and physical edge placement require runtime acceptance. H-CRAN ONLY: 3GPP Rel-15/16 F1/NG architecture; Near-RT RIC and E2SM-KPM/RC intentionally excluded. Prometheus/Grafana is the monitoring path; no automatic mobility or production conformance is implied."
     },
     {
       "key": "hcran-oai",
@@ -483,7 +483,7 @@
       },
       "experimental": true,
       "acceptance_status": "STATIC VALIDATED",
-      "source_decision": "Canonical C-RAN charts plus architecture profiles. Legacy package/source trees remain untouched; their stable-AMF fix is retained by canonical CU startup. Multi-DU and physical edge placement require runtime acceptance."
+      "source_decision": "Canonical C-RAN charts plus architecture profiles. Legacy package/source trees remain untouched; their stable-AMF fix is retained by canonical CU startup. Multi-DU and physical edge placement require runtime acceptance. H-CRAN ONLY: 3GPP Rel-15/16 F1/NG architecture; Near-RT RIC and E2SM-KPM/RC intentionally excluded. Prometheus/Grafana is the monitoring path; no automatic mobility or production conformance is implied."
     },
     {
       "key": "vcran-srsran",
