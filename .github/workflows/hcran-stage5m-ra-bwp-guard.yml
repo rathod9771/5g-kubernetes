@@ -1,13 +1,13 @@
 name: H-CRAN Stage 5M guarded MAC random access two-UE recovery - NO DEPLOY
 
 # Bounded isolated RFSIM attempt: full disposable Mongo/Open5GS 5GC,
-# patched CU, macro DU 100 and one test-only OAI NR UE. No HP access.
+# patched CU, macro and small DU, two distinct synthetic OAI UEs. No HP access.
 on:
   push:
     branches:
       - experiment/hcran-stage5m-ra-bwp-guard-20261114
     paths:
-      - .github/workflows/hcran-stage5m-pdu-tun-renewal.yml
+      - .github/workflows/hcran-stage5m-ra-bwp-guard.yml
       - experiments/oai-ngap-2026w13/stage5m/**
       - experiments/oai-ngap-2026w13/stage5i/run_bounded_recovery.py
       - scripts/hcran_build_pinned_w45_ue_t3517_tunrenewal_raguard.sh
