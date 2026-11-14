@@ -1,0 +1,206 @@
+name: H-CRAN Stage 5J diagnose UE exit after bounded NAS retry - NO DEPLOY
+
+# Bounded isolated RFSIM attempt: full disposable Mongo/Open5GS 5GC,
+# patched CU, macro DU 100 and one test-only OAI NR UE. No HP access.
+on:
+  push:
+    branches:
+      - experiment/hcran-stage5j-ue-failure-diagnostics-20261114
+    paths:
+      - .github/workflows/hcran-stage5j-ue-exit-diagnostics.yml
+      - experiments/oai-ngap-2026w13/stage5i/run_bounded_recovery.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: hcran-stage5j-exit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stage5j-ue-exit-diagnostics:
+    if: github.ref == 'refs/heads/experiment/hcran-stage5j-ue-failure-diagnostics-20261114'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CORE_IMG: gradiant/open5gs:2.7.6
+      MONGO_IMG: mongo:6.0
+      CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w45
+      UE_IMG: hcran-stage5i-candidate:source-pinned-w45
+    steps:
+      - name: Checkout isolated qualification branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          path: qualification
+
+      - name: Checkout frozen Stage4P AMF recovery harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 4080110a74bf6ba58804797c5b7216458e2f0a93
+          path: baseline
+
+      - name: Install Helm and YAML/MongoDB test dependencies
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Prepare isolated Python dependencies and runner preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hcran-stage5i-evidence" "$RUNNER_TEMP/hcran-stage5i-render"
+          python3 -m venv "$RUNNER_TEMP/hcran-stage5i-venv"
+          "$RUNNER_TEMP/hcran-stage5i-venv/bin/python" -m pip install \
+            --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tcpdump
+          {
+            uname -a
+            free -h
+            df -h /
+            docker info | head -90
+          } > "$RUNNER_TEMP/hcran-stage5i-evidence/runner-preflight.txt"
+          if ! test -c /dev/net/tun; then
+            sudo modprobe tun || true
+          fi
+          test -c /dev/net/tun || { echo 'TUN unavailable; PDU test cannot execute safely'; exit 1; }
+          if ! test -d /proc/net/sctp; then
+            sudo modprobe sctp || true
+          fi
+          test -d /proc/net/sctp || { echo 'Kernel SCTP missing'; exit 1; }
+
+      - name: Render canonical H-CRAN CU and macro DU without deploying
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm template hcran-oai-cu qualification/helm/cran-oai/cu \
+            -f qualification/helm/cran-oai/cu/values-hcran.yaml \
+            -f qualification/helm/cran-oai/cu/values-hcran-secure-staging.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/hcran-stage5i-render/cu.yaml"
+          helm template hcran-oai-macro qualification/helm/cran-oai/du \
+            -f qualification/helm/cran-oai/du/values-hcran-macro.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/hcran-stage5i-render/macro.yaml"
+          helm template hcran-oai-small qualification/helm/cran-oai/du \
+            -f qualification/helm/cran-oai/du/values-hcran-small.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/hcran-stage5i-render/small.yaml"
+
+      - name: Download verified patched CU from successful Stage 3
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43157479388
+          name: oai-ngap-stage3-portable-4
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/stage5g-input
+
+      - name: Confirm failed source run and successful pinned UE build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source_run=43563887294
+          test "$(gh api "repos/${{ github.repository }}/actions/runs/$source_run" --jq .conclusion)" = failure
+          gh api "repos/${{ github.repository }}/actions/runs/$source_run/jobs" \
+            --jq '.jobs[0].steps | map(select(.conclusion=="success") | .name)' > "$RUNNER_TEMP/stage5j-source-steps.json"
+          python3 - <<'PY'
+          import json,os,pathlib
+          a=json.loads((pathlib.Path(os.environ["RUNNER_TEMP"])/"stage5j-source-steps.json").read_text())
+          assert "Compile test-only OAI W45 UE with bounded NAS/RRC timeout plus cause9 fallback" in a
+          assert "Archive bounded source-pinned UE candidate for subsequent RFsim acceptance" in a
+          assert "Upload expiring RESEARCH UE image candidate (not production)" in a
+          PY
+
+      - name: Download frozen Stage5I research UE image without rebuilding
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43563887294
+          name: hcran-stage5i-source-pinned-UE-image-1
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/stage5j-ue-source
+
+      - name: Validate and load pinned UE image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ue="$RUNNER_TEMP/stage5j-ue-source/hcran-stage5i-cause9-ue.tar.gz"
+          gzip -t "$ue"
+          sha256sum "$ue" > "$RUNNER_TEMP/hcran-stage5i-evidence/pinned-ue-sha256.txt"
+          docker load -i "$ue"
+          docker image inspect "$UE_IMG" --format '{{.Id}}' \
+            > "$RUNNER_TEMP/hcran-stage5i-evidence/pinned-ue-image-id.txt"
+          docker run --rm --network none --entrypoint /bin/sh "$UE_IMG" -ec \
+            'test -x /opt/oai-nr-ue/bin/nr-uesoftmodem && ! ldd /opt/oai-nr-ue/bin/nr-uesoftmodem | grep -q "not found"'
+
+      - name: Load patched CU and pull test-only core, DU, UE images
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/stage5g-input/oai-ngap-stage3-portable.tar.gz"
+          gzip -t "$archive"
+          sha256sum "$archive" > "$RUNNER_TEMP/hcran-stage5i-evidence/cu-image-archive.sha256"
+          docker load -i "$archive" | tee "$RUNNER_TEMP/hcran-stage5i-evidence/cu-load.txt"
+          for img in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG"; do
+            docker pull "$img" || exit 1
+          done
+          docker image inspect "$UE_IMG" --format '{{.Id}}' \
+            > "$RUNNER_TEMP/hcran-stage5i-evidence/ue-test-candidate-id.txt"
+          docker image inspect "$CU_IMG" > "$RUNNER_TEMP/hcran-stage5i-evidence/cu-image.json"
+          docker image inspect "$CORE_IMG" > "$RUNNER_TEMP/hcran-stage5i-evidence/core-image.json"
+          docker image inspect "$DU_IMG" > "$RUNNER_TEMP/hcran-stage5i-evidence/du-image.json"
+          docker image inspect "$UE_IMG" > "$RUNNER_TEMP/hcran-stage5i-evidence/ue-image.json"
+          docker run --rm --network none --entrypoint /bin/sh "$CORE_IMG" -ec \
+            'for nf in nrfd scpd ausfd udmd udrd nssfd pcfd bsfd smfd upfd amfd; do command -v open5gs-$nf >/dev/null; done; test -d /opt/open5gs/etc/open5gs' \
+            | tee "$RUNNER_TEMP/hcran-stage5i-evidence/core-binary-preflight.txt"
+          docker run --rm --network none --entrypoint /bin/sh "$UE_IMG" -ec \
+            'test -x /opt/oai-nr-ue/bin/nr-uesoftmodem; ldd /opt/oai-nr-ue/bin/nr-uesoftmodem' \
+            > "$RUNNER_TEMP/hcran-stage5i-evidence/ue-ldd.txt"
+          if grep -q 'not found' "$RUNNER_TEMP/hcran-stage5i-evidence/ue-ldd.txt"; then
+            echo 'UE binary missing shared-library dependencies' >&2
+            exit 1
+          fi
+
+      - name: Reproduce AMF outage and record stopped UE exit or OOM status
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/hcran-stage5i-venv/bin/python" -u \
+            qualification/experiments/oai-ngap-2026w13/stage5i/run_bounded_recovery.py \
+            --baseline "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13" \
+            --rendered "$RUNNER_TEMP/hcran-stage5i-render" \
+            --output "$RUNNER_TEMP/hcran-stage5i-evidence" \
+            --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
+            --verify-gtpu \
+            2>&1 | tee "$RUNNER_TEMP/hcran-stage5i-console.log"
+          "$RUNNER_TEMP/hcran-stage5i-venv/bin/python" \
+            qualification/experiments/oai-ngap-2026w13/stage5i/verify_bounded_recovery.py \
+            "$RUNNER_TEMP/hcran-stage5i-evidence"
+          echo 'PASS only if both UEs show bounded SR retry, Service Reject cause #9, SUCI registration, fresh NAS/PDU accept and bidirectional postfault F1-U/NG-U.'
+
+      - name: Purge private synthetic test material before artifact upload
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/hcran-stage5i-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          test ! -e "$RUNNER_TEMP/hcran-stage5i-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+
+      - name: Upload redacted stage evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage5j-ue-exit-evidence-${{ github.run_number }}
+          path: ${{ runner.temp }}/hcran-stage5i-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
