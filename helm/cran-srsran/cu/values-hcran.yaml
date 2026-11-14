@@ -14,3 +14,10 @@ resources:
 radio:
   gnbId: 3585
 experimentalTransport: true
+
+# H-CRAN profile: no Near-RT RIC, E2 agent, or KPM service model.
+# External Prometheus/Grafana monitoring remains available.
+e2Agent:
+  enabled: false
+ric:
+  enabled: false
