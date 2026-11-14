@@ -23,6 +23,10 @@ test "$(git hash-object openair2/RRC/NR/rrc_gNB_mobility.c)" = \
   3c59cdfc1660d3381506768e728897b35bfabe1d
 git apply --check "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
 git apply "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/ngap-retry-v2.patch"
+# Stage5I opt-in: retain Stage4Z normal builder behavior on all other runs.
+if [[ "${STAGE5I_NO_AMF_RELEASE:-0}" == "1" ]]; then
+  python3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage5i/patch_no_amf_release.py" "$OAI_SOURCE/openair3/NGAP/ngap_gNB.c"
+fi
 git diff --check
 test "$(git diff --name-only)" = "openair3/NGAP/ngap_gNB.c"
 git diff --binary > "$OUTPUT/applied-ngap-patch.diff"
