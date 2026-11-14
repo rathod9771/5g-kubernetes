@@ -1,0 +1,7 @@
+STAGE5I RUN 1 — DISPOSABLE GITHUB ACTIONS RESEARCH ONLY
+2026-11-14
+Branch experiment/hcran-stage5i-amf-race-20261114
+Expected: pinned CU NGAP no-AMF local RRC release; pinned W45 UE interrupted-SR TUN listener rearm; genuine AMF-only fault then NAS cause-9 -> SUCI initial registration -> new PDU -> F1U NGU GTP-U.
+No HP, no OSM, no production access, no real subscribers, no E2 or RIC.
+No workflow green status may be described as proof of service recovery unless STAGE5I runtime evidence validates.
+Production decision: NO_GO.
