@@ -31,6 +31,11 @@ def safe_summary(raw, role, status):
         m = re.match(r"^#(\d+)\s+(?:0x[0-9A-Fa-f]+\s+in\s+)?([A-Za-z_~][\w:~.<>$-]*)", line)
         if m:
             frames.append({"frame": int(m.group(1)), "symbol": m.group(2)[:100]})
+        if line.startswith("STAGE5L_FRAME "):
+            parts = line.split()
+            if len(parts) >= 5 and parts[1].isdigit() and parts[4].isdigit():
+                frames.append({"frame": int(parts[1]), "symbol": parts[2][:100],
+                               "source_file": parts[3][:70], "line": int(parts[4])})
     observations = []
     for label, pat in (
         ("attach_denied", r"(ptrace: Operation not permitted|Could not attach|ptrace: Permission denied)"),
@@ -78,17 +83,38 @@ def build_debug_probe(opts):
                 # Attach by HOST PID; only to GitHub-hosted throwaway containers.
                 raw_path = private / (role + "-gdb-private.log")
                 file_obj = raw_path.open("w")
+                gdb_script = private / "stage5l-stack.gdb"
+                gdb_script.write_text("""\
+set pagination off
+set confirm off
+set print frame-arguments none
+handle SIGPIPE nostop noprint pass
+handle SIGSEGV stop print pass
+continue
+python
+import gdb
+import re
+try:
+    frame = gdb.newest_frame()
+    for n in range(32):
+        if frame is None:
+            break
+        symbol = frame.name() or "UNKNOWN"
+        sal = frame.find_sal()
+        source = sal.symtab.filename.rsplit("/", 1)[-1] if sal.symtab else "UNKNOWN"
+        symbol = re.sub(r"[^A-Za-z0-9_:~.<>-]", "_", symbol)[:100]
+        source = re.sub(r"[^A-Za-z0-9_.-]", "_", source)[:70]
+        print("STAGE5L_FRAME %d %s %s %d" % (n, symbol, source, sal.line))
+        frame = frame.older()
+except Exception as exc:
+    print("STAGE5L_STACK_EXCEPTION " + type(exc).__name__)
+end
+bt 16
+continue
+""")
                 cmds = [
                     "sudo", "-n", "gdb", "-q", "-nx", "-batch", "-p", str(pid),
-                    "-ex", "set pagination off",
-                    "-ex", "set confirm off",
-                    "-ex", "set print frame-arguments none",
-                    "-ex", "handle SIGPIPE nostop noprint pass",
-                    "-ex", "handle SIGSEGV stop print pass",
-                    "-ex", "continue",
-                    "-ex", "printf STAGE5L_SIGNAL_STACK\\n",
-                    "-ex", "thread apply all bt 12",
-                    "-ex", "continue",
+                    "-x", str(gdb_script),
                 ]
                 p = subprocess.Popen(
                     cmds, stdout=file_obj, stderr=subprocess.STDOUT,
