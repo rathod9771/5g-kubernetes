@@ -11,7 +11,7 @@ from pathlib import Path
 ANCHOR = '''        abort_service_request(nas);
         nas->fiveGMM_mode = FGS_IDLE;
         /* Perform only the one-shot fallback initiated by SERVICE REJECT'''
-REPLACEMENT = '''        const bool stage5i_interrupted_sr = nas->fiveGMM_state == FGS_SERVICE_REQUEST_INITIATED;
+REPLACEMENT = r'''        const bool stage5i_interrupted_sr = nas->fiveGMM_state == FGS_SERVICE_REQUEST_INITIATED;
         abort_service_request(nas);
         nas->fiveGMM_mode = FGS_IDLE;
         /* The uplink TUN reader was stopped while the interrupted Service
