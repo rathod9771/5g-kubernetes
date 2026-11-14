@@ -36,7 +36,7 @@ class HCRANRecoverySourceCandidateTests(unittest.TestCase):
                 file = ROOT / path
                 self.assertTrue(file.is_file() and not file.is_symlink())
                 data = file.read_bytes()
-                blob_sha = hashlib.sha1(f"blob {len(data)}\\0".encode() + data).hexdigest()
+                blob_sha = hashlib.sha1(b"blob " + str(len(data)).encode() + bytes([0]) + data).hexdigest()
                 self.assertEqual(blob_sha, expected_sha)
                 kind, affected, full = release_impact.classify(path, self.registry)
                 self.assertEqual((kind, affected, full), ("non-package", set(), False))
