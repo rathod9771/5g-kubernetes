@@ -199,7 +199,7 @@ def build(opts):
                     dead=dead,production_decision="NO_GO")
 
     def cleanup(self):
-        try:self.capture_exit_diagnostics()
+        try:capture_exit_diagnostics(self)
         except Exception as exc:
             self.record("STAGE5J-CONTAINER-EXIT-CAPTURE","WARN",error=type(exc).__name__)
         try:diagnostic(self)
