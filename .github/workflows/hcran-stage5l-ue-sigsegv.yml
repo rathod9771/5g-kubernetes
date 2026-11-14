@@ -1,13 +1,13 @@
 name: H-CRAN Stage 5L UE SIGSEGV host GDB backtrace - NO DEPLOY
 
 # Bounded isolated RFSIM attempt: full disposable Mongo/Open5GS 5GC,
-# patched CU, macro DU 100 and one test-only OAI NR UE. No HP access.
+# patched CU, two DUs and two synthetic OAI UEs. No HP access.
 on:
   push:
     branches:
       - experiment/hcran-stage5l-ue-segv-backtrace-20261114
     paths:
-      - .github/workflows/hcran-stage5k-pdu-tun-renewal.yml
+      - .github/workflows/hcran-stage5l-ue-sigsegv.yml
       - experiments/oai-ngap-2026w13/stage5l/**
   workflow_dispatch:
 
@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  two-ue-pdu-tun-renewal:
+  two-ue-segv-backtrace:
     if: github.ref == 'refs/heads/experiment/hcran-stage5l-ue-segv-backtrace-20261114'
     runs-on: ubuntu-24.04
     timeout-minutes: 100
@@ -186,16 +186,6 @@ jobs:
         run: |
           rm -rf "$RUNNER_TEMP/hcran-stage5l-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
           test ! -e "$RUNNER_TEMP/hcran-stage5l-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
-
-      - name: Upload source patch and reproducible build proof
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hcran-stage5k-source-build-proof-${{ github.run_number }}
-          path: ${{ runner.temp }}/hcran-stage5k-build-evidence/
-          if-no-files-found: warn
-          retention-days: 7
-          compression-level: 2
 
       - name: Upload redacted stage evidence on success or failure
         if: always()
