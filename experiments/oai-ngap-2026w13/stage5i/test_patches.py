@@ -16,6 +16,8 @@ class PatchContracts(unittest.TestCase):
         m=load("patch_no_amf_release")
         changed=m.patch("prefix\n"+m.ANCHOR+"\nsuffix")
         self.assertIn("NGAP_UE_CONTEXT_RELEASE_COMMAND(release).gNB_ue_ngap_id = ue_id;",changed)
+        self.assertIn(r'(research only)\n", ue_id);', changed)
+        self.assertNotIn('(research only)\n", ue_id);', changed)
         self.assertIn("free_byte_array(NGAP_NAS_FIRST_REQ(received_msg).nas_pdu);",changed)
         with self.assertRaises(ValueError):m.patch(changed)
         with self.assertRaises(ValueError):m.patch(m.ANCHOR+m.ANCHOR)
@@ -27,6 +29,8 @@ class PatchContracts(unittest.TestCase):
         self.assertIn("stage5i_interrupted_sr",changed)
         self.assertIn("if (stage5i_interrupted_sr)",changed)
         self.assertIn("NAS_TUN_START_IDLE_LISTENER",changed)
+        self.assertIn(r'listener rearmed\n");',changed)
+        self.assertNotIn('listener rearmed\n");',changed)
         with self.assertRaises(ValueError):m.patch(changed)
         with self.assertRaises(ValueError):m.patch("no Stage5G anchor")
 
