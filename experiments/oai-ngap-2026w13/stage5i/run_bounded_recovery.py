@@ -122,7 +122,86 @@ def build(opts):
         (self.out/"stage5i-runtime.json").write_text(json.dumps(record,indent=2)+"\n")
         self.record("STAGE5I","PASS",scope="both unchanged UEs: bounded SR retry, cause9->SUCI NAS/PDU and bidirectional F1U/NGU",production_decision="NO_GO")
 
+
+    def capture_exit_diagnostics(self):
+        """Capture container exit/OOM provenance before cleanup deletes it."""
+        import datetime
+        import subprocess
+        from run_ue_registration import name
+
+        report={
+            "schema":"stage5j-precleanup-ue-container-exit-v1",
+            "created_at_utc":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "production_decision":"NO_GO",
+            "container_states":{},
+            "selected_error_markers":{},
+            "host_observation":{}
+        }
+        roles=("mongo","core","cu","macro","small","ue","ue-small")
+        for role in roles:
+            try:
+                p=subprocess.run(["docker","inspect",name(role)],capture_output=True,
+                                 text=True,timeout=10)
+                if p.returncode or not p.stdout:
+                    report["container_states"][role]={"inspect_error":p.stderr[-250:]}
+                    continue
+                raw=json.loads(p.stdout)[0]
+                st=raw.get("State",{})
+                report["container_states"][role]={
+                    key:st.get(key) for key in (
+                        "Status","Running","ExitCode","OOMKilled","Error",
+                        "StartedAt","FinishedAt","Pid","Restarting","Dead")
+                }
+                report["container_states"][role]["restart_count"]=raw.get("RestartCount")
+                report["container_states"][role]["memory_limit_bytes"]=raw.get(
+                    "HostConfig",{}).get("Memory")
+            except (OSError,ValueError,KeyError,subprocess.TimeoutExpired) as exc:
+                report["container_states"][role]={"capture_exception":type(exc).__name__}
+
+        relevant=("Stage5I","Stage5G","Service Request","Service Reject",
+                  "RRC moved into IDLE","RRC Release","RRCSetupComplete",
+                  "SIB1 decoded","assert","fatal","segmentation","SIG",
+                  "out of memory","std::","malloc","terminate called",
+                  "shutting down","error","fail","aborted","Killed")
+        for role in ("ue","ue-small"):
+            try:
+                p=subprocess.run(["docker","logs",name(role)],capture_output=True,
+                                 text=True,timeout=12)
+                lines=[]
+                for raw in (p.stdout+"\n"+p.stderr).splitlines():
+                    if not any(keyword.lower() in raw.lower() for keyword in relevant):
+                        continue
+                    # Do not persist synthetic authentication material or
+                    # full raw UE logs in public Actions artifacts.
+                    redacted=re.sub(r"\b\d{14,16}\b","[SYNTHETIC_ID]",raw)
+                    redacted=re.sub(r"\b[0-9a-fA-F]{32,64}\b","[HEX_REDACTED]",redacted)
+                    lines.append(redacted[:320])
+                report["selected_error_markers"][role]=lines[-180:]
+            except Exception as exc:
+                report["selected_error_markers"][role]=["capture error: "+type(exc).__name__]
+        for label,command in (
+            ("memory",["free","-m"]),
+            ("docker_stats",["docker","stats","--no-stream","--format",
+                             "{{.Name}} {{.CPUPerc}} {{.MemUsage}} {{.PIDs}}"])):
+            try:
+                p=subprocess.run(command,capture_output=True,text=True,timeout=15)
+                report["host_observation"][label]={"exit_code":p.returncode,
+                                                     "output":p.stdout[-3000:]}
+            except Exception as exc:
+                report["host_observation"][label]={"error":type(exc).__name__}
+
+        (self.out/"stage5j-container-exit-diagnostics.json").write_text(
+            json.dumps(report,indent=2)+"\n")
+        dead=[{"role":role,"state":state}
+              for role,state in report["container_states"].items()
+              if state.get("Running") is False]
+        self.record("STAGE5J-CONTAINER-EXIT-OBSERVATION","OBSERVED",
+                    dead=dead,production_decision="NO_GO")
+
     def cleanup(self):
+        try:self.capture_exit_diagnostics()
+        except Exception as exc:
+            self.record("STAGE5J-CONTAINER-EXIT-CAPTURE","WARN",error=type(exc).__name__)
         try:diagnostic(self)
         except Exception:pass
         original_cleanup()
