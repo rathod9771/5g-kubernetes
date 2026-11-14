@@ -160,6 +160,20 @@ jobs:
             exit 1
           fi
 
+      - name: Extract exact pinned UE ELF for source-level host debugger symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage5l-symbols"
+          cid="$(docker create --entrypoint /bin/true "$UE_IMG")"
+          docker cp "$cid:/opt/oai-nr-ue/bin/nr-uesoftmodem" \
+            "$RUNNER_TEMP/stage5l-symbols/nr-uesoftmodem"
+          docker rm "$cid"
+          echo "803c3ac7a6e90c61cd94f83540343960340d6dea15b39bd0731eb36820d291b1  $RUNNER_TEMP/stage5l-symbols/nr-uesoftmodem" | sha256sum -c -
+          readelf -S "$RUNNER_TEMP/stage5l-symbols/nr-uesoftmodem" | grep -F '.debug_info'
+          readelf -S "$RUNNER_TEMP/stage5l-symbols/nr-uesoftmodem" | grep -F '.symtab'
+          echo 'Pinned UE ELF source-level symbols available to host GDB; no binary uploaded'
+
       - name: Real AMF-only fault, both UEs re-register, re-IP and restore bidirectional GTP-U
         shell: bash
         run: |
@@ -167,6 +181,7 @@ jobs:
           "$RUNNER_TEMP/hcran-stage5l-venv/bin/python" -u \
             qualification/experiments/oai-ngap-2026w13/stage5l/run_sigsegv_diagnostics.py \
             --baseline "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13" \
+            --symbol-file "$RUNNER_TEMP/stage5l-symbols/nr-uesoftmodem" \
             --rendered "$RUNNER_TEMP/hcran-stage5l-render" \
             --output "$RUNNER_TEMP/hcran-stage5l-evidence" \
             --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
