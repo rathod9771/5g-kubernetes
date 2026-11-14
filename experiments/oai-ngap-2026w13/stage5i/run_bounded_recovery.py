@@ -35,6 +35,7 @@ DIAGNOSTICS=(
     "Received NAS Service Reject message with cause",
     "Stage5G: cause #9",
     "Stage5G: sent SUCI-based initial Registration Request",
+    "Stage5K: refreshed existing PDU TUN",
     "Received Registration Accept",
     "PDU Session Establishment Accept",
 )
