@@ -1,0 +1,189 @@
+name: H-CRAN Stage 5N repeated two-UE AMF recovery - NO DEPLOY
+
+# Three independent disposable GitHub-hosted RFsim trials. Pinned to the
+# successful Stage5M image artifact and immutable Stage3 CU source evidence.
+# This never touches HP, Kubernetes, OSM, production keys or subscribers.
+on:
+  push:
+    branches:
+      - experiment/hcran-stage5n-dual-ue-recovery-repeats-20261114
+    paths:
+      - .github/workflows/hcran-stage5n-dual-ue-recovery-repeats.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: hcran-stage5n-20261114-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-independent-trial:
+    name: Isolated dual-UE AMF recovery trial ${{ matrix.trial }}/3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        trial: [1, 2, 3]
+    env:
+      CORE_IMG: gradiant/open5gs:2.7.6
+      MONGO_IMG: mongo:6.0
+      CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w45
+      UE_IMG: hcran-stage5n-reused-guard:trial-${{ matrix.trial }}
+    steps:
+      - name: Checkout frozen tested Stage5M qualification source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 6ada8e695e91f30df0ea6db42625979a5295b1f7
+          path: qualification
+
+      - name: Checkout frozen Stage4P AMF fault harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 4080110a74bf6ba58804797c5b7216458e2f0a93
+          path: baseline
+
+      - name: Install isolated test dependencies and kernel prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage5n-evidence" "$RUNNER_TEMP/stage5n-render" "$RUNNER_TEMP/stage5n-inputs"
+          python3 -m venv "$RUNNER_TEMP/stage5n-venv"
+          "$RUNNER_TEMP/stage5n-venv/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tcpdump
+          test -c /dev/net/tun || sudo modprobe tun
+          test -c /dev/net/tun
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -d /proc/net/sctp
+          {
+            echo "trial=${{ matrix.trial }}"
+            echo "upstream_stage5m_run=43588828565"
+            uname -a
+            free -h
+            df -h /
+          } > "$RUNNER_TEMP/stage5n-evidence/runner-preflight.txt"
+
+      - name: Install Helm for static H-CRAN manifests
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Render two-DU H-CRAN source without deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm template hcran-oai-cu qualification/helm/cran-oai/cu \
+            -f qualification/helm/cran-oai/cu/values-hcran.yaml \
+            -f qualification/helm/cran-oai/cu/values-hcran-secure-staging.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5n-render/cu.yaml"
+          helm template hcran-oai-macro qualification/helm/cran-oai/du \
+            -f qualification/helm/cran-oai/du/values-hcran-macro.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5n-render/macro.yaml"
+          helm template hcran-oai-small qualification/helm/cran-oai/du \
+            -f qualification/helm/cran-oai/du/values-hcran-small.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5n-render/small.yaml"
+
+      - name: Retrieve immutable Stage3 patched CU archive
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43157479388
+          name: oai-ngap-stage3-portable-4
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/stage5n-inputs/cu
+
+      - name: Retrieve passing Stage5M source-pinned UE research image
+        uses: actions/download-artifact@v4
+        with:
+          repository: rathod9771/5g-kubernetes
+          run-id: 43588828565
+          name: hcran-stage5m-source-pinned-UE-image-1
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/stage5n-inputs/ue
+
+      - name: Verify and load candidate; isolate core and DU container images
+        shell: bash
+        run: |
+          set -euo pipefail
+          cu="$RUNNER_TEMP/stage5n-inputs/cu/oai-ngap-stage3-portable.tar.gz"
+          ue="$RUNNER_TEMP/stage5n-inputs/ue/hcran-stage5m-ra-guard-ue.tar.gz"
+          gzip -t "$cu"
+          gzip -t "$ue"
+          sha256sum "$cu" "$ue" > "$RUNNER_TEMP/stage5n-evidence/pinned-inputs.sha256"
+          docker load -i "$cu"
+          docker load -i "$ue"
+          docker image inspect hcran-stage5m-candidate:source-pinned-w45 --format '{{.Id}}' \
+            > "$RUNNER_TEMP/stage5n-evidence/stage5m-ue-source-id.txt"
+          docker tag hcran-stage5m-candidate:source-pinned-w45 "$UE_IMG"
+          for image in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG"; do docker pull "$image"; done
+          docker image inspect "$UE_IMG" --format '{{.Id}}' > "$RUNNER_TEMP/stage5n-evidence/ue-candidate-id.txt"
+
+      - name: Fault AMF, demand unchanged two UEs, fresh PDU IPv4 and bidirectional user plane
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/stage5n-venv/bin/python" -u \
+            qualification/experiments/oai-ngap-2026w13/stage5i/run_bounded_recovery.py \
+            --baseline "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13" \
+            --rendered "$RUNNER_TEMP/stage5n-render" \
+            --output "$RUNNER_TEMP/stage5n-evidence" \
+            --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
+            --verify-gtpu \
+            2>&1 | tee "$RUNNER_TEMP/stage5n-console.log"
+          "$RUNNER_TEMP/stage5n-venv/bin/python" \
+            qualification/experiments/oai-ngap-2026w13/stage5i/verify_bounded_recovery.py \
+            "$RUNNER_TEMP/stage5n-evidence"
+          "$RUNNER_TEMP/stage5n-venv/bin/python" \
+            qualification/experiments/oai-ngap-2026w13/stage5k/verify_tun_renewal.py \
+            "$RUNNER_TEMP/stage5n-evidence"
+          python3 - "$RUNNER_TEMP/stage5n-evidence" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          data = json.loads((root / "stage5e-recovery-status.json").read_text())
+          states = json.loads((root / "stage5j-container-exit-diagnostics.json").read_text())["container_states"]
+          assert data["both_ue_icmp_recovered"] is True
+          assert data["ues_were_restarted"] is False
+          for ue in ("ue", "ue-small"):
+              assert states[ue]["Running"] and not states[ue]["OOMKilled"]
+              assert states[ue]["restart_count"] == 0
+          markers = {ue: (root / ("cleanup-ue.log" if ue == "ue" else "cleanup-ue-small.log")).read_text(errors="replace").count("Stage5M: defer random access") for ue in ("ue", "ue-small") if (root / ("cleanup-ue.log" if ue == "ue" else "cleanup-ue-small.log")).exists()}
+          report = {"schema":"stage5n-single-independent-recovery-v1",
+                    "source_run":43588828565,
+                    "two_ue_no_restart":True,
+                    "postfault_icmp":True,
+                    "guard_deferral_observed":markers,
+                    "production_decision":"NO_GO"}
+          (root / "stage5n-repeatability-summary.json").write_text(json.dumps(report,indent=2)+"\n")
+          print("PASS independent RFsim recovery:", json.dumps(report))
+          PY
+
+      - name: Remove private test material before artifact upload
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/stage5n-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          test ! -e "$RUNNER_TEMP/stage5n-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+
+      - name: Preserve redacted evidence whether pass or fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage5n-independent-recovery-trial-${{ matrix.trial }}
+          path: ${{ runner.temp }}/stage5n-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
