@@ -13,7 +13,7 @@ ANCHOR = '''      case NGAP_NAS_FIRST_REQ:
         ngap_gNB_handle_nas_first_req(instance, &NGAP_NAS_FIRST_REQ(received_msg));
         free_byte_array(NGAP_NAS_FIRST_REQ(received_msg).nas_pdu);
         break;'''
-REPLACEMENT = '''      case NGAP_NAS_FIRST_REQ: {
+REPLACEMENT = r'''      case NGAP_NAS_FIRST_REQ: {
         /* Stage5I research-only: when the InitialUEMessage cannot reach an
          * AMF, release the local RRC UE instead of leaving it in a stranded
          * RRC_CONNECTED state. No synthetic NAS, no replay, no E2/RIC.
