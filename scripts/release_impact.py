@@ -41,6 +41,7 @@ NON_PACKAGE_FILES = frozenset((
     'scripts/enable-oran-oai-e2.sh', 'scripts/deploy-oran-oai-rfsim.sh', 'scripts/build-cudu-batch.sh',
     'scripts/build-private-installer.sh', 'scripts/build-ran-batch.sh', 'scripts/build-ran-nsds.sh',
     'scripts/rename-ran-packages.sh',
+    'scripts/ci_oai_ngap_readiness.py',  # read-only historical H-CRAN CI inventory; never an OSM package input
 ))
 SHA = re.compile(r'[0-9a-f]{40}')
 
