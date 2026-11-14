@@ -9,6 +9,7 @@ published. NO DEPLOY and NO production promotion.
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -57,6 +58,10 @@ def safe_summary(raw, role, status):
 
 
 def build_debug_probe(opts):
+    binary = Path(opts.symbol_file).resolve(strict=True)
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    if digest != '803c3ac7a6e90c61cd94f83540343960340d6dea15b39bd0731eb36820d291b1':
+        raise RuntimeError('Stage5L exact prebuilt UE executable checksum mismatch')
     probe = build(opts)
     base_fault = probe.fault_and_recover
 
@@ -113,7 +118,8 @@ bt 16
 continue
 """)
                 cmds = [
-                    "sudo", "-n", "gdb", "-q", "-nx", "-batch", "-p", str(pid),
+                    "sudo", "-n", "gdb", "-q", "-nx", "-batch",
+                    "-se", str(binary), "-p", str(pid),
                     "-x", str(gdb_script),
                 ]
                 p = subprocess.Popen(
@@ -170,6 +176,7 @@ continue
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline", required=True)
+    parser.add_argument("--symbol-file", required=True)
     for label in ("rendered", "output", "cu-image", "du-image", "ue-image"):
         parser.add_argument("--" + label, required=True)
     parser.add_argument("--verify-gtpu", action="store_true")
