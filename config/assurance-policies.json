@@ -1,0 +1,1148 @@
+{
+  "schema_version": 1,
+  "default_mode": "OBSERVE_ONLY",
+  "live_auto_enabled": false,
+  "note": "Thresholds are conservative laboratory starting points requiring baseline review before live rollout. No live action allowlist.",
+  "alarms": {
+    "KubernetesNodeNotReady": {
+      "domain": "infrastructure",
+      "severity": "CRITICAL",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "KubernetesNodeNotReady condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "KubernetesMemoryPressure": {
+      "domain": "infrastructure",
+      "severity": "WARNING",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "KubernetesMemoryPressure condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "KubernetesDiskPressure": {
+      "domain": "infrastructure",
+      "severity": "WARNING",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "KubernetesDiskPressure condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "HostCPUContentionHigh": {
+      "domain": "infrastructure",
+      "severity": "WARNING",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "host_pressure",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "HostCPUContentionHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "HostCPUFullPressureHigh": {
+      "domain": "infrastructure",
+      "severity": "WARNING",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "host_pressure",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "HostCPUFullPressureHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "PodCrashLoop": {
+      "domain": "infrastructure",
+      "severity": "WARNING",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "PodCrashLoop condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "ContainerOOMKilled": {
+      "domain": "infrastructure",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "ContainerOOMKilled condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "ContainerRestartsHigh": {
+      "domain": "infrastructure",
+      "severity": "WARNING",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "ContainerRestartsHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "PersistentVolumeDegraded": {
+      "domain": "infrastructure",
+      "severity": "WARNING",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "PersistentVolumeDegraded condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "RANPodUnavailable": {
+      "domain": "ran",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "RAN control or radio service potentially affected",
+      "hypothesis": "RANPodUnavailable condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "DUUnavailable": {
+      "domain": "ran",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "propose_du_recovery",
+      "required_evidence": [
+        "pod_ready",
+        "f1_association"
+      ],
+      "impact": "RAN control or radio service potentially affected",
+      "hypothesis": "DUUnavailable condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy",
+        "pod_ready",
+        "f1_association",
+        "ngap_association",
+        "f1_setup",
+        "ng_setup"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "C",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED",
+      "required_conditions": {
+        "pod_ready": false,
+        "f1_association": false
+      }
+    },
+    "CUUnavailable": {
+      "domain": "ran",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "propose_cu_recovery",
+      "required_evidence": [
+        "pod_ready",
+        "ngap_association",
+        "f1_association"
+      ],
+      "impact": "RAN control or radio service potentially affected",
+      "hypothesis": "CUUnavailable condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy",
+        "pod_ready",
+        "f1_association",
+        "ngap_association",
+        "f1_setup",
+        "ng_setup"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "C",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED",
+      "required_conditions": {
+        "pod_ready": false,
+        "ngap_association": false,
+        "f1_association": false
+      }
+    },
+    "F1AssociationLost": {
+      "domain": "ran",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "investigate_f1",
+      "required_evidence": [
+        "f1_association",
+        "pod_ready"
+      ],
+      "impact": "RAN control or radio service potentially affected",
+      "hypothesis": "F1AssociationLost condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy",
+        "pod_ready",
+        "f1_association",
+        "ngap_association",
+        "f1_setup",
+        "ng_setup"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "C",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED",
+      "required_conditions": {
+        "f1_association": false
+      }
+    },
+    "NGAPAssociationLost": {
+      "domain": "ran",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "investigate_ngap",
+      "required_evidence": [
+        "ngap_association",
+        "core_healthy"
+      ],
+      "impact": "RAN control or radio service potentially affected",
+      "hypothesis": "NGAPAssociationLost condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy",
+        "pod_ready",
+        "f1_association",
+        "ngap_association",
+        "f1_setup",
+        "ng_setup"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "C",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED",
+      "required_conditions": {
+        "ngap_association": false
+      }
+    },
+    "RANConfigurationFailure": {
+      "domain": "ran",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "RAN control or radio service potentially affected",
+      "hypothesis": "RANConfigurationFailure condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "RANCPUContention": {
+      "domain": "ran",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "host_pressure",
+        "service_degraded"
+      ],
+      "impact": "RAN control or radio service potentially affected",
+      "hypothesis": "RANCPUContention condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "RANProtocolErrorRateHigh": {
+      "domain": "ran",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "RAN control or radio service potentially affected",
+      "hypothesis": "RANProtocolErrorRateHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "RANPerformanceDegraded": {
+      "domain": "ran",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "RAN control or radio service potentially affected",
+      "hypothesis": "RANPerformanceDegraded condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "AMFUnavailable": {
+      "domain": "core",
+      "severity": "CRITICAL",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Persistent core potentially affected; critical escalation",
+      "hypothesis": "AMFUnavailable condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "SMFUnavailable": {
+      "domain": "core",
+      "severity": "CRITICAL",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Persistent core potentially affected; critical escalation",
+      "hypothesis": "SMFUnavailable condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "UPFUnavailable": {
+      "domain": "core",
+      "severity": "CRITICAL",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Persistent core potentially affected; critical escalation",
+      "hypothesis": "UPFUnavailable condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "NRFDiscoveryFailure": {
+      "domain": "core",
+      "severity": "CRITICAL",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Persistent core potentially affected; critical escalation",
+      "hypothesis": "NRFDiscoveryFailure condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "SBIRequestFailureRateHigh": {
+      "domain": "core",
+      "severity": "CRITICAL",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Persistent core potentially affected; critical escalation",
+      "hypothesis": "SBIRequestFailureRateHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "UERegistrationFailureRateHigh": {
+      "domain": "core",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Persistent core potentially affected; critical escalation",
+      "hypothesis": "UERegistrationFailureRateHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "PDUSessionFailureRateHigh": {
+      "domain": "core",
+      "severity": "CRITICAL",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Persistent core potentially affected; critical escalation",
+      "hypothesis": "PDUSessionFailureRateHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "PFCPAssociationLost": {
+      "domain": "core",
+      "severity": "CRITICAL",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Persistent core potentially affected; critical escalation",
+      "hypothesis": "PFCPAssociationLost condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "UPFUserPlaneDegraded": {
+      "domain": "core",
+      "severity": "CRITICAL",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Persistent core potentially affected; critical escalation",
+      "hypothesis": "UPFUserPlaneDegraded condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "FogApplicationUnavailable": {
+      "domain": "fog",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "propose_fog_recovery",
+      "required_evidence": [
+        "pod_ready",
+        "ownership_verified"
+      ],
+      "impact": "Edge application SLS potentially affected",
+      "hypothesis": "FogApplicationUnavailable condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "C",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED",
+      "required_conditions": {
+        "pod_ready": false
+      }
+    },
+    "FogProcessingLatencyHigh": {
+      "domain": "fog",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Edge application SLS potentially affected",
+      "hypothesis": "FogProcessingLatencyHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "FogProcessingErrorRateHigh": {
+      "domain": "fog",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Edge application SLS potentially affected",
+      "hypothesis": "FogProcessingErrorRateHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "FogDNSDiscoveryStale": {
+      "domain": "fog",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Edge application SLS potentially affected",
+      "hypothesis": "FogDNSDiscoveryStale condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "FogCPUThrottlingHigh": {
+      "domain": "fog",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Edge application SLS potentially affected",
+      "hypothesis": "FogCPUThrottlingHigh condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "OSMLifecycleOperationFailed": {
+      "domain": "orchestration",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "operation_failed",
+        "osm_trustworthy"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "OSMLifecycleOperationFailed condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED",
+      "required_conditions": {
+        "operation_failed": true
+      }
+    },
+    "OSMLifecycleOperationStalled": {
+      "domain": "orchestration",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "OSMLifecycleOperationStalled condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "OSMServiceDegraded": {
+      "domain": "orchestration",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "OSMServiceDegraded condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "OSMComponentUnavailable": {
+      "domain": "orchestration",
+      "severity": "MAJOR",
+      "persistence": 60,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "OSMComponentUnavailable condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "PrometheusTargetDown": {
+      "domain": "observability",
+      "severity": "WARNING",
+      "persistence": 0,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "PrometheusTargetDown condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "PrometheusScrapeFailed": {
+      "domain": "observability",
+      "severity": "WARNING",
+      "persistence": 0,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "PrometheusScrapeFailed condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "MetricsMissing": {
+      "domain": "observability",
+      "severity": "WARNING",
+      "persistence": 0,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "MetricsMissing condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "VERIFIED_FAMILY"
+    },
+    "MonitoringPipelineDegraded": {
+      "domain": "observability",
+      "severity": "WARNING",
+      "persistence": 0,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "MonitoringPipelineDegraded condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "AlertmanagerUnavailable": {
+      "domain": "observability",
+      "severity": "WARNING",
+      "persistence": 0,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "AlertmanagerUnavailable condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "InsufficientClusterCapacity": {
+      "domain": "governance",
+      "severity": "WARNING",
+      "persistence": 0,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "InsufficientClusterCapacity condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "NetworkCongestion": {
+      "domain": "governance",
+      "severity": "WARNING",
+      "persistence": 0,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "metric_present",
+        "service_degraded"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "NetworkCongestion condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    },
+    "EmergencyServiceProtection": {
+      "domain": "governance",
+      "severity": "WARNING",
+      "persistence": 0,
+      "clear_persistence": 60,
+      "max_age": 120,
+      "max_gap": 90,
+      "cooldown": 600,
+      "max_retries": 0,
+      "action": "observe_notify",
+      "required_evidence": [
+        "protected_state"
+      ],
+      "impact": "Investigate scope; service impact not yet proven",
+      "hypothesis": "EmergencyServiceProtection condition; cause requires independent corroboration",
+      "verification": [
+        "monitoring_fresh",
+        "core_healthy"
+      ],
+      "rollback": "Preserve current deployment; operator reconciliation required",
+      "automation_class": "A",
+      "automation_eligible": false,
+      "metric_support": "UNVERIFIED"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+fullname: fran-oai-fog
+ranType: fran
+duFullname: fran-oai-du
+nodeSelector: {}
+affinity: {}
+tolerations: []
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

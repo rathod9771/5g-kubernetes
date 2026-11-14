@@ -550,8 +550,10 @@ class Installer:
         scenarios = select_scenarios(self.registry, keys)
         prepare(ROOT, DEFAULT_OUTPUT, scenarios)
         artifacts = [validated_snapshot(ROOT, DEFAULT_OUTPUT, s) for s in scenarios]
-        onboard(self.catalog, scenarios, artifacts)
-        return [self.catalog.verify(s, a) for s, a in zip(scenarios, artifacts)]
+        # Same lock as the dashboard: no deploy between its catalog check and instantiate.
+        with exclusive_lock(self.directory / '.lifecycle.lock'):
+            onboard(self.catalog, scenarios, artifacts)
+            return [self.catalog.verify(s, a) for s, a in zip(scenarios, artifacts)]
 
     def ensure_core_instance(self, identities, namespace):
         path = '/nslcm/v1/ns_instances'
@@ -694,7 +696,7 @@ class Installer:
             raise ConfigError('Reference subscriber existence check failed')
 
     def baseline(self):
-        self.packages([s['key'] for s in self.registry['scenarios'] if s['generation_status'] == 'ready'])
+        self.packages([s['key'] for s in self.registry['scenarios'] if s['generation_status'] == 'ready' and not s.get('experimental')])
         state_path = Path(self.cfg['ACTIVE_STATE_PATH'])
         with exclusive_lock(self.directory / '.lifecycle.lock'):
             if state_path.exists():
@@ -810,7 +812,7 @@ class Installer:
         else:
             self.runner.run(['python3', '-m', 'venv', str(ROOT / 'ran-selector/venv')])
             self.runner.run([ROOT / 'ran-selector/venv/bin/pip', 'install', '-r', ROOT / 'ran-selector/requirements.txt'])
-        for kind, name in [('dashboard', 'ran-selector'), ('watcher', 'layer3-watcher'), ('rancher-forward', 'rancher-portforward')]:
+        for kind, name in [('dashboard', 'ran-selector'), ('rancher-forward', 'rancher-portforward')]:
             unit = Path('/etc/systemd/system/' + name + '.service')
             active = self.runner.run(['systemctl', 'is-active', '--quiet', name], check=False).returncode == 0
             if active:
@@ -866,15 +868,15 @@ def preflight(cfg):
     private_archive(cfg['SUBSCRIBER_DATABASE_INPUT'])
     if cfg['DEPLOYMENT_PROFILE'] != 'rfsim':
         raise ConfigError('Submission installer supports the existing rfsim baseline only')
-    if cfg['LAYER3_FAILOVER_SCENARIO'] != 'cran-srsran':
-        raise ConfigError('Submission watcher requires LAYER3_FAILOVER_SCENARIO=cran-srsran')
     if not 30000 <= int(cfg['OSM_HTTPS_PORT']) <= 32767:
         raise ConfigError('Submission ingress requires OSM_HTTPS_PORT in the NodePort range')
     if not cfg['OSM_CLUSTER_NAME']:
         raise ConfigError('Set OSM_CLUSTER_NAME')
     if not cfg['OSM_VIM_NAME']:
         raise ConfigError('Set OSM_VIM_NAME for the dummy VIM')
-    for kind, name in [('dashboard', 'ran-selector'), ('watcher', 'layer3-watcher'), ('rancher-forward', 'rancher-portforward')]:
+    if subprocess.run(['systemctl','is-active','--quiet','layer3-watcher.service'],capture_output=True).returncode == 0:
+        raise ConfigError('Legacy watcher is active; installation requires separately reviewed manual shutdown')
+    for kind, name in [('dashboard', 'ran-selector'), ('rancher-forward', 'rancher-portforward')]:
         if subprocess.run(['systemctl', 'is-active', '--quiet', name], capture_output=True).returncode == 0:
             check_installed_service(kind, cfg, Path('/etc/systemd/system/' + name + '.service'))
 
@@ -882,11 +884,14 @@ def preflight(cfg):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--preflight', action='store_true')
+    parser.add_argument('--validate-inputs', action='store_true', help='Validate private inputs and safety before host/image preparation')
     parser.add_argument('--srsran-image-archive', type=Path,
                         help='Approved Docker export; verified before bootstrap and imported into target containerd')
     args = parser.parse_args()
-    cfg = resume_config(load_config(network=True, require=('install', 'watcher', 'osm')))
+    cfg = resume_config(load_config(network=True, require=('install', 'osm')))
     preflight(cfg)
+    if args.validate_inputs:
+        return
     image = image_policy()['components']['srsran']
     if args.srsran_image_archive:
         inspect_archive(args.srsran_image_archive, image)

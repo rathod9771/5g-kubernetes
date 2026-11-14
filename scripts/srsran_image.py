@@ -122,34 +122,109 @@ def convert(path, destination, image):
 
 
 def installed(image, run):
+    """Accept either the legacy digest-locked export or a locally built pinned-source image."""
     result = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'images', 'list'])
-    for row in result.stdout.decode().splitlines():
-        columns = row.split()
+    row = None
+    for item in result.stdout.decode().splitlines():
+        columns = item.split()
         if len(columns) >= 3 and columns[0] == reference(image):
-            if columns[2] != image['digest']:
-                raise ValueError('Containerd image name points to an unapproved manifest')
-            ready = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'images', 'check',
-                         '--quiet', 'name==' + reference(image)])
-            if reference(image) not in ready.stdout.decode().splitlines():
-                return False
-            # Authenticate the target descriptor bytes, not just a name or config ID.
-            for digest in (image['digest'], image['config_digest']):
-                blob = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'content', 'get', digest]).stdout
-                if 'sha256:' + hashlib.sha256(blob).hexdigest() != digest:
-                    raise ValueError('Containerd content differs from approved integrity lock')
-                if digest == image['digest'] and json.loads(blob).get('config', {}).get('digest') != image['config_digest']:
-                    raise ValueError('Containerd manifest configuration differs from integrity lock')
-            # Query the same runtime used by kubelet; resolving a ctr name is insufficient.
-            cri = run(['sudo', 'crictl', '--runtime-endpoint', 'unix:///run/containerd/containerd.sock',
-                       '--image-endpoint', 'unix:///run/containerd/containerd.sock',
-                       'inspecti', reference(image)], check=False)
-            if cri.returncode:
-                raise ValueError('Approved srsRAN runtime reference is not CRI-resolvable')
-            status = json.loads(cri.stdout).get('status', {})
-            if status.get('id') != image['config_digest'] or reference(image) not in status.get('repoTags', []):
-                raise ValueError('CRI runtime reference resolves to unapproved image content')
-            return True
-    return False
+            row = columns
+            break
+    if row is None:
+        return False
+
+    # Backward-compatible path: the original approved export remains valid.
+    if image.get('digest') and row[2] == image['digest']:
+        ready = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'images', 'check',
+                     '--quiet', 'name==' + reference(image)])
+        if reference(image) not in ready.stdout.decode().splitlines():
+            return False
+        for digest in (image['digest'], image['config_digest']):
+            blob = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'content', 'get', digest]).stdout
+            if 'sha256:' + hashlib.sha256(blob).hexdigest() != digest:
+                raise ValueError('Containerd content differs from approved integrity lock')
+            if digest == image['digest'] and json.loads(blob).get('config', {}).get('digest') != image['config_digest']:
+                raise ValueError('Containerd manifest configuration differs from integrity lock')
+        cri = run(['sudo', 'crictl', '--runtime-endpoint', 'unix:///run/containerd/containerd.sock',
+                   '--image-endpoint', 'unix:///run/containerd/containerd.sock',
+                   'inspecti', reference(image)], check=False)
+        if cri.returncode:
+            raise ValueError('Approved srsRAN runtime reference is not CRI-resolvable')
+        status = json.loads(cri.stdout).get('status', {})
+        if status.get('id') != image['config_digest'] or reference(image) not in status.get('repoTags', []):
+            raise ValueError('CRI runtime reference resolves to unapproved image content')
+        return True
+
+    if image.get('acquisition') != 'pinned-source-build':
+        raise ValueError('Containerd image name points to an unapproved manifest')
+
+    # Fresh-machine path: authenticate the image by immutable source attestation.
+    # containerd 2.x does not provide `ctr images info`; the target digest is the
+    # DIGEST column from `ctr images list`. Docker may import an OCI index, so
+    # resolve the linux/amd64 child manifest before reading the image config.
+    target_digest = row[2]
+    target_blob = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'content', 'get',
+                       target_digest]).stdout
+    if 'sha256:' + hashlib.sha256(target_blob).hexdigest() != target_digest:
+        raise ValueError('Pinned srsRAN target content differs from its descriptor')
+    try:
+        target = json.loads(target_blob)
+    except (json.JSONDecodeError, TypeError):
+        raise ValueError('Unapproved pinned-source srsRAN image metadata') from None
+
+    manifest_digest = target_digest
+    manifest = target
+    if target.get('manifests'):
+        candidates = [
+            item for item in target['manifests']
+            if item.get('platform', {}).get('os') == 'linux'
+            and item.get('platform', {}).get('architecture') == 'amd64'
+        ]
+        if len(candidates) != 1:
+            raise ValueError('Pinned srsRAN OCI index does not contain exactly one linux/amd64 manifest')
+        manifest_digest = candidates[0].get('digest')
+        if not manifest_digest:
+            raise ValueError('Pinned srsRAN OCI index child has no digest')
+        manifest_blob = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'content', 'get',
+                             manifest_digest]).stdout
+        if 'sha256:' + hashlib.sha256(manifest_blob).hexdigest() != manifest_digest:
+            raise ValueError('Pinned srsRAN manifest content differs from its descriptor')
+        manifest = json.loads(manifest_blob)
+
+    config_digest = manifest.get('config', {}).get('digest')
+    if not config_digest:
+        raise ValueError('Pinned srsRAN manifest has no image configuration')
+    config_blob = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'content', 'get',
+                       config_digest]).stdout
+    if 'sha256:' + hashlib.sha256(config_blob).hexdigest() != config_digest:
+        raise ValueError('Pinned srsRAN configuration content differs from its descriptor')
+    config = json.loads(config_blob)
+    if config.get('os') != 'linux' or config.get('architecture') != 'amd64':
+        raise ValueError('Pinned srsRAN source build requires linux/amd64')
+    labels = config.get('config', {}).get('Labels') or {}
+    source = image.get('source') or {}
+    expected = {
+        'org.opencontainers.image.source': source.get('repository'),
+        'org.opencontainers.image.revision': source.get('commit'),
+        'org.opencontainers.image.version': source.get('version'),
+        'io.5g-kubernetes.acquisition': 'pinned-source-build',
+    }
+    if any(labels.get(key) != value for key, value in expected.items()):
+        raise ValueError('Pinned srsRAN image source attestation differs from policy')
+
+    ready = run(['sudo', 'ctr', '--namespace', 'k8s.io', 'images', 'check',
+                 '--quiet', 'name==' + reference(image)])
+    if reference(image) not in ready.stdout.decode().splitlines():
+        return False
+    cri = run(['sudo', 'crictl', '--runtime-endpoint', 'unix:///run/containerd/containerd.sock',
+               '--image-endpoint', 'unix:///run/containerd/containerd.sock',
+               'inspecti', reference(image)], check=False)
+    if cri.returncode:
+        raise ValueError('Pinned srsRAN runtime reference is not CRI-resolvable')
+    status = json.loads(cri.stdout).get('status', {})
+    if status.get('id') != config_digest or reference(image) not in status.get('repoTags', []):
+        raise ValueError('CRI runtime reference does not expose the verified pinned srsRAN configuration/tag')
+    return True
 
 
 def import_image(path, runtime_dir, run, image=None):

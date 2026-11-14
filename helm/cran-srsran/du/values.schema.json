@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": {
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "radio": {
+      "type": "object",
+      "properties": {
+        "gnbId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194303
+        },
+        "duId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 68719476735
+        },
+        "pci": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1007
+        },
+        "sectorId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16383
+        },
+        "channel_bandwidth_MHz": {
+          "enum": [
+            5,
+            10,
+            15,
+            20,
+            25,
+            30,
+            40,
+            50,
+            60,
+            70,
+            80,
+            90,
+            100
+          ]
+        },
+        "txGain": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 90
+        }
+      },
+      "required": [
+        "gnbId",
+        "duId",
+        "pci",
+        "sectorId",
+        "channel_bandwidth_MHz",
+        "txGain"
+      ],
+      "additionalProperties": false
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "experimentalTransport": {
+      "type": "boolean"
+    }
+  }
+}

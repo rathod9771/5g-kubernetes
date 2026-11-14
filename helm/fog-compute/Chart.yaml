@@ -1,0 +1,5 @@
+apiVersion: v2
+name: fog-compute
+description: Experimental local processing and telemetry, independent of radio protocols
+type: application
+version: 0.1.0

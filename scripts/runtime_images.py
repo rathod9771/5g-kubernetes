@@ -26,11 +26,21 @@ def policy(root=ROOT):
         if image['pull_policy'] not in ('IfNotPresent', 'Never'):
             raise ValueError('Invalid ready image pull policy: ' + name)
         mode = image.get('runtime_reference', 'digest')
+        acquisition = image.get('acquisition')
         if mode not in ('digest', 'local-tag') or (mode == 'local-tag' and
-                (image.get('acquisition') != 'verified-import' or not digest or image['pull_policy'] != 'Never')):
-            raise ValueError('Local tag requires verified import, integrity digest and Never pull policy')
-        if image.get('acquisition') == 'verified-import' and (not digest or image['pull_policy'] != 'Never'):
+                (acquisition not in ('verified-import', 'pinned-source-build') or
+                 image['pull_policy'] != 'Never' or (acquisition == 'verified-import' and not digest))):
+            raise ValueError('Local tag requires verified import or pinned source build and Never pull policy')
+        acquisition = image.get('acquisition')
+        if acquisition == 'verified-import' and (not digest or image['pull_policy'] != 'Never'):
             raise ValueError('Imported ready image must have a digest and Never pull policy')
+        if acquisition == 'pinned-source-build':
+            source = image.get('source') or {}
+            if (image['pull_policy'] != 'Never' or mode != 'local-tag' or
+                    not source.get('repository') or
+                    not re.fullmatch(r'[0-9a-f]{40}', source.get('commit', '')) or
+                    not source.get('version')):
+                raise ValueError('Pinned source build requires local-tag/Never and an exact source repository, commit and version')
     return data
 
 

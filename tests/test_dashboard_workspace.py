@@ -12,7 +12,7 @@ class WorkspaceTests(unittest.TestCase):
         if not shutil.which('node'):self.skipTest('Node required')
         html=(ROOT/'ran-selector/index.html').read_text()
         def section(start,end):return html[html.index(start):html.index(end,html.index(start))]
-        source='\n'.join([section('// Persistent read-only functionality workspace.', 'const NF_LIST='),
+        source=(ROOT/'ran-selector/assurance.js').read_text()+'\n'+'\n'.join([section('// Persistent read-only functionality workspace.', 'const NF_LIST='),
                          section('const NF_LIST=', '// Restore Layer 2'),
                          section('function wfHTML(', 'async function deployRAN('),
                          section('function showDeployedPanel(', 'loadPods();\nsetInterval(loadPods,20000);'),
@@ -34,7 +34,7 @@ const sandbox={document,window:{},console,AbortController,DOMException,Date,Prom
  url==='/api/osm/status'?{pods:{total:1,ready:1},flux:[]}:
  url==='/api/ue-status'?{pod:'oai-nr-ue-cran-hash',registered:true,pdu_session:true,tun:'10.45.0.2'}:
  url==='/api/layer2-metrics'?{bler_dl:0,harq_retx_dl:0}:
- url==='/api/layer3-actions'?{actions:[]}:
+ url==='/api/assurance'?{alarm:[],incident:[],action:[],audit:[],telemetry:{},governance:{mode:'OBSERVE_ONLY',emergency_stop:false},protected_ns:[],simulations:[],monitoring_confidence:'UNAVAILABLE',production_executor:'DISABLED',emergency_3gpp:'UNAVAILABLE'}:
  url==='/api/pods'?{pods:[]}:
  url.startsWith('/api/runtime/')?{found:true,pods:[],processes:[]}:
  url.startsWith('/api/logs/')?{logs:'registration complete',pod:'pod'}:
@@ -89,10 +89,12 @@ for(const key of ['osm','rancher','prometheus']){
         self.run_browser('''
 sandbox.showTopPanel(button,'ue');await sandbox.showLayer2Panel(button);await sandbox.showLayer3Panel(button);
 sandbox.showDeployedPanel('cloudran-oai','Cloud-RAN','sub');await new Promise(setImmediate);
-for(const [id,url] of [['ue','/api/ue-status'],['layer2','/api/layer2-metrics'],['layer3','/api/layer3-actions']]){
+for(const [id,url] of [['ue','/api/ue-status'],['layer2','/api/layer2-metrics'],['layer3','/api/assurance']]){
  const p=W.panels.get(id),before=p.body;W.maximizePanel(id);calls=[];const count=intervals.size;await W.refreshPanel(id);
  assert(calls.includes(url));assert.equal(p.body,before);assert(p.maximized);assert.equal(intervals.size,count);W.restorePanel(id);
 }
+const assuranceText=(function collect(n){return [n.textContent||'',...n.children.flatMap(collect)];})(document.getElementById('l3-body')).join(' ');
+assert(assuranceText.includes('UNAVAILABLE'));assert(assuranceText.includes('LIVE_AUTO disabled'));assert(assuranceText.includes('Network health is unknown'));
 assert.equal(document.getElementById('uei-reg').textContent,'REGISTERED');assert.equal(document.getElementById('uei-pdu').textContent,'ACTIVE');
 const ueIntervals=intervals.size;for(let i=0;i<3;i++){sandbox.doTab({classList:{add(){}}},'logs','UE','UE','');}assert.equal(intervals.size,ueIntervals);
 const btn={classList:{add(){}}};

@@ -1,0 +1,22 @@
+# Experimental logical topology; runtime acceptance is outstanding.
+fullname: hcran-srsran-small
+ranType: hcran
+replicaCount: 1
+nodeSelector: {}
+affinity: {}
+tolerations: []
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: '1'
+radio:
+  gnbId: 3585
+  duId: 101
+  pci: 102
+  sectorId: 2
+  channel_bandwidth_MHz: 10
+  txGain: 35
+cuFullname: hcran-srsran-cu
+experimentalTransport: true

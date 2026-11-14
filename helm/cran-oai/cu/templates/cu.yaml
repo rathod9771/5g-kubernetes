@@ -1,3 +1,12 @@
+{{- /* H-CRAN deliberately excludes E2/near-RT RIC. Other RAN scenarios unaffected. */ -}}
+{{- if eq (.Values.ranType | default "cran") "hcran" -}}
+{{- $e2 := .Values.e2Agent | default dict -}}
+{{- $ric := .Values.ric | default dict -}}
+{{- $legacyE2 := .Values.e2 | default dict -}}
+{{- if or ($e2.enabled | default false) ($ric.enabled | default false) ($legacyE2.enabled | default false) -}}
+{{- fail "H-CRAN 3GPP profile refuses Near-RT RIC/E2 agent; monitor with Prometheus/Grafana" -}}
+{{- end -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,7 +15,22 @@ data:
   cu-init.sh: |
     #!/bin/bash
     export POD_IP=$(awk 'END{print $1}' /etc/hosts)
+{{- if .Values.experimentalTransport }}
+    # OSM may install KDUs concurrently; resolve dependencies before starting.
+    deadline=$((SECONDS + 120))
+    while :; do
+      AMF_IP=$(timeout 5 getent ahostsv4 {{ .Values.amf.address }} | awk 'NR==1{print $1}')
+      [ -n "${AMF_IP}" ] && break
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "Dependency discovery failed: {{ .Values.amf.address }}" >&2
+        exit 1
+      fi
+      sleep 1
+    done
+    export AMF_IP
+{{- else }}
     export AMF_IP=$(getent hosts {{ .Values.amf.address }} | awk '{print $1}')
+{{- end }}
     echo "OAI CU (C-RAN): POD_IP=${POD_IP} AMF_IP=${AMF_IP}"
     mkdir -p /tmp/conf
     sed -e "s|AMF_IP|${AMF_IP}|g" -e "s|POD_IP|${POD_IP}|g" /opt/oai-gnb/etc/gnb.conf > /tmp/conf/cu.conf
@@ -20,13 +44,13 @@ data:
     gNBs =
     (
      {
-        gNB_ID = 0xe00;
+        gNB_ID = {{ if .Values.radio }}{{ .Values.radio.gnbId | int64 }}{{ else }}0xe00{{ end }};
         gNB_name  =  "cu-rfsim";
 
         tracking_area_code  =  1;
         plmn_list = ({ mcc = 208; mnc = 93; mnc_length = 2; snssaiList = ({ sst = 1; sd = 0x010203; }) });
 
-        nr_cellid = 12345678L;
+        nr_cellid = {{ if .Values.radio }}{{ .Values.radio.cellId | int64 }}{{ else }}12345678{{ end }}L;
 
         tr_s_preference = "f1";
 
@@ -77,7 +101,7 @@ metadata:
     ran-type: {{ .Values.ranType | default "cran" }}
     component: cu
 spec:
-  replicas: 1
+  replicas: {{ if hasKey .Values "replicaCount" }}{{ .Values.replicaCount }}{{ else }}1{{ end }}
   selector:
     matchLabels:
       app: {{ .Values.fullname }}
@@ -91,6 +115,18 @@ spec:
         sidecar.istio.io/inject: "false"
         checksum/config: "r{{ .Values.configRevision | default 1 }}-{{ toYaml .Values | sha256sum | trunc 8 }}"
     spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
       - name: cu
         image: {{ required "Supply approved image values with scripts/runtime_images.py" .Values.image.reference | quote }}
@@ -131,3 +167,9 @@ spec:
     port: 2152
     targetPort: 2152
     protocol: UDP
+{{- if .Values.experimentalTransport }}
+  - name: f1u
+    port: 38472
+    targetPort: 38472
+    protocol: UDP
+{{- end }}

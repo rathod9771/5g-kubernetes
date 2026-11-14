@@ -137,7 +137,7 @@ def safe_chart_inputs(files, reviewed=None):
                         for part in parts)
         if path.is_absolute() or ".." in path.parts or "\\" in name or any(ord(c) < 32 for c in name) or sensitive:
             raise PackageError("Sensitive or unsafe chart input: " + name)
-        approved = (name in {"Chart.yaml", "Chart.lock", ".helmignore", "README.md", "LICENSE"}
+        approved = (name in {"Chart.yaml", "Chart.lock", "values.schema.json", ".helmignore", "README.md", "LICENSE"}
                     or re.fullmatch(r"values(?:-[a-zA-Z0-9_-]+)?\.ya?ml", name)
                     or (path.parts[0] == "templates" and
                         (path.suffix in {".yaml", ".yml", ".tpl", ".json"} or path.name == "NOTES.txt")))
@@ -305,6 +305,30 @@ def archive_bytes(package, files):
     return output.getvalue()
 
 
+def validate_architecture_inputs(scenario, files):
+    if not scenario.get('experimental'):
+        return
+    roles = {c['kdu']: c for c in scenario['charts']}
+    required = {'cu', 'macro', 'small'} if scenario['ran_type'] == 'hcran' else {'cu', 'du', 'fog'}
+    if set(roles) != required:
+        raise PackageError('Experimental architecture has incomplete topology')
+    values = {role: mapping(files[f"{scenario['knf_package']}/helm-chart-v3s/{role}/values.yaml"], role)
+              for role in roles}
+    for role in ('cu', 'du', 'macro', 'small'):
+        if role in values and values[role].get('experimentalTransport') is not True:
+            raise PackageError('Experimental transport safety configuration missing: ' + role)
+    cu = values['cu']
+    dus = [values[r] for r in roles if r in ('du', 'macro', 'small')]
+    if any(d['cuFullname'] != cu['fullname'] or d['radio']['gnbId'] != cu['radio']['gnbId'] for d in dus):
+        raise PackageError('DU F1/CU identity mismatch')
+    for field in ('duId', 'pci', 'cellId' if scenario['implementation'] == 'OAI' else 'sectorId'):
+        ids = [d['radio'][field] for d in dus]
+        if len(set(ids)) != len(ids):
+            raise PackageError('Duplicate DU/cell identity: ' + field)
+    if 'fog' in values and values['fog']['duFullname'] != values['du']['fullname']:
+        raise PackageError('Fog service discovery does not target the edge DU')
+
+
 def expected_artifacts(root, scenario):
     verify_legacy_review(root, scenario)
     knf, nsd = scenario["knf_package"], scenario["nsd_package"]
@@ -313,6 +337,7 @@ def expected_artifacts(root, scenario):
         tree, hashes = chart_files(root, chart)
         inputs.update(hashes)
         files.update({f"{knf}/helm-chart-v3s/{chart['kdu']}/{name}": data for name, data in tree.items()})
+    validate_architecture_inputs(scenario, files)
     v, n = descriptors(scenario)
     files[f"{knf}/{knf}_vnfd.yaml"] = json_bytes(v)
     files[f"{nsd}/{nsd}_nsd.yaml"] = json_bytes(n)
@@ -519,7 +544,7 @@ def check_helm(root, scenario, expected):
             deployments = [d for d in generated if d["kind"] == "Deployment"]
             if not deployments:
                 raise PackageError(f"{scenario['key']}: no Deployment in {chart['kdu']}")
-            if scenario["validation_policy"]["split_ran"]:
+            if scenario["validation_policy"]["split_ran"] and chart.get("role", "ran") == "ran":
                 expected_name = chart["release_name"]
                 if [d["metadata"]["name"] for d in deployments] != [expected_name]:
                     raise PackageError(f"{scenario['key']}: deployment/profile identity mismatch")
@@ -538,9 +563,9 @@ def check_helm(root, scenario, expected):
                     raise PackageError(f"{scenario['key']}: lost Pod-IP substitution fix")
                 if chart["kdu"] == "cu":
                     slice_marker = "sd: 66051" if scenario["implementation"] == "srsRAN" else "sd = 0x010203"
-                    if "getent hosts amf-ngap-stable" not in config or slice_marker not in config:
+                    if not any(command + " amf-ngap-stable" in config for command in ("getent hosts", "getent ahostsv4")) or slice_marker not in config:
                         raise PackageError(f"{scenario['key']}: lost stable-AMF or slice fix")
-                if chart["kdu"] == "du" and f"getent hosts {effective_values['cuFullname']}" not in config:
+                if chart["kdu"] in ("du", "macro", "small") and not any(f"{command} {effective_values['cuFullname']}" in config for command in ("getent hosts", "getent ahostsv4")):
                     raise PackageError(f"{scenario['key']}: DU discovery does not follow CU profile")
             for document in generated:
                 if document["kind"] == "Secret":

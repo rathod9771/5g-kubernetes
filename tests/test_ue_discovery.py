@@ -6,14 +6,15 @@ from unittest import mock
 import test_pending_adoption as adoption
 
 backend, ROOT = adoption.backend, adoption.ROOT
-SELECTOR = 'app in (oai-nr-ue,oai-nr-ue-cran)'
+SELECTOR = 'app in (oai-nr-ue,oai-nr-ue-cran,oai-nr-ue-hcran-oai-macro,oai-nr-ue-hcran-oai-small,oai-nr-ue-fran-oai-du)'
 TUNNEL = '3: oaitun_ue1 inet 10.45.0.2/24 scope global oaitun_ue1\n'
 
 
 class UEDiscoveryTests(unittest.TestCase):
     def test_live_api_generated_and_legacy_tunnel(self):
-        for label in ('oai-nr-ue-cran', 'oai-nr-ue'):
+        for label in ('oai-nr-ue-cran', 'oai-nr-ue', 'oai-nr-ue-hcran-oai-macro', 'oai-nr-ue-hcran-oai-small', 'oai-nr-ue-fran-oai-du'):
             with self.subTest(label=label):
+                backend.monitoring.cache.clear()  # Simulate independent live inventories.
                 pod = label + '-hash-pod'
                 def run(command):
                     args = shlex.split(command)
@@ -41,14 +42,14 @@ class UEDiscoveryTests(unittest.TestCase):
         source = (ROOT / 'scripts/validate.sh').read_text()
         block = source.split('# ---- 10/11/12/13.')[1].split('# ---- 15/16.')[0]
         block = block[block.index('\n'):]
-        for label in ('oai-nr-ue-cran', 'oai-nr-ue'):
+        for label in ('oai-nr-ue-cran', 'oai-nr-ue', 'oai-nr-ue-hcran-oai-macro', 'oai-nr-ue-hcran-oai-small', 'oai-nr-ue-fran-oai-du'):
             with self.subTest(label=label):
                 script = '''
 declare -A RESULT
 CORE_NS=test
 k_() {
   if [[ "$1 $2" == "get pods" ]]; then
-    if [[ "$6" == 'app in (oai-nr-ue,oai-nr-ue-cran)' ]]; then
+    if [[ "$6" == 'app in (oai-nr-ue,oai-nr-ue-cran,oai-nr-ue-hcran-oai-macro,oai-nr-ue-hcran-oai-small,oai-nr-ue-fran-oai-du)' ]]; then
       printf '%s-hash-pod 1/1 Running 0 1m\\n' "$TEST_LABEL"
     elif [[ "$6" != component=ue ]]; then
       exit 99

@@ -1,0 +1,14 @@
+fullname: fog-compute
+ranType: fran
+duFullname: fog-du
+image: {}
+replicaCount: 1
+nodeSelector: {}
+affinity: {}
+tolerations: []
+resources:
+  requests: {cpu: 50m, memory: 32Mi}
+  limits: {cpu: 200m, memory: 128Mi}
+monitoring:
+  enabled: true
+  release: kube-prometheus-stack

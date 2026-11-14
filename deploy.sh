@@ -9,6 +9,7 @@ load_config
 usage() {
   cat << USAGE
 Usage: $0 <scenario-key>
+       $0 --experimental <scenario-key>
        $0 --list
 
 Deploys the given scenario via the RAN selector dashboard's own
@@ -39,6 +40,12 @@ for scen in d.get("scenarios", []):
   exit 0
 fi
 
+EXPERIMENTAL_ACK=false
+if [ "${1:-}" = "--experimental" ]; then
+  EXPERIMENTAL_ACK=true
+  shift
+fi
+
 if [ "$#" -lt 1 ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
   usage
   exit 1
@@ -58,7 +65,7 @@ log_ok "Dashboard reachable"
 log_info "Deploying scenario '${SCENARIO}' -- this is a real OSM terminate+instantiate, typically 1-3 minutes..."
 RESPONSE="$(curl -sk --max-time 200 -X POST "${DASHBOARD_URL}/api/deploy" \
   -H "Content-Type: application/json" \
-  --data-binary "$(python3 -c 'import json,sys; print(json.dumps({"ran":sys.argv[1]}))' "$SCENARIO")")"
+  --data-binary "$(python3 -c 'import json,sys; print(json.dumps({"ran":sys.argv[1],"experimental_acknowledged":sys.argv[2]=="true"}))' "$SCENARIO" "$EXPERIMENTAL_ACK")")"
 
 if [ -z "$RESPONSE" ]; then
   fail "No response from the dashboard's /api/deploy" \
@@ -79,6 +86,6 @@ else
   ERROR_MSG="$(echo "$RESPONSE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("error","unknown error"))' 2>/dev/null)"
   fail "Deployment failed: ${ERROR_MSG}" \
     "Run '$0 --list' to confirm '${SCENARIO}' is a valid scenario key" \
-    "Check OSM's own state: the old RAN may not have torn down cleanly" \
+    "Inspect recorded pending identity; use verified adoption/reconciliation, never namespace-wide cleanup" \
     "Full response was: ${RESPONSE}"
 fi

@@ -10,6 +10,8 @@ def main():
     if len(sys.argv) != 3 or sys.argv[1] not in ('dashboard', 'watcher', 'rancher-forward'):
         raise ConfigError('Invalid service launch request')
     kind, snapshot = sys.argv[1:]
+    if kind == 'watcher':
+        raise ConfigError('Legacy autonomous watcher is disabled; production recovery requires separate authorization')
     os.environ['P0_RUNTIME_CONFIG'] = snapshot
     cfg = dict(load_config(require=('watcher',) if kind == 'watcher' else ()))
     ensure_osm_ca(cfg)

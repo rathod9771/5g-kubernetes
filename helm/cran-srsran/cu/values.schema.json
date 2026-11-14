@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": {
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "radio": {
+      "type": "object",
+      "properties": {
+        "gnbId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194303
+        }
+      },
+      "required": [
+        "gnbId"
+      ],
+      "additionalProperties": false
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "experimentalTransport": {
+      "type": "boolean"
+    }
+  }
+}

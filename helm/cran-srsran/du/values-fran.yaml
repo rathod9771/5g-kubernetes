@@ -1,0 +1,22 @@
+# Experimental logical topology; runtime acceptance is outstanding.
+fullname: fran-srsran-du
+ranType: fran
+replicaCount: 1
+nodeSelector: {}
+affinity: {}
+tolerations: []
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: '1'
+radio:
+  gnbId: 3586
+  duId: 100
+  pci: 101
+  sectorId: 1
+  channel_bandwidth_MHz: 20
+  txGain: 75
+cuFullname: fran-srsran-cu
+experimentalTransport: true

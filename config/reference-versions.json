@@ -141,7 +141,7 @@
         "digest": "sha256:e34a0ef3aa0649b0ba0e4b4d136867084371b780e55ec859c601a2987041fc59",
         "platform": "linux/amd64",
         "pull_policy": "Never",
-        "acquisition": "verified-import",
+        "acquisition": "pinned-source-build",
         "archive_sha256": "sha256:110ebdaf346a85b3ceeebe6184cf58b698ca009afa0e2bfb16e7eec10fcc0754",
         "archive_size": 3606001152,
         "config_digest": "sha256:8a156365eb292ce9d5b03ba69a2901fa997490196b6a89becaf31c55194e514d",
@@ -149,7 +149,7 @@
           "repository": "https://github.com/herlesupreeth/srsRAN_Project.git",
           "commit": "11c9bbabb69873752500d676f55e0034f6caa5c5",
           "version": "25.04.0",
-          "strategy": "preserved-working-binaries; OCI conversion does not rebuild",
+          "strategy": "pinned-source-build-with-legacy-approved-export-fallback",
           "cmake": [
             "-DENABLE_EXPORT=ON",
             "-DENABLE_ZEROMQ=ON"

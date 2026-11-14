@@ -84,7 +84,7 @@ class ReferenceInstallerTests(unittest.TestCase):
 
     def test_core_registry_does_not_become_dashboard_scenario(self):
         registry=load_registry()
-        self.assertEqual(len(select_scenarios(registry,ready=True)),8)
+        self.assertEqual(len(select_scenarios(registry,ready=True)),12)
         self.assertNotIn('open5gs',dashboard_scenarios(registry))
         core=select_scenarios(registry,['open5gs'])[0]
         self.assertEqual(core['charts'][0]['source'],'osm-packages/open5gs_knf/helm-chart-v3s/open5gs')
@@ -231,6 +231,7 @@ class ReferenceInstallerTests(unittest.TestCase):
             (root/'install.sh').write_bytes((ROOT/'install.sh').read_bytes())
             (root/'scripts/common.sh').write_text('load_config() { echo config >> "$EVENT_LOG"; }\n')
             (root/'scripts/installer/host.sh').write_text('echo host >> "$EVENT_LOG"\n')
+            (root/'scripts/build_srsran_from_source.sh').write_text('echo source-build >> "$EVENT_LOG"\n')
             for name,body in {
                 'python3':'if [ "$1" = -c ]; then exit 1; fi\nprintf "python:%s\\n" "$*" >> "$EVENT_LOG"\n',
                 'sudo':'printf "sudo:%s\\n" "$*" >> "$EVENT_LOG"\n',
@@ -241,9 +242,11 @@ class ReferenceInstallerTests(unittest.TestCase):
             self.assertEqual(result.returncode,0,result.stderr)
             events=log.read_text().splitlines()
             self.assertEqual(events[:3],['sudo:apt-get update','sudo:apt-get install -y python3 python3-yaml iproute2','config'])
-            self.assertTrue(events[3].endswith('--preflight'))
+            self.assertTrue(events[3].endswith('--validate-inputs'))
             self.assertEqual(events[4],'host')
-            self.assertTrue(events[5].endswith('/scripts/installer/install.py'))
+            self.assertEqual(events[5],'source-build')
+            self.assertTrue(events[6].endswith('--preflight'))
+            self.assertTrue(events[7].endswith('/scripts/installer/install.py'))
 
     def test_transient_helm_fetch_retries_then_succeeds(self):
         failure=subprocess.CompletedProcess(['helm'],1,b'',b'read: connection reset by peer')

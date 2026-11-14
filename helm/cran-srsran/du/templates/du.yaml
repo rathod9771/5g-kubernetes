@@ -6,31 +6,57 @@ data:
   du-init.sh: |
     #!/bin/bash
     export POD_IP=$(awk 'END{print $1}' /etc/hosts)
+{{- if .Values.experimentalTransport }}
+    # OSM may install KDUs concurrently; resolve dependencies before starting.
+    deadline=$((SECONDS + 120))
+    while :; do
+      CU_IP=$(timeout 5 getent ahostsv4 {{ .Values.cuFullname }} | awk 'NR==1{print $1}')
+      [ -n "${CU_IP}" ] && break
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "Dependency discovery failed: {{ .Values.cuFullname }}" >&2
+        exit 1
+      fi
+      sleep 1
+    done
+    export CU_IP
+{{- else }}
     export CU_IP=$(getent hosts {{ .Values.cuFullname }} | awk '{print $1}')
+{{- end }}
     echo "C-RAN DU starting: POD_IP=${POD_IP} CU_IP=${CU_IP}"
     mkdir -p /etc/srsran
     sed -e "s|CU_IP|${CU_IP}|g" -e "s|POD_IP|${POD_IP}|g" /mnt/srsran/du.yml > /etc/srsran/du.yml
     exec srsdu -c /etc/srsran/du.yml
   du.yml: |
+{{- if .Values.radio }}
+    gnb_id: {{ .Values.radio.gnbId }}
+    gnb_du_id: {{ .Values.radio.duId }}
+{{- end }}
     f1ap:
       cu_cp_addr: CU_IP
       bind_addr: POD_IP
     f1u:
       bind_port: 2152
       peer_port: 2152
+{{- if .Values.experimentalTransport }}
+      socket:
+        - bind_addr: POD_IP
+{{- end }}
     cell_cfg:
       dl_arfcn: 632628
       band: 78
-      channel_bandwidth_MHz: 20
+      channel_bandwidth_MHz: {{ if .Values.radio }}{{ .Values.radio.channel_bandwidth_MHz }}{{ else }}20{{ end }}
       common_scs: 30
       plmn: "20893"
       tac: 1
-      pci: 1
+      pci: {{ if .Values.radio }}{{ .Values.radio.pci }}{{ else }}1{{ end }}
+{{- if .Values.radio }}
+      sector_id: {{ .Values.radio.sectorId }}
+{{- end }}
     ru_sdr:
       device_driver: zmq
       device_args: tx_port=tcp://127.0.0.1:2000,rx_port=tcp://127.0.0.1:2001
       srate: 23.04
-      tx_gain: 75
+      tx_gain: {{ if .Values.radio }}{{ .Values.radio.txGain }}{{ else }}75{{ end }}
       rx_gain: 75
     log:
       filename: /tmp/du.log
@@ -45,7 +71,7 @@ metadata:
     ran-type: {{ .Values.ranType | default "cran" }}
     component: du
 spec:
-  replicas: 1
+  replicas: {{ if hasKey .Values "replicaCount" }}{{ .Values.replicaCount }}{{ else }}1{{ end }}
   selector:
     matchLabels:
       app: {{ .Values.fullname }}
@@ -58,6 +84,18 @@ spec:
       annotations:
         sidecar.istio.io/inject: "false"
     spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
       - name: du
         image: {{ required "Supply approved image values with scripts/runtime_images.py" .Values.image.reference | quote }}

@@ -23,7 +23,7 @@ mkdir -p "$RUNTIME_DIR" || exit 1
 CSV="$RUNTIME_DIR/results.csv"
 LOG="$RUNTIME_DIR/results.log"
 
-mapfile -t ALL < <(python3 -c 'import json,sys; print("\n".join(s["key"] for s in json.load(open(sys.argv[1]))["scenarios"] if s["generation_status"]=="ready" and not s["additive"]))' "$REPO_ROOT/config/scenarios.json")
+mapfile -t ALL < <(python3 -c 'import json,sys; print("\n".join(s["key"] for s in json.load(open(sys.argv[1]))["scenarios"] if s["generation_status"]=="ready" and not s["additive"] and not s.get("experimental", False)))' "$REPO_ROOT/config/scenarios.json")
 TARGETS=("${ALL[@]}")
 [ $# -gt 0 ] && TARGETS=("$@")
 for target in "${TARGETS[@]}"; do

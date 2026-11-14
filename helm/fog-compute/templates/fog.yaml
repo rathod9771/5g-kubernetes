@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.fullname }}-config
+data:
+  server.py: |
+{{ include "fog.server" . | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.fullname }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {app: {{ .Values.fullname }}}
+  template:
+    metadata:
+      labels: {app: {{ .Values.fullname }}, ran-type: {{ .Values.ranType }}, component: fog}
+      annotations: {sidecar.istio.io/inject: "false"}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: fog
+        image: {{ required "Supply approved fog image values" .Values.image.reference | quote }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: [python3, -B, /app/server.py]
+        env:
+        - {name: DU_SERVICE, value: {{ .Values.duFullname | quote }}}
+        ports: [{name: metrics, containerPort: 8080}]
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10001
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+        readinessProbe: {httpGet: {path: /health, port: metrics}, initialDelaySeconds: 2}
+        livenessProbe: {httpGet: {path: /health, port: metrics}, initialDelaySeconds: 10}
+        volumeMounts: [{name: code, mountPath: /app, readOnly: true}]
+      volumes:
+      - name: code
+        configMap: {name: {{ .Values.fullname }}-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.fullname }}
+spec:
+  selector: {app: {{ .Values.fullname }}}
+  ports: [{name: metrics, port: 8080, targetPort: metrics}]
+{{- if .Values.monitoring.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ .Values.fullname }}
+  labels: {release: {{ .Values.monitoring.release }}}
+spec:
+  namespaceSelector: {matchNames: [{{ .Release.Namespace | quote }}]}
+  selector: {matchLabels: {app: {{ .Values.fullname }}}}
+  podMetricsEndpoints: [{port: metrics, path: /metrics, interval: 15s}]
+{{- end }}

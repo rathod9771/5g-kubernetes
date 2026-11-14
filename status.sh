@@ -29,6 +29,9 @@ echo "Core:         Open5GS ($(kv CORE))"
 echo "Kubernetes:   $(kv KUBERNETES)"
 echo "OSM:          $(kv OSM)"
 echo "gNB:          $(kv RAN)"
+if [ -n "$(kv VCRAN_AUTOSCALING)" ]; then
+  echo "vC-RAN HPA:   $(kv VCRAN_AUTOSCALING)"
+fi
 echo "UE stack:     $(kv UE_STACK)"
 echo "UE:           $(kv UE_REGISTRATION)"
 echo "PDU SESSION:  $(kv PDU_SESSION)"

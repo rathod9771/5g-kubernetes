@@ -148,5 +148,7 @@ def dashboard_scenarios(registry):
             "generation_status": scenario["generation_status"],
             "blocked_reason": scenario["blocked_reason"],
             "nsd_package": scenario["nsd_package"],
+            "experimental": scenario.get("experimental", False),
+            "acceptance_status": scenario.get("acceptance_status", "runtime acceptance separate"),
         }
     return result
