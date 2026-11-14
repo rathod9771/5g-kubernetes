@@ -33,7 +33,7 @@ expected="$(printf '%s\n' \
   openair3/NAS/NR_UE/nr_ue_tun.c | LC_ALL=C sort)"
 test "$actual" = "$expected"
 git -C "$OAI_SOURCE" diff --binary > "$OUTPUT/test-only-UE-NAS-RRC-t3517-tunrenewal.patch"
-sha256sum "$OUTPUT/test-only-UE-NAS-RRC-t3517.patch" > "$OUTPUT/source-patch-sha256.txt"
+sha256sum "$OUTPUT/test-only-UE-NAS-RRC-t3517-tunrenewal.patch" > "$OUTPUT/source-patch-sha256.txt"
 
 cd "$OAI_SOURCE/cmake_targets"
 ./build_oai -I -w SIMU > "$OUTPUT/install-deps.log" 2>&1 || {
