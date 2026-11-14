@@ -1,0 +1,5 @@
+add_executable(l3_ngap_snapshot_concurrency "${L3_STAGE_C_INPUT}/concurrency_component.cpp")
+target_include_directories(l3_ngap_snapshot_concurrency PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(l3_ngap_snapshot_concurrency PRIVATE srsran_support srslog Threads::Threads)
+add_test(NAME l3_ngap_snapshot_concurrency COMMAND l3_ngap_snapshot_concurrency)
+set_tests_properties(l3_ngap_snapshot_concurrency PROPERTIES TIMEOUT 120)

@@ -1,0 +1,42 @@
+{
+  "cu_cp_suites": {
+    "cu_cp_connectivity_test": 18,
+    "cu_cp_setup_test": 5
+  },
+  "components": {
+    "l3_ngap_snapshot_component": [
+      "default_off",
+      "setup_success",
+      "setup_failure",
+      "independent_amfs",
+      "stale_after_disconnect",
+      "stale_after_reconnect",
+      "duplicate_success",
+      "duplicate_failure",
+      "contradictory_success_then_failure",
+      "contradictory_failure_then_success",
+      "incorrect_peer",
+      "superseded_snapshot",
+      "rejected_defer",
+      "shutdown_queued",
+      "shutdown_published",
+      "incarnation_mismatch",
+      "bounded_size",
+      "deferred_ownership",
+      "removal_generation",
+      "publication_metadata"
+    ],
+    "l3_ngap_snapshot_concurrency": [
+      "queued_then_loss",
+      "queued_then_reconnect",
+      "stale_completion",
+      "shutdown_queued",
+      "retained_ticket_destruction",
+      "competing_requests",
+      "executor_rejection",
+      "revision_invalidation",
+      "independent_peers",
+      "publication_ordering"
+    ]
+  }
+}
