@@ -1,0 +1,31 @@
+{
+  "schema": "hcran-two-ue-recovery-source-candidate-v1",
+  "scope": "research-only opt-in source candidate; not wired into install.sh or deployed workloads",
+  "production_decision": "NO_GO",
+  "production_authorized": false,
+  "upstream_oai_commit": "dfb296ab867050a7bde81b393fa31b757ada2c83",
+  "pinned_nas_blob": "60f009118ef1db9ba29f6f85075ffee0f73d459d",
+  "source_build_run_id": 43588828565,
+  "source_build_candidate_image_id": "sha256:34d177f75ef1137086968dd5ab5a310c2032110e2b82ee7b8af56be7a3368e03",
+  "source_combined_patch_sha256": "70e422fac653cbb699f186a6224d6c8603c1c23cab7eee5e6f1a1ef809d8d26c",
+  "repeated_test_run_id": 43590147030,
+  "independent_recovery_trials": 3,
+  "test_image_archive_sha256": "a06256ac032672a1e8766c53f4bfbd7d2c5f3a61e4f3f1060c4dea0523b000b2",
+  "test_cu_archive_sha256": "97b456a24402043d48489c0336154457ce6c29c2ab947d52442b0979e7b4369d",
+  "source_blobs": {
+    "experiments/oai-ngap-2026w13/stage5g/patch_oai_ue_cause9.py": "bde781d1427a21175e40e90edecd5faf285e91c0",
+    "experiments/oai-ngap-2026w13/stage5i/patch_oai_ue_t3517.py": "0e6a7347e7daa526fd0a061d5619446d8c526363",
+    "experiments/oai-ngap-2026w13/stage5k/patch_ue_tun_renewal.py": "8bb4e860a7fcfc0b19710dfb965724441603dc11",
+    "experiments/oai-ngap-2026w13/stage5m/patch_ra_bwp_guard.py": "b1a0f267c121a30e6f1c81219a0ec43366046a67",
+    "scripts/hcran_build_pinned_w45_ue_t3517_tunrenewal_raguard.sh": "3fbdbae46ff36e4c9601904f8b6a212de5b30769"
+  },
+  "acceptance": "4 total isolated real RFsim runs passed (Stage5M + Stage5N 3 independent). Both unchanged synthetic UEs successfully completed cause9->SUCI re-registration, PDU IP renewal and post-fault bidirectional F1-U/NG-U user plane. Stage5M guard deferral log observed in 2 of 3 repeats.",
+  "limitations": [
+    "Not hardware/RF validation",
+    "Not multi-cycle continuous fault soak",
+    "No live HP lab deployment",
+    "No OSM staging rollback",
+    "No formal security/conformance sign-off",
+    "Image candidate and archived CI artifacts expire"
+  ]
+}
