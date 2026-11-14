@@ -18,6 +18,7 @@ import sys
 import time
 import types
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'stage5i'))
 from run_bounded_recovery import build
 
 
@@ -27,7 +28,7 @@ def safe_summary(raw, role, status):
     frames = []
     for line in raw.splitlines():
         line = line.strip()
-        m = re.match(r"^#(\\d+)\\s+(?:0x[0-9A-Fa-f]+\\s+in\\s+)?([A-Za-z_~][\\w:~.<>$-]*)", line)
+        m = re.match(r"^#(\d+)\s+(?:0x[0-9A-Fa-f]+\s+in\s+)?([A-Za-z_~][\w:~.<>$-]*)", line)
         if m:
             frames.append({"frame": int(m.group(1)), "symbol": m.group(2)[:100]})
     observations = []
@@ -59,7 +60,6 @@ def build_debug_probe(opts):
         private = self.priv / "stage5l-private-gdb"
         private.mkdir(mode=0o700, parents=True, exist_ok=True)
         candidates = {}
-        proc_status = {}
         report = {
             "schema": "stage5l-disposable-ue-segv-stack-v1",
             "experiment": "AMF-only two-UE recovery with archived unchanged Stage5K test binary",
