@@ -1,0 +1,79 @@
+name: Experimental srsRAN NGAP deterministic freshness (no deploy)
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/layer3-srsran-ngap-freshness-stage-c3]
+    paths:
+      - .github/workflows/experimental-srsran-ngap-freshness.yml
+      - ci/experimental/srsran-ngap-stage-c3/**
+permissions:
+  contents: read
+concurrency:
+  group: experimental-srsran-ngap-stage-c3-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  sanitized-native:
+    if: github.ref == 'refs/heads/feature/layer3-srsran-ngap-freshness-stage-c3'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        sanitizer: [address, undefined, thread]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install public build dependencies on disposable runner
+        timeout-minutes: 5
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config libmbedtls-dev libsctp-dev libyaml-cpp-dev libfftw3-dev libgtest-dev python3 binutils util-linux
+      - name: Verify preserved and new public inputs
+        run: |
+          (cd ci/experimental/srsran-ngap && sha256sum -c SHA256SUMS)
+          (cd ci/experimental/srsran-ngap-stage-c && sha256sum -c SHA256SUMS)
+          (cd ci/experimental/srsran-ngap-stage-c3 && sha256sum -c SHA256SUMS)
+          python3 -B -m unittest discover -s ci/experimental/srsran-ngap-stage-c -p test_preparation.py -v
+          python3 -B -m unittest discover -s ci/experimental/srsran-ngap-stage-c3 -p test_preparation.py -v
+      - name: Obtain exact approved upstream revision
+        timeout-minutes: 5
+        env:
+          SANITIZER: ${{ matrix.sanitizer }}
+        run: |
+          source_dir="$RUNNER_TEMP/srsran-stage-c-$SANITIZER-source"
+          git init "$source_dir"
+          git -C "$source_dir" remote add origin https://github.com/srsran/srsRAN_Project.git
+          git -C "$source_dir" fetch --depth=1 origin 11c9bbabb69873752500d676f55e0034f6caa5c5
+          git -C "$source_dir" checkout --detach FETCH_HEAD
+      - name: Build and run bounded sanitizer configuration
+        timeout-minutes: 90
+        env:
+          SANITIZER: ${{ matrix.sanitizer }}
+        run: |
+          /bin/bash ci/experimental/srsran-ngap-stage-c/run.sh "$SANITIZER"
+          /bin/bash ci/experimental/srsran-ngap-stage-c3/run.sh "$SANITIZER"
+      - name: Preserve diagnostics and hashes even on failure
+        if: always()
+        env:
+          SANITIZER: ${{ matrix.sanitizer }}
+        run: |
+          for results in "stage-c-results/$SANITIZER" "stage-c3-results/$SANITIZER"; do
+            mkdir -p "$results"
+            cp ci/experimental/srsran-ngap/SHA256SUMS "$results/b2-input-sha256.txt"
+            cp ci/experimental/srsran-ngap-stage-c/SHA256SUMS "$results/c2-input-sha256.txt"
+            cp ci/experimental/srsran-ngap-stage-c3/SHA256SUMS "$results/c3-input-sha256.txt"
+            cp ci/experimental/srsran-ngap-stage-c3/source-manifest.json "$results/source-manifest.json"
+            cp ci/experimental/srsran-ngap-stage-c3/case-inventory.json "$results/freshness-inventory.json"
+            find "$results" -type f ! -name artifact-sha256.txt -exec sha256sum {} + > "$results/artifact-sha256.txt"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: srsran-ngap-stage-c3-${{ matrix.sanitizer }}-${{ github.run_id }}
+          path: |
+            stage-c-results/${{ matrix.sanitizer }}/
+            stage-c3-results/${{ matrix.sanitizer }}/
+          retention-days: 14
+          if-no-files-found: error

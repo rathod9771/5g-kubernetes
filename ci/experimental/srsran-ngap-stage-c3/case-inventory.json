@@ -1,0 +1,102 @@
+{
+  "native_cases": [
+    "publication_minus_one",
+    "publication_zero",
+    "publication_below_limit",
+    "publication_at_limit",
+    "publication_above_limit",
+    "inspection_minus_one",
+    "inspection_zero",
+    "inspection_below_limit",
+    "inspection_at_limit",
+    "inspection_above_limit",
+    "retained_timestamp_immutable",
+    "revision_invalidates",
+    "shutdown_invalidates",
+    "incarnation_mismatch",
+    "default_off"
+  ],
+  "boundaries": [
+    {
+      "kind": "publication",
+      "delta_ns": -1,
+      "literal": "-1",
+      "valid": false,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    },
+    {
+      "kind": "publication",
+      "delta_ns": 0,
+      "literal": "0",
+      "valid": true,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    },
+    {
+      "kind": "publication",
+      "delta_ns": 9999999,
+      "literal": "9999999LL",
+      "valid": true,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    },
+    {
+      "kind": "publication",
+      "delta_ns": 10000000,
+      "literal": "10000000LL",
+      "valid": true,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    },
+    {
+      "kind": "publication",
+      "delta_ns": 10000001,
+      "literal": "10000001LL",
+      "valid": false,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    },
+    {
+      "kind": "inspection",
+      "delta_ns": -1,
+      "literal": "-1",
+      "valid": false,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    },
+    {
+      "kind": "inspection",
+      "delta_ns": 0,
+      "literal": "0",
+      "valid": true,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    },
+    {
+      "kind": "inspection",
+      "delta_ns": 29999999999,
+      "literal": "29999999999LL",
+      "valid": true,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    },
+    {
+      "kind": "inspection",
+      "delta_ns": 30000000000,
+      "literal": "30000000000LL",
+      "valid": true,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    },
+    {
+      "kind": "inspection",
+      "delta_ns": 30000000001,
+      "literal": "30000000001LL",
+      "valid": false,
+      "invalid_associations": "UNKNOWN",
+      "fresh_fixture": true
+    }
+  ],
+  "native_status": "NOT_EXECUTED"
+}

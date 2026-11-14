@@ -1,0 +1,10 @@
+{
+  "upstream_revision": "11c9bbabb69873752500d676f55e0034f6caa5c5",
+  "stage_a_patch_sha256": "95a2a9598bdb44deca598c5e26478b276968169f54da538d5173a32432444747",
+  "header_path": "lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h",
+  "original_header_sha256": "6044bfb98dfb64c519ca59a99182671c82c1516fd80c9c187ebffd49cd0cd6dd",
+  "proposed_header_sha256": "8f5c30e6820ee340eb373cab379c3e74f608001021433a0ce66cec980252d315",
+  "proposed_patch_sha256": "9a2f04ebb24e273e015b8d704fed18a1c92fc1e6817e2019dbfed2af7d6e7893",
+  "macro": "SRSRAN_NGAP_SNAPSHOT_TEST_CLOCK",
+  "hook": "l3_ngap_snapshot_test_clock_now"
+}

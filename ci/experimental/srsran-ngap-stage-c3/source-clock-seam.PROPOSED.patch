@@ -1,0 +1,19 @@
+--- a/lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h
++++ b/lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h
+@@ -28,10 +28,16 @@
+   bool operator==(const text& rhs) const noexcept { return bytes == rhs.bytes; }
+ };
+ struct stamp { int64_t wall_ns = 0; int64_t monotonic_ns = 0; };
++// Private compile-time seam for the separately linked freshness test only.
++#ifdef SRSRAN_NGAP_SNAPSHOT_TEST_CLOCK
++stamp l3_ngap_snapshot_test_clock_now() noexcept; // Defined only in the test executable's sole translation unit.
++inline stamp now() noexcept { return l3_ngap_snapshot_test_clock_now(); }
++#else
+ inline stamp now() noexcept {
+   return {std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count(),
+           std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()};
+ }
++#endif
+ enum class state { unknown, up, down }; // local application state, NEVER a HEALTHY service claim.
+ enum class reason { no_evidence, setup_started, setup_success, setup_failed, authority_mismatch, peer_mismatch,
+                     association_lost, removal_started, removed, reconnect_started, reconnect_failed, contradictory_result };

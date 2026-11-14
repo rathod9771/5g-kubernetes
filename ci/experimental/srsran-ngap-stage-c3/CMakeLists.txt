@@ -1,0 +1,10 @@
+if(NOT L3_STAGE_C3_OVERLAY OR NOT EXISTS "${L3_STAGE_C3_OVERLAY}/lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h")
+  message(FATAL_ERROR "Reviewed test-only header overlay is required")
+endif()
+add_executable(l3_ngap_snapshot_freshness "${L3_STAGE_C3_INPUT}/freshness_component.cpp")
+# PRIVATE: no definition/include path is propagated to support, CU-CP or regression targets.
+target_compile_definitions(l3_ngap_snapshot_freshness PRIVATE SRSRAN_NGAP_SNAPSHOT_TEST_CLOCK=1)
+target_include_directories(l3_ngap_snapshot_freshness BEFORE PRIVATE "${L3_STAGE_C3_OVERLAY}" "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(l3_ngap_snapshot_freshness PRIVATE srsran_support srslog Threads::Threads)
+add_test(NAME l3_ngap_snapshot_freshness COMMAND l3_ngap_snapshot_freshness)
+set_tests_properties(l3_ngap_snapshot_freshness PROPERTIES TIMEOUT 30)
