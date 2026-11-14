@@ -21,6 +21,10 @@ test "$(git -C "$OAI_SOURCE" hash-object openair3/NAS/NR_UE/nr_nas_msg.c)" = "$U
 printf '%s\n' "$UPSTREAM" > "$OUTPUT/upstream-source-commit.txt"
 
 python3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage5g/patch_oai_ue_cause9.py" "$FILE"
+# Stage5I experimental idle retry: no production certification or default change.
+if [[ "${STAGE5I_REARM:-0}" == "1" ]]; then
+  python3 "$GITHUB_WORKSPACE/experiments/oai-ngap-2026w13/stage5i/patch_ue_idle_rearm.py" "$FILE"
+fi
 git -C "$OAI_SOURCE" diff --check
 test "$(git -C "$OAI_SOURCE" diff --name-only)" = "openair3/NAS/NR_UE/nr_nas_msg.c"
 git -C "$OAI_SOURCE" diff --binary > "$OUTPUT/test-only-UE-NAS-cause9.patch"
