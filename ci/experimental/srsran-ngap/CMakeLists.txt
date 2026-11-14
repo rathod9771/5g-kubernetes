@@ -1,0 +1,5 @@
+add_executable(l3_ngap_snapshot_component "${L3_STAGE_B_INPUT}/snapshot_component.cpp")
+target_include_directories(l3_ngap_snapshot_component PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(l3_ngap_snapshot_component PRIVATE srsran_support srslog)
+add_test(NAME l3_ngap_snapshot_component COMMAND l3_ngap_snapshot_component)
+set_tests_properties(l3_ngap_snapshot_component PROPERTIES TIMEOUT 30)

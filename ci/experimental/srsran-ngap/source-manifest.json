@@ -1,0 +1,47 @@
+{
+  "date": "2026-11-14",
+  "source_worktree": "/tmp/l3-srsran-ngap-stage-a-1l88nf6z/source",
+  "source_revision": "11c9bbabb69873752500d676f55e0034f6caa5c5",
+  "patch_sha256": "95a2a9598bdb44deca598c5e26478b276968169f54da538d5173a32432444747",
+  "files": {
+    "lib/cu_cp/cu_cp_controller/amf_connection_manager.cpp": "c247c19ac86104751837fa331b78a3f2d07c91fc029c64c52f82c12a2d995b86",
+    "lib/cu_cp/cu_cp_controller/amf_connection_manager.h": "262d1d53224acea019f9e0f7e5c912b7547f5b73fca0587ec9ddba33c255d427",
+    "lib/cu_cp/routines/amf_connection_removal_routine.cpp": "c517c5acade006272c7c895d465c6f4a7322f5ee82043263eeaf1cbd9c183d0c",
+    "lib/cu_cp/routines/amf_connection_removal_routine.h": "387801bc7516075742a778f2f45beb5a2e8a9cac6a795c0207f9353098277f55",
+    "lib/cu_cp/routines/amf_connection_setup_routine.cpp": "aa35d982f7219888a8580ccc8556043d2c93f2fd2cc641b4ec53702fd329101e",
+    "lib/cu_cp/routines/amf_connection_setup_routine.h": "b10f9bea8949ccf4b948d9b6a3e7625b424ea9b8da1cf467906b34db37d73fe4",
+    "lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h": "6044bfb98dfb64c519ca59a99182671c82c1516fd80c9c187ebffd49cd0cd6dd",
+    "tests/offline_ngap_snapshot/stage_a_mock_model.py": "84256e412b127fd0c1084036aae0f48059e5b8bc77459ea4cc276900df0dbfed",
+    "tests/offline_ngap_snapshot/test_stage_a_snapshot.py": "95ae99d70b365079ddcb7d9254e13b51672c87a09c4adb3c0daac38870d77c33",
+    "tests/offline_ngap_snapshot/README.md": "eae999b9ef7a06459c99c5144e558b0e025de16b8469f4b19c5ed0fead68dbc1"
+  },
+  "reviewed_baseline_hashes_verified": 21,
+  "source_model_tests": {
+    "passed": 39,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "seconds": 0.027,
+    "composition": "31 synthetic contract-model + 8 source invariant checks; no C++ execution"
+  },
+  "generic_layer3_tests": {
+    "tests_run": 6,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "seconds": 7.110961,
+    "cases": [
+      "test_contradiction_missing_markers_and_stale_states",
+      "test_independent_macro_small_and_ngap",
+      "test_changed_pod_container_service_and_owner",
+      "test_current_application_states_require_both_peers",
+      "test_persistent_incident_reopen_dedup_closure_audit_zero_execution",
+      "test_oran_e2_unconfigured_not_failed"
+    ],
+    "provenance": "SYNTHETIC existing generic Layer 3 tests with all socket connections forbidden; no native source execution"
+  },
+  "native_compilation": "NOT_RUN_NOT_AUTHORIZED",
+  "native_sanitizers": "NOT_RUN_NOT_AUTHORIZED",
+  "source_commit": "UNCOMMITTED_ISOLATED_DETACHED_WORKTREE",
+  "production_execution_allowed": false
+}

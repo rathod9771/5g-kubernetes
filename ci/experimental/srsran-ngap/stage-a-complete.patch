@@ -1,0 +1,810 @@
+diff --git a/lib/cu_cp/cu_cp_controller/amf_connection_manager.cpp b/lib/cu_cp/cu_cp_controller/amf_connection_manager.cpp
+index 7540d377d0..1fc8cb454f 100644
+--- a/lib/cu_cp/cu_cp_controller/amf_connection_manager.cpp
++++ b/lib/cu_cp/cu_cp_controller/amf_connection_manager.cpp
+@@ -39,13 +39,15 @@ amf_connection_manager::amf_connection_manager(ngap_repository&                n
+                                                cu_cp_amf_reconnection_handler& cu_cp_notifier_,
+                                                timer_manager&                  timers_,
+                                                task_executor&                  cu_cp_exec_,
+-                                               common_task_scheduler&          common_task_sched_) :
++                                               common_task_scheduler&          common_task_sched_,
++                                               const ngap_snapshot::config& snapshot_config) :
+   ngaps(ngaps_),
+   cu_cp_notifier(cu_cp_notifier_),
+   timers(timers_),
+   cu_cp_exec(cu_cp_exec_),
+   common_task_sched(common_task_sched_),
+-  logger(srslog::fetch_basic_logger("CU-CP"))
++  logger(srslog::fetch_basic_logger("CU-CP")),
++  application_snapshot(ngap_snapshot::source::create(snapshot_config, cu_cp_exec))
+ {
+ }
+ 
+@@ -57,7 +59,7 @@ void amf_connection_manager::connect_to_amf(std::promise<bool>* completion_signa
+         CORO_BEGIN(ctx);
+ 
+         // Launch procedure to initiate AMF connection.
+-        CORO_AWAIT_VALUE(success, start_amf_connection_setup(ngaps, amfs_connected));
++        CORO_AWAIT_VALUE(success, start_amf_connection_setup(ngaps, amfs_connected, application_snapshot.get()));
+ 
+         // Signal through the promise the result of the connection setup.
+         if (p != nullptr) {
+@@ -78,12 +80,13 @@ async_task<void> amf_connection_manager::disconnect_amf()
+     });
+   }
+ 
+-  return start_amf_connection_removal(ngaps, amfs_connected);
++  return start_amf_connection_removal(ngaps, amfs_connected, application_snapshot.get());
+ }
+ 
+ void amf_connection_manager::handle_amf_connection_loss(amf_index_t amf_index)
+ {
+   amfs_connected.erase(amf_index);
++  if (application_snapshot) { application_snapshot->lost(static_cast<uint32_t>(amf_index)); }
+ }
+ 
+ void amf_connection_manager::reconnect_to_amf(amf_index_t               amf_index,
+@@ -97,7 +100,8 @@ void amf_connection_manager::reconnect_to_amf(amf_index_t               amf_inde
+ 
+   ngaps.get_ngap_task_scheduler().handle_amf_async_task(
+       amf_index,
+-      launch_async([this, amf_index, success = bool{false}, ue_mng, amf_reconnection_retry_time](
++      launch_async([this, amf_index, success = bool{false}, ue_mng, amf_reconnection_retry_time,
++                   snapshot_generation = application_snapshot ? application_snapshot->begin(static_cast<uint32_t>(amf_index), true) : 0](
+                        coro_context<async_task<void>>& ctx) mutable {
+         CORO_BEGIN(ctx);
+ 
+@@ -111,9 +115,19 @@ void amf_connection_manager::reconnect_to_amf(amf_index_t               amf_inde
+           ngaps.update_plmn_lookup(amf_index);
+           ue_mng->remove_blocked_plmns(ngaps.find_ngap(amf_index)->get_ngap_context().get_supported_plmns());
+           amfs_connected.emplace(amf_index, true);
++          if (application_snapshot) {
++            auto* peer = ngaps.find_ngap(amf_index);
++            application_snapshot->setup_result(static_cast<uint32_t>(amf_index), true,
++                peer ? std::string_view(peer->get_ngap_context().amf_name) : std::string_view{},
++                peer != nullptr && is_amf_connected(amf_index), snapshot_generation);
++          }
+           // Notrify CU-CP about the successful reconnection.
+           cu_cp_notifier.handle_amf_reconnection(amf_index);
+         } else {
++          if (application_snapshot) {
++            application_snapshot->setup_result(static_cast<uint32_t>(amf_index), false, {},
++                                                !is_amf_connected(amf_index), snapshot_generation);
++          }
+           logger.info("Failed to reconnect to AMF index {}", amf_index);
+         }
+ 
+@@ -127,6 +141,9 @@ void amf_connection_manager::stop()
+     return;
+   }
+ 
++  // Closing the observer is atomic and does not inspect owner-executor state.
++  if (application_snapshot) { application_snapshot->close(); }
++
+   baton               stop_baton;
+   scoped_baton_sender signal_stop{stop_baton};
+ 
+@@ -182,6 +199,7 @@ void amf_connection_manager::handle_connection_setup_result(amf_index_t amf_inde
+ {
+   // Update AMF connection handler state.
+   amfs_connected.emplace(amf_index, success);
++  if (application_snapshot) { application_snapshot->unavailable(static_cast<uint32_t>(amf_index)); }
+ }
+ 
+ amf_index_t amf_connection_manager::plmn_to_amf_index(plmn_identity plmn) const
+diff --git a/lib/cu_cp/cu_cp_controller/amf_connection_manager.h b/lib/cu_cp/cu_cp_controller/amf_connection_manager.h
+index 0ceb630496..50c9feae72 100644
+--- a/lib/cu_cp/cu_cp_controller/amf_connection_manager.h
++++ b/lib/cu_cp/cu_cp_controller/amf_connection_manager.h
+@@ -23,6 +23,7 @@
+ #pragma once
+ 
+ #include "../ngap_repository.h"
++#include "ngap_application_snapshot.h"
+ #include "../ue_manager/ue_manager_impl.h"
+ #include "srsran/cu_cp/common_task_scheduler.h"
+ #include "srsran/cu_cp/cu_cp.h"
+@@ -42,7 +43,8 @@ public:
+                          cu_cp_amf_reconnection_handler& cu_cp_notifier_,
+                          timer_manager&                  timers_,
+                          task_executor&                  cu_cp_exec_,
+-                         common_task_scheduler&          common_task_sched_);
++                         common_task_scheduler&          common_task_sched_,
++                         const ngap_snapshot::config&    snapshot_config = {});
+ 
+   /// \brief Initiates the connection to the AMF.
+   /// A promise is passed as a parameter to enable blocking synchronization between the completion of the scheduled
+@@ -69,6 +71,13 @@ public:
+   bool is_amf_connected(plmn_identity plmn) const;
+   bool is_amf_connected(amf_index_t amf_index) const;
+ 
++  ngap_snapshot::text ngap_snapshot_incarnation() const
++  { return application_snapshot ? application_snapshot->incarnation() : ngap_snapshot::text{}; }
++
++  /// No listener/collector is wired. Request returns null while default-off or busy.
++  std::shared_ptr<ngap_snapshot::ticket> request_ngap_application_snapshot()
++  { return application_snapshot ? application_snapshot->request() : nullptr; }
++
+ private:
+   void        handle_connection_setup_result(amf_index_t amf_index, bool success);
+   amf_index_t plmn_to_amf_index(plmn_identity plmn) const;
+@@ -83,6 +92,7 @@ private:
+   std::unordered_map<amf_index_t, std::atomic<bool>> amfs_connected;
+ 
+   std::atomic<bool> stopped{false};
++  std::unique_ptr<ngap_snapshot::source> application_snapshot; // destroyed before existing connection storage
+ };
+ 
+ } // namespace srs_cu_cp
+diff --git a/lib/cu_cp/routines/amf_connection_removal_routine.cpp b/lib/cu_cp/routines/amf_connection_removal_routine.cpp
+index 2483fbcf6e..e1d0a0845b 100644
+--- a/lib/cu_cp/routines/amf_connection_removal_routine.cpp
++++ b/lib/cu_cp/routines/amf_connection_removal_routine.cpp
+@@ -31,17 +31,21 @@ using namespace srs_cu_cp;
+ 
+ async_task<void>
+ srsran::srs_cu_cp::start_amf_connection_removal(ngap_repository&                                    ngap_db,
+-                                                std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected)
++                                                std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected,
++                                                ngap_snapshot::source* snapshot)
+ {
+   return launch_async<amf_connection_removal_routine>(ngap_db.get_ngaps().begin()->second,
+-                                                      amfs_connected.begin()->second);
++                                                      amfs_connected.begin()->second, snapshot,
++                                                      snapshot != nullptr && amfs_connected.begin()->first == ngap_db.get_ngaps().begin()->first);
+ }
+ 
+ #endif // SRSRAN_HAS_ENTERPRISE
+ 
+ amf_connection_removal_routine::amf_connection_removal_routine(ngap_interface*    ngap_,
+-                                                               std::atomic<bool>& amf_connected_) :
+-  ngap(ngap_), amf_connected(amf_connected_), logger(srslog::fetch_basic_logger("CU-CP"))
++                                                               std::atomic<bool>& amf_connected_,
++                                                               ngap_snapshot::source* snapshot_, bool binding_verified) :
++  ngap(ngap_), amf_connected(amf_connected_), logger(srslog::fetch_basic_logger("CU-CP")),
++  snapshot(snapshot_), snapshot_binding_verified(binding_verified)
+ {
+ }
+ 
+@@ -54,11 +58,13 @@ void amf_connection_removal_routine::operator()(coro_context<async_task<void>>&
+     CORO_EARLY_RETURN();
+   }
+ 
++  if (snapshot) { snapshot_generation = snapshot->removing(static_cast<uint32_t>(ngap->get_ngap_context().amf_index)); }
+   // Launch procedure to remove AMF connection.
+   CORO_AWAIT(ngap->handle_amf_disconnection_request());
+ 
+   // Update AMF connection handler state.
+   amf_connected = false;
++  if (snapshot) { snapshot->removed(static_cast<uint32_t>(ngap->get_ngap_context().amf_index), snapshot_binding_verified, snapshot_generation); }
+ 
+   CORO_RETURN();
+ }
+diff --git a/lib/cu_cp/routines/amf_connection_removal_routine.h b/lib/cu_cp/routines/amf_connection_removal_routine.h
+index 895a7e0ed8..9e1a0584e8 100644
+--- a/lib/cu_cp/routines/amf_connection_removal_routine.h
++++ b/lib/cu_cp/routines/amf_connection_removal_routine.h
+@@ -23,6 +23,7 @@
+ #pragma once
+ 
+ #include "../ngap_repository.h"
++#include "../cu_cp_controller/ngap_application_snapshot.h"
+ #include "srsran/ngap/ngap.h"
+ #include "srsran/support/async/async_task.h"
+ 
+@@ -30,13 +31,15 @@ namespace srsran {
+ namespace srs_cu_cp {
+ 
+ async_task<void> start_amf_connection_removal(ngap_repository&                                    ngap_db,
+-                                              std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected);
++                                              std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected,
++                                              ngap_snapshot::source* snapshot = nullptr);
+ 
+ /// \brief Handles the setup of the connection between the CU-CP and AMF, handling in particular the NG Setup procedure.
+ class amf_connection_removal_routine
+ {
+ public:
+-  amf_connection_removal_routine(ngap_interface* ngap_, std::atomic<bool>& amf_connected_);
++  amf_connection_removal_routine(ngap_interface* ngap_, std::atomic<bool>& amf_connected_,
++                                 ngap_snapshot::source* snapshot = nullptr, bool binding_verified = false);
+ 
+   void operator()(coro_context<async_task<void>>& ctx);
+ 
+@@ -44,6 +47,9 @@ private:
+   ngap_interface*       ngap = nullptr;
+   std::atomic<bool>&    amf_connected;
+   srslog::basic_logger& logger;
++  ngap_snapshot::source* snapshot = nullptr;
++  bool snapshot_binding_verified = false;
++  uint64_t snapshot_generation = 0;
+ };
+ 
+ } // namespace srs_cu_cp
+diff --git a/lib/cu_cp/routines/amf_connection_setup_routine.cpp b/lib/cu_cp/routines/amf_connection_setup_routine.cpp
+index 87f670da17..6a39863347 100644
+--- a/lib/cu_cp/routines/amf_connection_setup_routine.cpp
++++ b/lib/cu_cp/routines/amf_connection_setup_routine.cpp
+@@ -32,21 +32,25 @@ using namespace srs_cu_cp;
+ 
+ async_task<bool>
+ srsran::srs_cu_cp::start_amf_connection_setup(ngap_repository&                                    ngap_db,
+-                                              std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected)
++                                              std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected,
++                                              ngap_snapshot::source* snapshot)
+ {
+   amfs_connected.emplace(ngap_db.get_ngaps().begin()->first, false);
+-  return launch_async<amf_connection_setup_routine>(ngap_db, amfs_connected.begin()->second);
++  return launch_async<amf_connection_setup_routine>(ngap_db, amfs_connected.begin()->second, snapshot,
++      snapshot != nullptr && amfs_connected.begin()->first == ngap_db.get_ngaps().begin()->first);
+ }
+ 
+ #endif // SRSRAN_HAS_ENTERPRISE
+ 
+ amf_connection_setup_routine::amf_connection_setup_routine(ngap_repository&   ngap_db_,
+-                                                           std::atomic<bool>& amf_connected_) :
++                                                           std::atomic<bool>& amf_connected_,
++                                                           ngap_snapshot::source* snapshot_, bool binding_verified) :
+   ngap_db(ngap_db_),
+   amf_connected(amf_connected_),
+   amf_index(ngap_db_.get_ngaps().begin()->first),
+   ngap(ngap_db_.get_ngaps().begin()->second),
+-  logger(srslog::fetch_basic_logger("CU-CP"))
++  logger(srslog::fetch_basic_logger("CU-CP")),
++  snapshot(snapshot_), snapshot_binding_verified(binding_verified)
+ {
+ }
+ 
+@@ -54,7 +58,9 @@ void amf_connection_setup_routine::operator()(coro_context<async_task<bool>>& ct
+ {
+   CORO_BEGIN(ctx);
+ 
++  if (snapshot) { snapshot_generation = snapshot->begin(static_cast<uint32_t>(amf_index)); }
+   if (not ngap->handle_amf_tnl_connection_request()) {
++    if (snapshot) { snapshot->unavailable(static_cast<uint32_t>(amf_index)); }
+     CORO_EARLY_RETURN(false);
+   }
+ 
+@@ -84,4 +90,6 @@ void amf_connection_setup_routine::handle_connection_setup_result()
+ {
+   // Update AMF connection handler state.
+   amf_connected = success;
++  if (snapshot) { snapshot->setup_result(static_cast<uint32_t>(amf_index), success,
++                                         ngap->get_ngap_context().amf_name, snapshot_binding_verified, snapshot_generation); }
+ }
+diff --git a/lib/cu_cp/routines/amf_connection_setup_routine.h b/lib/cu_cp/routines/amf_connection_setup_routine.h
+index 74048bff28..f06610ccde 100644
+--- a/lib/cu_cp/routines/amf_connection_setup_routine.h
++++ b/lib/cu_cp/routines/amf_connection_setup_routine.h
+@@ -23,6 +23,7 @@
+ #pragma once
+ 
+ #include "../ngap_repository.h"
++#include "../cu_cp_controller/ngap_application_snapshot.h"
+ #include "srsran/cu_cp/cu_cp_configuration.h"
+ #include "srsran/ngap/ngap.h"
+ #include "srsran/support/async/async_task.h"
+@@ -31,13 +32,15 @@ namespace srsran {
+ namespace srs_cu_cp {
+ 
+ async_task<bool> start_amf_connection_setup(ngap_repository&                                    ngap_db,
+-                                            std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected);
++                                            std::unordered_map<amf_index_t, std::atomic<bool>>& amfs_connected,
++                                            ngap_snapshot::source* snapshot = nullptr);
+ 
+ /// \brief Handles the setup of the connection between the CU-CP and AMF, handling in particular the NG Setup procedure.
+ class amf_connection_setup_routine
+ {
+ public:
+-  amf_connection_setup_routine(ngap_repository& ngap_db_, std::atomic<bool>& amf_connected_);
++  amf_connection_setup_routine(ngap_repository& ngap_db_, std::atomic<bool>& amf_connected_,
++                               ngap_snapshot::source* snapshot = nullptr, bool binding_verified = false);
+ 
+   void operator()(coro_context<async_task<bool>>& ctx);
+ 
+@@ -52,6 +55,9 @@ private:
+ 
+   ngap_ng_setup_result result_msg = {};
+   bool                 success    = false;
++  ngap_snapshot::source* snapshot = nullptr;
++  bool snapshot_binding_verified = false;
++  uint64_t snapshot_generation = 0;
+ };
+ 
+ } // namespace srs_cu_cp
+diff --git a/lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h b/lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h
+new file mode 100644
+index 0000000000..1c32d062d8
+--- /dev/null
++++ b/lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h
+@@ -0,0 +1,234 @@
++/* Default-off experimental read-only telemetry. Approved baseline: 11c9bbabb69873752500d676f55e0034f6caa5c5.
++ * No listener, timer, protocol operation, callback into a controller, or subscriber data.
++ */
++#pragma once
++#include "srsran/support/executors/task_executor.h"
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <memory>
++#include <limits>
++#include <string_view>
++#include <sys/random.h>
++
++namespace srsran { namespace srs_cu_cp {
++namespace ngap_snapshot {
++constexpr unsigned max_peers = 64;
++struct text {
++  std::array<char, 97> bytes{};
++  bool set(std::string_view s) noexcept {
++    if (s.empty() || s.size() >= bytes.size()) { return false; }
++    for (char c : s) { if (c < 32 || c > 126) { return false; } }
++    bytes.fill(0);
++    for (unsigned i = 0; i != s.size(); ++i) { bytes[i] = s[i]; }
++    return true;
++  }
++  bool empty() const noexcept { return bytes[0] == 0; }
++  bool operator==(const text& rhs) const noexcept { return bytes == rhs.bytes; }
++};
++struct stamp { int64_t wall_ns = 0; int64_t monotonic_ns = 0; };
++inline stamp now() noexcept {
++  return {std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count(),
++          std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()};
++}
++enum class state { unknown, up, down }; // local application state, NEVER a HEALTHY service claim.
++enum class reason { no_evidence, setup_started, setup_success, setup_failed, authority_mismatch, peer_mismatch,
++                    association_lost, removal_started, removed, reconnect_started, reconnect_failed, contradictory_result };
++struct peer_binding { uint32_t amf_index = 0; text peer_id; text expected_amf_name; };
++struct config {
++  bool enabled = false; // No existing constructor call enables this source.
++  text local_nf_id;
++  unsigned peer_count = 0;
++  std::array<peer_binding, max_peers> peers{};
++};
++struct row {
++  peer_binding binding;
++  text observed_amf_name;
++  state application_state = state::unknown;
++  reason why = reason::no_evidence;
++  uint64_t association_generation = 0;
++  bool setup_pending = false; // Exactly one terminal setup result per generation.
++  bool transition_known = false;
++  stamp last_transition{}; // event observation, NOT actual remote fault onset.
++};
++struct snapshot {
++  bool valid = false;
++  bool complete = false;
++  text local_nf_id;
++  text process_incarnation;
++  const char* producer_revision = "11c9bbabb69873752500d676f55e0034f6caa5c5";
++  const char* instrumentation_revision = "ngap-snapshot-stage-a-v1-uncompiled";
++  uint64_t state_revision = 0;
++  uint64_t sequence = 0; // also the owner-produced heartbeat sequence.
++  stamp observed_at{};
++  unsigned peer_count = 0;
++  std::array<row, max_peers> peers{};
++};
++static_assert(sizeof(snapshot) <= 65536, "Snapshot must remain within its bounded response budget");
++struct owner_data {
++  snapshot value{}; // Mutable fields are accessed ONLY by the permanently bound CU executor.
++  std::atomic<uint64_t> revision{0};
++  std::atomic<bool> closed{false};
++  std::atomic<bool> busy{false};
++};
++static_assert(std::atomic<uint64_t>::is_always_lock_free && std::atomic<bool>::is_always_lock_free,
++              "Snapshot requires lock-free publication atomics");
++class ticket {
++public:
++  explicit ticket(std::shared_ptr<owner_data> d) : data(std::move(d)), requested_at(now()) {}
++  ~ticket() { data->busy.store(false, std::memory_order_release); }
++  snapshot inspect(const text& expected_incarnation) const noexcept {
++    snapshot out{};
++    if (!ready.load(std::memory_order_acquire)) { return out; }
++    out = value; // one immutable result, published once with release/acquire.
++    const auto t = now();
++    if (!out.valid || !out.complete || data->closed.load(std::memory_order_acquire) ||
++        data->revision.load(std::memory_order_acquire) != out.state_revision ||
++        !(out.process_incarnation == expected_incarnation) ||
++        t.monotonic_ns < out.observed_at.monotonic_ns ||
++        t.monotonic_ns - out.observed_at.monotonic_ns > 30000000000LL) {
++      out.valid = false; out.complete = false;
++      for (auto& p : out.peers) { p.application_state = state::unknown; }
++    }
++    return out;
++  }
++private:
++  friend class source;
++  std::shared_ptr<owner_data> data;
++  stamp requested_at;
++  snapshot value{};
++  std::atomic<bool> ready{false};
++};
++class source {
++public:
++  static std::unique_ptr<source> create(const config& c, task_executor& owner) {
++    if (!c.enabled || c.local_nf_id.empty() || c.peer_count == 0 || c.peer_count > max_peers) { return {}; }
++    for (unsigned i = 0; i != c.peer_count; ++i) {
++      if (c.peers[i].peer_id.empty() || c.peers[i].expected_amf_name.empty()) { return {}; }
++      for (unsigned j = 0; j != i; ++j) {
++        if (c.peers[i].amf_index == c.peers[j].amf_index || c.peers[i].peer_id == c.peers[j].peer_id) { return {}; }
++      }
++    }
++    std::array<unsigned char, 16> nonce{};
++    // Initialization only. No blocking entropy wait, retry or timestamp/PID fallback.
++    if (::getrandom(nonce.data(), nonce.size(), GRND_NONBLOCK) != static_cast<ssize_t>(nonce.size())) { return {}; }
++    text incarnation;
++    constexpr char hex[] = "0123456789abcdef";
++    for (unsigned i = 0; i != nonce.size(); ++i) {
++      incarnation.bytes[2*i] = hex[nonce[i] >> 4]; incarnation.bytes[2*i+1] = hex[nonce[i] & 15];
++    }
++    return std::unique_ptr<source>(new source(c, incarnation, owner));
++  }
++  ~source() { close(); }
++  void close() noexcept { data->closed.store(true, std::memory_order_release); }
++  source(const source&) = delete;
++  source& operator=(const source&) = delete;
++
++  // Lifecycle hooks below MUST run on the same serialized CU executor as the original state writes.
++  uint64_t begin(uint32_t index, bool reconnect = false) noexcept {
++    auto* p = find(index); if (!p || !advance(*p)) { return 0; }
++    p->observed_amf_name = {}; p->setup_pending = true;
++    update(*p, state::unknown, reconnect ? reason::reconnect_started : reason::setup_started);
++    return p->association_generation;
++  }
++  void setup_result(uint32_t index, bool success, std::string_view actual_name, bool authority_verified, uint64_t generation = 0) noexcept {
++    auto* p = find(index); if (!p || generation == 0 || generation != p->association_generation) { return; }
++    if (!p->setup_pending) {
++      text observed;
++      const bool duplicate = authority_verified &&
++          ((success && p->application_state == state::up && observed.set(actual_name) &&
++            observed == p->observed_amf_name) ||
++           (!success && p->application_state == state::down && p->why == reason::setup_failed));
++      // Exact duplicate terminals are idempotent. Contradictory terminals cannot retain UP/DOWN.
++      if (!duplicate && p->application_state != state::unknown && advance(*p)) {
++        update(*p, state::unknown, reason::contradictory_result);
++      }
++      return;
++    }
++    p->setup_pending = false;
++    if (!authority_verified) { update(*p, state::unknown, reason::authority_mismatch); return; }
++    if (!success) { update(*p, state::down, reason::setup_failed); return; }
++    text observed;
++    if (!observed.set(actual_name) || !(observed == p->binding.expected_amf_name)) {
++      update(*p, state::unknown, reason::peer_mismatch); return;
++    }
++    p->observed_amf_name = observed;
++    update(*p, state::up, reason::setup_success);
++  }
++  void unavailable(uint32_t index) noexcept {
++    auto* p = find(index); if (p && advance(*p)) { update(*p, state::unknown, reason::no_evidence); }
++  }
++  void lost(uint32_t index) noexcept {
++    auto* p = find(index); if (p && advance(*p)) { update(*p, state::down, reason::association_lost); }
++  }
++  uint64_t removing(uint32_t index) noexcept {
++    auto* p = find(index); if (!p || !advance(*p)) { return 0; }
++    update(*p, state::unknown, reason::removal_started);
++    return p->association_generation;
++  }
++  void removed(uint32_t index, bool authority_verified, uint64_t generation) noexcept {
++    auto* p = find(index); if (p && generation != 0 && generation == p->association_generation) { update(*p, authority_verified ? state::down : state::unknown,
++                                       authority_verified ? reason::removed : reason::authority_mismatch); }
++  }
++  text incarnation() const noexcept { return data->value.process_incarnation; } // immutable since construction
++  // Caller must keep manager/executor alive until this call returns. Deferred task captures NO manager/raw source.
++  // Ticket bounds outstanding work/storage to one result until its last reference is released.
++  std::shared_ptr<ticket> request() {
++    if (data->closed.load(std::memory_order_acquire) || data->busy.exchange(true, std::memory_order_acq_rel)) { return {}; }
++    std::shared_ptr<ticket> result;
++    try { result = std::make_shared<ticket>(data); }
++    catch (...) { data->busy.store(false, std::memory_order_release); throw; }
++    auto d = data;
++    if (!owner.defer([d, result]() {
++      const auto t = now();
++      if (!d->closed.load(std::memory_order_acquire) &&
++          t.monotonic_ns >= result->requested_at.monotonic_ns &&
++          t.monotonic_ns - result->requested_at.monotonic_ns <= 10000000LL) {
++        d->value.observed_at = t;
++        if (d->value.sequence == std::numeric_limits<uint64_t>::max()) { d->value.complete = false; }
++        else { ++d->value.sequence; }
++        d->value.state_revision = d->revision.load(std::memory_order_relaxed);
++        result->value = d->value;
++        result->value.valid = d->value.complete;
++      }
++      result->ready.store(true, std::memory_order_release);
++    })) { return {}; } // No retry; destruction releases admission.
++    return result;
++  }
++private:
++  source(const config& c, const text& incarnation, task_executor& owner_) :
++    owner(owner_), data(std::make_shared<owner_data>()) {
++    data->value.local_nf_id = c.local_nf_id; data->value.process_incarnation = incarnation;
++    data->value.complete = true; data->value.peer_count = c.peer_count;
++    for (unsigned i = 0; i != c.peer_count; ++i) { data->value.peers[i].binding = c.peers[i]; }
++  }
++  row* find(uint32_t index) noexcept {
++    if (data->closed.load(std::memory_order_acquire)) { return nullptr; }
++    for (unsigned i = 0; i != data->value.peer_count; ++i) {
++      if (data->value.peers[i].binding.amf_index == index) { return &data->value.peers[i]; }
++    }
++    data->value.complete = false; bump_revision(); // Unknown/unconfigured peer => fail closed; no dynamic insertion/eviction.
++    return nullptr;
++  }
++  void bump_revision() noexcept {
++    if (data->revision.fetch_add(1, std::memory_order_release) == std::numeric_limits<uint64_t>::max()) {
++      data->closed.store(true, std::memory_order_release);
++    }
++  }
++  bool advance(row& p) noexcept {
++    if (p.association_generation == std::numeric_limits<uint64_t>::max()) {
++      data->value.complete = false; bump_revision(); return false;
++    }
++    ++p.association_generation; p.setup_pending = false; return true;
++  }
++  void update(row& p, state s, reason why) noexcept {
++    if (p.application_state != s) { p.last_transition = now(); p.transition_known = true; }
++    p.application_state = s; p.why = why;
++    bump_revision();
++  }
++  task_executor& owner; // Verified CU executor, fixed at construction; requesters cannot substitute it.
++  std::shared_ptr<owner_data> data;
++};
++} // namespace ngap_snapshot
++} } // namespace srsran::srs_cu_cp
+diff --git a/tests/offline_ngap_snapshot/stage_a_mock_model.py b/tests/offline_ngap_snapshot/stage_a_mock_model.py
+new file mode 100644
+index 0000000000..23f9ce475e
+--- /dev/null
++++ b/tests/offline_ngap_snapshot/stage_a_mock_model.py
+@@ -0,0 +1,77 @@
++"""SYNTHETIC executable contract model, NOT execution/compilation of C++ instrumentation."""
++import copy
++class Owner:
++    def __init__(self):self.queue=[];self.active=False;self.accept=True
++    def defer(self,f):
++        if not self.accept:return False
++        self.queue.append(f);return True
++    def run(self,f=None):
++        self.active=True
++        try:
++            if f is not None:return f()
++            while self.queue:self.queue.pop(0)()
++        finally:self.active=False
++class Source:
++    def __init__(self,owner,clock,*,enabled=False,peers=None,incarnation='SYNTHETIC_PROCESS_A'):
++        self.owner=owner;self.clock=clock;self.enabled=enabled and bool(peers) and len(peers)<=64;self.incarnation=incarnation
++        self.peers={i:{'expected':n,'state':'UNKNOWN','generation':0,'transition':None,'observed_name':None,'pending':False,'why':'no_evidence'} for i,n in (peers or {}).items()}
++        self.complete=bool(peers) and len(self.peers)<=64;self.closed=False;self.busy=False;self.revision=0;self.sequence=0;self.active_ticket=None
++    def find(self,i):
++        assert self.owner.active,'owner executor required'
++        if self.closed:return None
++        if i not in self.peers:self.complete=False;self.revision+=1;return None
++        return self.peers[i]
++    def update(self,p,state,why=None):
++        if p['state']!=state:p['transition']=self.clock[0]
++        p['state']=state;p['why']=why;self.revision+=1
++    def begin(self,i):
++        p=self.find(i)
++        if p is None:return 0
++        p['generation']+=1;p['observed_name']=None;p['pending']=True;self.update(p,'UNKNOWN','begin');return p['generation']
++    def setup(self,i,g,success=True,name='SYNTHETIC_AMF_A',authority=True):
++        p=self.find(i)
++        if p is None or not g or g!=p['generation']:return
++        if not p['pending']:
++            duplicate=authority and ((success and p['state']=='UP' and name==p['observed_name']) or (not success and p['state']=='DOWN' and p['why']=='setup_failed'))
++            if not duplicate and p['state']!='UNKNOWN':
++                p['generation']+=1;self.update(p,'UNKNOWN','contradictory_result')
++            return
++        p['pending']=False
++        state='UNKNOWN' if not authority else 'DOWN' if not success else 'UP' if name==p['expected'] else 'UNKNOWN'
++        if state=='UP':p['observed_name']=name
++        self.update(p,state,'setup_success' if state=='UP' else 'setup_failed' if state=='DOWN' else 'unverified')
++    def lost(self,i):
++        p=self.find(i)
++        if p is not None:p['generation']+=1;p['pending']=False;self.update(p,'DOWN','lost')
++    def unavailable(self,i):
++        p=self.find(i)
++        if p is not None:p['generation']+=1;p['pending']=False;self.update(p,'UNKNOWN','no_evidence')
++    def removing(self,i):
++        p=self.find(i)
++        if p is None:return 0
++        p['generation']+=1;p['pending']=False;self.update(p,'UNKNOWN','removing');return p['generation']
++    def removed(self,i,g,authority=True):
++        p=self.find(i)
++        if p is not None and g and g==p['generation']:self.update(p,'DOWN' if authority else 'UNKNOWN','removed')
++    def close(self):self.closed=True
++    def request(self):
++        if not self.enabled or self.closed or self.busy:return None
++        self.busy=True;t={'requested':self.clock[0],'ready':False,'payload':None,'released':False};self.active_ticket=t
++        def publish():
++            if not self.closed and 0<=self.clock[0]-t['requested']<=0.010:
++                self.sequence+=1;t['payload']={'valid':self.complete,'at':self.clock[0],'incarnation':self.incarnation,'revision':self.revision,'sequence':self.sequence,'peers':copy.deepcopy(self.peers)}
++            t['ready']=True
++            if t['released']:self.busy=False;self.active_ticket=None
++        if not self.owner.defer(publish):self.busy=False;self.active_ticket=None;return None
++        return t
++    def inspect(self,t,expected='SYNTHETIC_PROCESS_A'):
++        if t is None or not t['ready'] or t['payload'] is None:return {'valid':False,'peers':{}}
++        p=copy.deepcopy(t['payload'])
++        if not p['valid'] or self.closed or p['incarnation']!=expected or p['revision']!=self.revision or not 0<=self.clock[0]-p['at']<=30:
++            p['valid']=False
++            for row in p['peers'].values():row['state']='UNKNOWN'
++        return p
++    def release(self):
++        if self.active_ticket is not None:
++            self.active_ticket['released']=True
++            if self.active_ticket['ready']:self.busy=False;self.active_ticket=None
+diff --git a/tests/offline_ngap_snapshot/test_stage_a_snapshot.py b/tests/offline_ngap_snapshot/test_stage_a_snapshot.py
+new file mode 100644
+index 0000000000..0eae48b813
+--- /dev/null
++++ b/tests/offline_ngap_snapshot/test_stage_a_snapshot.py
+@@ -0,0 +1,108 @@
++"""SYNTHETIC lifecycle/contract tests plus source-level invariants. No C++ binary is executed."""
++import copy,json,re,subprocess,unittest
++from pathlib import Path
++from stage_a_mock_model import Owner,Source
++ROOT=Path(__file__).resolve().parents[2]
++PIN='11c9bbabb69873752500d676f55e0034f6caa5c5'
++class SnapshotContract(unittest.TestCase):
++    def setUp(self):
++        self.clock=[100.];self.owner=Owner();self.s=Source(self.owner,self.clock,enabled=True,peers={1:'SYNTHETIC_AMF_A',2:'SYNTHETIC_AMF_B'})
++    def event(self,f):return self.owner.run(f)
++    def up(self,i=1,name='SYNTHETIC_AMF_A'):
++        g=self.event(lambda:self.s.begin(i));self.event(lambda:self.s.setup(i,g,name=name));return g
++    def take(self):
++        t=self.s.request();self.owner.run();return t,self.s.inspect(t)
++    def test_association_established(self):self.up();self.assertEqual(self.take()[1]['peers'][1]['state'],'UP')
++    def test_association_disconnected_invalidates_old_result(self):
++        self.up();t,_=self.take();self.event(lambda:self.s.lost(1));self.assertFalse(self.s.inspect(t)['valid']);self.s.release();self.assertEqual(self.take()[1]['peers'][1]['state'],'DOWN')
++    def test_peer_process_restart_and_incarnation_mismatch(self):
++        self.up();t,_=self.take();self.assertFalse(self.s.inspect(t,'SYNTHETIC_PROCESS_B')['valid']);self.s.close();self.assertFalse(self.s.inspect(t)['valid'])
++    def test_missing_heartbeat(self):
++        self.up();t,p=self.take();seq=p['sequence'];self.clock[0]+=31;self.assertFalse(self.s.inspect(t)['valid']);self.assertEqual(self.s.sequence,seq)
++    def test_stale_connected_state_is_unknown(self):
++        self.up();t,_=self.take();self.clock[0]+=31;self.assertEqual(self.s.inspect(t)['peers'][1]['state'],'UNKNOWN')
++    def test_conflicting_peer_name_is_unknown(self):self.up(name='SYNTHETIC_UNRELATED_AMF');self.assertEqual(self.take()[1]['peers'][1]['state'],'UNKNOWN')
++    def test_independent_relationships(self):
++        self.up();self.up(2,'SYNTHETIC_AMF_B');self.event(lambda:self.s.lost(1));p=self.take()[1];self.assertEqual([p['peers'][i]['state'] for i in (1,2)],['DOWN','UP'])
++    def test_unknown_required_peer_marks_incomplete(self):self.event(lambda:self.s.lost(3));self.assertFalse(self.s.complete)
++    def test_setup_failure(self):
++        g=self.event(lambda:self.s.begin(1));self.event(lambda:self.s.setup(1,g,False));self.assertEqual(self.take()[1]['peers'][1]['state'],'DOWN')
++    def test_loss_blocks_old_setup_completion(self):
++        g=self.event(lambda:self.s.begin(1));self.event(lambda:self.s.lost(1));self.event(lambda:self.s.setup(1,g));self.assertEqual(self.take()[1]['peers'][1]['state'],'DOWN')
++    def test_reconnection_new_generation_only(self):
++        old=self.up();self.event(lambda:self.s.lost(1));new=self.event(lambda:self.s.begin(1));self.event(lambda:self.s.setup(1,old));self.assertEqual(self.take()[1]['peers'][1]['state'],'UNKNOWN');self.s.release();self.event(lambda:self.s.setup(1,new));self.assertEqual(self.take()[1]['peers'][1]['state'],'UP')
++    def test_removal_and_stale_removal_completion(self):
++        self.up();g=self.event(lambda:self.s.removing(1));self.event(lambda:self.s.removed(1,g));self.assertEqual(self.take()[1]['peers'][1]['state'],'DOWN');self.s.release();self.up();self.event(lambda:self.s.removed(1,g));self.assertEqual(self.take()[1]['peers'][1]['state'],'UP')
++    def test_map_begin_ambiguity_never_claims_up(self):
++        g=self.event(lambda:self.s.begin(1));self.event(lambda:self.s.setup(1,g,authority=False));self.assertEqual(self.take()[1]['peers'][1]['state'],'UNKNOWN')
++    def test_default_off(self):self.assertIsNone(Source(self.owner,self.clock).request())
++    def test_bounded_rows_and_one_outstanding_request(self):
++        self.assertIsNone(Source(self.owner,self.clock,enabled=True,peers={i:str(i) for i in range(65)}).request());t=self.s.request();self.assertIsNone(self.s.request());self.owner.run();self.s.release();self.assertIsNotNone(self.s.request())
++    def test_no_cross_thread_access_and_no_reader_inline_execution(self):
++        with self.assertRaises(AssertionError):self.s.begin(1)
++        t=self.s.request();self.assertFalse(t['ready']);self.owner.run();self.assertTrue(t['ready'])
++    def test_delayed_owner_and_rejected_queue(self):
++        t=self.s.request();self.clock[0]+=.011;self.owner.run();self.assertFalse(self.s.inspect(t)['valid']);self.s.release();self.owner.accept=False;self.assertIsNone(self.s.request());self.assertFalse(self.s.busy)
++    def test_unknown_transition_time_not_fabricated(self):self.assertIsNone(self.take()[1]['peers'][1]['transition'])
++    def test_read_does_not_change_protocol_state(self):
++        self.up();old=copy.deepcopy(self.s.peers);self.take();self.assertEqual(old,self.s.peers)
++    def test_duplicate_success_is_idempotent(self):
++        g=self.up();before=(copy.deepcopy(self.s.peers),self.s.revision);self.event(lambda:self.s.setup(1,g));self.assertEqual(before,(self.s.peers,self.s.revision))
++    def test_duplicate_failure_is_idempotent(self):
++        g=self.event(lambda:self.s.begin(1));self.event(lambda:self.s.setup(1,g,False));before=self.s.revision;self.event(lambda:self.s.setup(1,g,False));self.assertEqual(before,self.s.revision)
++    def test_conflicting_success_then_failure_retires_generation(self):
++        g=self.up();self.event(lambda:self.s.setup(1,g,False));self.event(lambda:self.s.setup(1,g));self.assertEqual(self.take()[1]['peers'][1]['state'],'UNKNOWN')
++    def test_conflicting_failure_then_success_never_promotes_up(self):
++        g=self.event(lambda:self.s.begin(1));self.event(lambda:self.s.setup(1,g,False));self.event(lambda:self.s.setup(1,g));self.assertEqual(self.take()[1]['peers'][1]['state'],'UNKNOWN')
++    def test_unknown_evidence_invalidates_old_success(self):
++        g=self.event(lambda:self.s.begin(1));self.event(lambda:self.s.unavailable(1));self.event(lambda:self.s.setup(1,g));self.assertEqual(self.take()[1]['peers'][1]['state'],'UNKNOWN')
++    def test_setup_during_removal_cannot_restore_up(self):
++        g=self.up();self.event(lambda:self.s.removing(1));self.event(lambda:self.s.setup(1,g));self.assertEqual(self.take()[1]['peers'][1]['state'],'UNKNOWN')
++    def test_stale_failure_does_not_undo_new_reconnection(self):
++        old=self.up();self.event(lambda:self.s.lost(1));self.up();self.event(lambda:self.s.setup(1,old,False));self.assertEqual(self.take()[1]['peers'][1]['state'],'UP')
++    def test_shutdown_with_queued_request_has_no_heartbeat(self):
++        self.up();t=self.s.request();self.s.close();self.owner.run();self.assertFalse(self.s.inspect(t)['valid']);self.assertEqual(self.s.sequence,0);self.assertIsNone(self.s.request())
++    def test_released_pending_reader_does_not_admit_second_request(self):
++        self.s.request();self.s.release();self.assertTrue(self.s.busy);self.assertIsNone(self.s.request());self.owner.run();self.assertFalse(self.s.busy)
++    def test_snapshot_is_consistent_at_owner_service_time(self):
++        self.up();t=self.s.request();self.event(lambda:self.s.lost(1));self.owner.run();self.assertEqual(self.s.inspect(t)['peers'][1]['state'],'DOWN')
++    def test_incomplete_result_scrubs_up_fields(self):
++        self.up();self.event(lambda:self.s.lost(3));t,p=self.take();self.assertFalse(p['valid']);self.assertEqual(p['peers'][1]['state'],'UNKNOWN')
++    def test_repeated_reads_do_not_renew_heartbeat(self):
++        self.up();t,p=self.take();self.clock[0]+=1;self.s.inspect(t);self.assertEqual(self.s.sequence,p['sequence']);self.assertEqual(t['payload']['at'],p['at'])
++class NativeSourceInvariants(unittest.TestCase):
++    def test_no_newer_version_fields_or_listeners(self):
++        source=(ROOT/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h').read_text()
++        self.assertNotIn('f1c_setup',source)
++        for pattern in ('socket(', 'listen(', 'connect(', 'system(', 'ProductionExecutor','std::mutex','while ('):
++            self.assertNotIn(pattern,source)
++    def test_bounded_default_off_generation_and_publication_guards(self):
++        source=(ROOT/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h').read_text()
++        for p in ('bool enabled = false','max_peers = 64','static_assert(sizeof(snapshot) <= 65536','owner.defer(','state_revision','generation != p->association_generation','GRND_NONBLOCK','ready.store(true, std::memory_order_release)','ready.load(std::memory_order_acquire)'):
++            self.assertIn(p,source)
++    def test_original_protocol_writes_and_waits_preserved(self):
++        files=['lib/cu_cp/cu_cp_controller/amf_connection_manager.cpp','lib/cu_cp/routines/amf_connection_setup_routine.cpp','lib/cu_cp/routines/amf_connection_removal_routine.cpp']
++        patterns=(r'^\s*amfs_connected\.(?:emplace|erase)\([^;]*;',r'^\s*amf_connected = [^;]*;',r'^\s*CORO_(?:AWAIT|AWAIT_VALUE|RETURN|EARLY_RETURN)\([^;]*;')
++        for f in files:
++            old=subprocess.check_output(['git','-C',str(ROOT),'show',PIN+':'+f],text=True);new=(ROOT/f).read_text().replace(', application_snapshot.get()','')
++            for p in patterns:self.assertEqual([s.strip() for s in re.findall(p,old,re.M)],[s.strip() for s in re.findall(p,new,re.M)],f)
++    def test_deferred_reader_captures_no_manager(self):
++        source=(ROOT/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h').read_text();self.assertIn('owner.defer([d, result]()',source);self.assertNotIn('[this',source)
++    def test_source_identity_pinned_and_baseline_unchanged(self):
++        self.assertEqual(subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip(),PIN)
++        self.assertIn(PIN,(ROOT/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h').read_text())
++    def test_owner_executor_is_fixed_and_matches_native_scheduler(self):
++        header=(ROOT/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h').read_text()
++        self.assertIn('std::shared_ptr<ticket> request()',header);self.assertNotIn('request(task_executor&',header)
++        manager=(ROOT/'lib/cu_cp/cu_cp_controller/amf_connection_manager.cpp').read_text()
++        self.assertIn('source::create(snapshot_config, cu_cp_exec)',manager)
++        self.assertIn('*cfg.cu_cp.services.cu_cp_executor',(ROOT/'lib/cu_cp/ngap_repository.cpp').read_text())
++        self.assertIn('ctrl_exec_, common_task_sched_', (ROOT/'lib/cu_cp/cu_cp_controller/cu_cp_controller.cpp').read_text())
++    def test_stop_invalidates_source_before_shutdown_dispatch(self):
++        cpp=(ROOT/'lib/cu_cp/cu_cp_controller/amf_connection_manager.cpp').read_text();body=cpp[cpp.index('void amf_connection_manager::stop()'):]
++        self.assertLess(body.index('application_snapshot->close()'),body.index('cu_cp_exec.defer('))
++    def test_duplicate_and_stale_generation_guards_are_present(self):
++        header=(ROOT/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h').read_text()
++        for fragment in ('if (!p->setup_pending)', 'reason::contradictory_result', 'p.setup_pending = false', '!out.valid || !out.complete', 'data->revision.load(std::memory_order_acquire) != out.state_revision'):
++            self.assertIn(fragment,header)
++if __name__=='__main__':unittest.main()
+diff --git a/tests/offline_ngap_snapshot/README.md b/tests/offline_ngap_snapshot/README.md
+new file mode 100644
+index 0000000000..68d9c5cb28
+--- /dev/null
++++ b/tests/offline_ngap_snapshot/README.md
+@@ -0,0 +1,54 @@
++# Stage A: default-off NGAP application snapshot (offline source only)
++
++Baseline: `11c9bbabb69873752500d676f55e0034f6caa5c5` (25.04 policy reference).
++Implemented in this detached isolated worktree. The existing newer checkout and orchestrator are untouched. No compiler, CMake, linker, package installer, image builder, NF binary or live service was invoked.
++
++## API and default-off boundary
++
++`amf_connection_manager` has an optional final `ngap_snapshot::config` constructor argument, default `{}`. No existing application construction site supplies an enabled config. `source::create` returns null before allocation/entropy reads unless enabled and all bounded local/peer metadata is valid. There is no CLI/YAML switch, listener, exporter, periodic timer, network client or live collector integration.
++
++A future reviewed development caller can supply local NF identity and up to 64 unique AMF-index/peer-ID/expected-AMF-name bindings. Metadata is not authentication or peer-UID proof. Source initialization obtains a nonblocking 128-bit random incarnation with no retry/PID/time fallback; entropy failure leaves the source unavailable. Production source/build provenance must bind the exact patch/image separately: the payload reports baseline revision and an explicit uncompiled instrumentation revision.
++
++`request_ngap_application_snapshot()` returns a one-shot ticket or null for disabled, closed, allocation/queue/admission failure. One ticket remains outstanding until all references are released; no second queued request is admitted. No polling loop/retry/wait occurs inside the source. `ngap_snapshot_incarnation()` returns immutable producer identity for an independently reviewed consumer binding. `ticket::inspect(expected_incarnation)` returns an immutable copy with UNKNOWN rows if stale, incomplete, closed, wrong incarnation or superseded by a lifecycle revision. `valid` means a structurally fresh/complete local snapshot, not healthy NGAP or an approved Layer 3 source.
++
++## Authoritative hooks and generation invariants
++
++The setup routine observes the original `amf_connected = success` write after NG Setup outcome. Loss follows the original per-AMF erase; reconnect follows its native setup result and original map insertion; removal observes its native false assignment. Source-only invariant tests compare original assignments/coroutine waits/returns to the patched source. Protocol operations, retries, messages and return values are not intentionally changed; native behavior/ABI equivalence is NOT established without compilation/testing.
++
++Each configured AMF has its own generation and state. Begin/reconnect creates a fresh pending generation; loss, removal-start and unavailable evidence retire previous completion authority. Only a pending matching generation may accept a terminal result. Exact duplicate terminals are idempotent; contradictory terminal results retire the generation and become UNKNOWN. Old setup/removal completions cannot restore/clear state after later loss or reconnect. The older community routines select `map.begin()`; instrumentation checks that the native atomic reference matches the protocol AMF index and emits UNKNOWN when it cannot verify that binding. It does NOT fix or add multi-AMF protocol support to the baseline.
++
++State is local UP/DOWN/UNKNOWN, never HEALTHY service. UP requires explicit NG Setup success, verified native binding and exact reviewed AMF-name match. SCTP creation alone yields no UP evidence. Loss means observed local disconnection, not remote fault onset. An unknown transition timestamp remains unknown; source wall/monotonic stamps record observed local transitions only. Remote AMF restart without a locally observable association change cannot be detected from its name alone; later topology/container/process identity validation remains mandatory.
++
++## Owner-executor and lifetime reasoning
++
++The pinned mapper `lib/cu_cp/cu_cp_executor_mapper.cpp` implements `ctrl_executor()` as a serialized `task_strand`, while N2 RX initially uses a pool. `ngap_repository.cpp` binds NGAP scheduling/timers to `services.cu_cp_executor`; `cu_cp_controller.cpp` gives the same control executor to the manager. Connection-loss handling dispatches onto that executor before the application hook.
++
++The producer is permanently bound to that verified executor at construction. Requesters cannot choose a different executor. Lifecycle writes and deferred source copies are serialized there; readers never traverse the application map or mutable rows. The deferred task captures shared snapshot storage/ticket only, no raw manager/source pointer. Release/acquire publishes a fixed one-shot result. Global revision checks invalidate old results after any lifecycle change. Manager `stop()` closes the source atomically before teardown dispatch; destruction also closes it. Closure never reads owner-only mutable state. Callers must still keep the manager/executor alive through request admission, as with existing manager APIs; pending admitted tasks retain their own storage.
++
++No new mutex, busy wait or allocation occurs in lifecycle hooks. Construction and read admission allocate bounded shared storage, and shared-pointer reclamation/allocator and queue latency still require native profiling; this source review does not prove hard real-time behavior. Custom/enterprise executors not following the verified strand contract are unsupported until separately reviewed. Native TSan/ASan and destruction-race tests remain required.
++
++## Bounds, freshness and snapshot schema
++
++Fixed rows <=64; text <=96 printable bytes; compile-time payload cap <=64KiB; lock-free atomic bool/uint64 are required by static assertions. These assertions have NOT yet been compiled. One deferred read at a time, owner queue age <=10ms, snapshot freshness <=30s, no automatic sampling. Heartbeat sequence advances only on an accepted owner-executed copy; rereading a retained ticket does not refresh it. A delayed owner task cannot fabricate freshness. Missing snapshots mean UNAVAILABLE/UNKNOWN; they do not prove explicit DOWN. Sampling cannot prove instant peer liveness between observations.
++
++Fields: local NF ID; random producer incarnation; base and instrumentation revision; global state revision; owner-produced sequence/observation wall and monotonic timestamps; complete/valid; per-AMF binding and observed AMF name; local state/reason; association generation; terminal pending guard; known/null transition time. There are no subscribers, NAS payloads, authentication material or controller callbacks.
++
++## Approved offline validation
++
++39 Python tests pass: 31 SYNTHETIC contract-model cases and 8 native-source static invariant checks. These DO NOT compile or execute the C++ implementation and cannot prove ABI, memory ordering, native size assertions or performance.
++
++Six existing generic Layer 3 replay tests also pass with socket connections forbidden: independent DU/NGAP state, conflicting/stale observations, pod/container/Service replacement, missing reciprocal source, optional E2, and persistent incident deduplication/closure/hash-chain/zero-execution. Those cover the interface-specific cases in the earlier eleven-case plan without pretending that an NGAP-only patch implements F1.
++
++Run the source/model checks (no native build):
++
++```sh
++/usr/bin/python3 -B -m unittest discover -s tests/offline_ngap_snapshot -v
++```
++
++See `resume-review` beside this source worktree for exact results, before/after hashes, integration contract and the complete reviewable patch including new files.
++
++## Separately approved next stage
++
++Review bounded toolchain/dependencies and community-only build configuration; approve native compilation of this exact patch plus actual C++ mocked lifecycle tests, disabled/enabled construction, stale/duplicate completions, executor saturation, process/manager destruction, lock-free/size assertions, sanitizers and resource benchmarks. No native build/test was run here. Private signatures change; enterprise replacement definitions/ABI are not available in this checkout and are not approved. Native compiler/test failures must be corrected offline before any image/deployment consideration. No installation/network dependency fetch is implied.
++
++Then separately review build provenance, caller enablement, identity source pins and normalized evidence semantics. Deployment, exposure, credentials/RBAC, live reads and faults each remain outside Stage A. The original OAI H-CRAN workload is not replaced. ProductionExecutor and the existing five profiles remain unchanged.

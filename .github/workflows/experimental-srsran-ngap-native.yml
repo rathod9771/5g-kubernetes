@@ -1,0 +1,48 @@
+name: Experimental srsRAN NGAP native validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/layer3-srsran-ngap-native-stage-b]
+    paths:
+      - .github/workflows/experimental-srsran-ngap-native.yml
+      - ci/experimental/srsran-ngap/**
+permissions:
+  contents: read
+concurrency:
+  group: experimental-srsran-ngap-native-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native-offline:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install public build dependencies on isolated runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config libmbedtls-dev libsctp-dev libyaml-cpp-dev libfftw3-dev libgtest-dev python3
+      - name: Obtain exact public upstream revision
+        run: |
+          git init "$RUNNER_TEMP/srsran-source"
+          git -C "$RUNNER_TEMP/srsran-source" remote add origin https://github.com/srsran/srsRAN_Project.git
+          git -C "$RUNNER_TEMP/srsran-source" fetch --depth=1 origin 11c9bbabb69873752500d676f55e0034f6caa5c5
+          git -C "$RUNNER_TEMP/srsran-source" checkout --detach FETCH_HEAD
+      - name: Verify portable input hashes
+        run: cd ci/experimental/srsran-ngap && sha256sum -c SHA256SUMS
+      - name: Native build and isolated tests
+        run: /bin/bash ci/experimental/srsran-ngap/build.sh
+      - name: Preserve logs and result hashes even on failure
+        if: always()
+        run: |
+          mkdir -p stage-b-results
+          cp ci/experimental/srsran-ngap/SHA256SUMS stage-b-results/input-sha256.txt
+          find stage-b-results -type f ! -name artifact-sha256.txt -exec sha256sum {} + > stage-b-results/artifact-sha256.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: experimental-srsran-ngap-stage-b-${{ github.run_id }}
+          path: stage-b-results/
+          retention-days: 14
+          if-no-files-found: error
