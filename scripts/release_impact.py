@@ -49,6 +49,7 @@ NON_PACKAGE_FILES = frozenset((
     'scripts/hcran_build_pinned_w45_ue_t3517.sh',
     'scripts/hcran_build_pinned_w45_ue_t3517_tunrenewal.sh',
     'scripts/hcran_build_pinned_w45_ue_t3517_tunrenewal_raguard.sh',
+    'scripts/hcran_build_pinned_w45_ue_stage5q.sh',  # diagnostic research-only W45 UE build
     'scripts/hcran_as_security_log_audit.py',
     'scripts/hcran_stage4w_mobility_preflight.py', 'scripts/hcran_staging_inventory.py',
     'scripts/hcran_node_pressure.py',
