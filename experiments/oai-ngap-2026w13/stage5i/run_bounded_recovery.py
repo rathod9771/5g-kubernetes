@@ -13,7 +13,7 @@ import re
 import sys
 import types
 
-FLOW=(
+RETRIED_FLOW=(
     "Generate initial NAS message: Service Request",
     "Stage5I: schedule one bounded Service Request retry",
     "Generate initial NAS message: Service Request",
@@ -23,6 +23,15 @@ FLOW=(
     "Received Registration Accept",
     "PDU Session Establishment Accept",
 )
+DIRECT_FLOW=(
+    "Generate initial NAS message: Service Request",
+    "Received NAS Service Reject message with cause",
+    "Stage5G: cause #9, cleared stale GUTI and NAS security",
+    "Stage5G: sent SUCI-based initial Registration Request after cause #9 and RRC IDLE",
+    "Received Registration Accept",
+    "PDU Session Establishment Accept",
+)
+FLOW = RETRIED_FLOW  # Backward-compatible reference to the existing strict retried flow.
 DIAGNOSTICS=(
     "RRC moved into IDLE state",
     "NR_NAS_CONN_RELEASE_IND",
@@ -53,6 +62,29 @@ def ordered(log, flow):
         position=ix+len(marker)
     return selected,missing
 
+def choose_recovery_path(log, counts):
+    """Accept the two real NAS paths, never a missing or exhausted response.
+
+    An immediate 5GMM Service Reject can legitimately arrive on the first
+    Service Request. A retry must be observed only when that timeout path is
+    actually required. Conflicting retry counts fail closed.
+    """
+    retries=counts.get("Stage5I: schedule one bounded Service Request retry",0)
+    requests=counts.get("Generate initial NAS message: Service Request",0)
+    if retries>=1 and requests>=2:
+        path="bounded_retry"
+        flow=RETRIED_FLOW
+    elif retries==0 and requests==1:
+        path="direct_service_reject"
+        flow=DIRECT_FLOW
+    else:
+        found,missing=ordered(log,DIRECT_FLOW)
+        return found,(missing or ["inconsistent Service Request/retry counts"]),None
+    found,missing=ordered(log,flow)
+    if missing:
+        return found,missing,None
+    return found,[],path
+
 def build(opts):
     repo=Path(__file__).resolve().parents[1]
     sys.path.insert(0,str(repo/"stage5e"))
@@ -72,8 +104,10 @@ def build(opts):
                 for marker in DIAGNOSTICS:
                     count=log.count(marker)
                     occurrences.append({"marker":marker,"count":count})
-                chain,missing=ordered(log,FLOW)
+                counts={x["marker"]:x["count"] for x in occurrences}
+                chain,missing,recovery_path=choose_recovery_path(log,counts)
                 record["ue"][role]={
+                    "recovery_path":recovery_path,
                     "selected_ordered_chain":chain,
                     "chain_missing_from":missing,
                     "marker_counts":occurrences,
@@ -93,8 +127,11 @@ def build(opts):
             if obj.get("chain_missing_from"):
                 raise RuntimeError("Stage5I "+role+" missing ordered postfault NAS event: "+
                                    str(obj["chain_missing_from"][0]))
-            if len(obj.get("selected_ordered_chain",[]))!=len(FLOW):
-                raise RuntimeError("Stage5I "+role+" missing protocol-level cause9 and bounded retry evidence")
+            path=obj.get("recovery_path")
+            flow=(RETRIED_FLOW if path=="bounded_retry" else
+                  DIRECT_FLOW if path=="direct_service_reject" else ())
+            if [x.get("marker") for x in obj.get("selected_ordered_chain",[])]!=list(flow) or not flow:
+                raise RuntimeError("Stage5I "+role+" missing ordered direct/retried NAS cause9->SUCI->PDU evidence")
             if any(x["count"] for x in obj.get("marker_counts",[]) if
                    x["marker"] in ("Stage5I: bounded Service Request attempts exhausted",
                                    "Stage5I: failed to arm recovery timer")):
@@ -106,13 +143,16 @@ def build(opts):
         gtpu=self.out/"post-AMF-gtpu-evidence.json"
         if not pcap.is_file() or pcap.stat().st_size<150 or not gtpu.is_file():
             raise RuntimeError("Stage5I missing real postfault GTPU proof")
+        recovery_paths={role:proof["ue"][role]["recovery_path"] for role in ("ue","ue-small")}
+        all_retried=all(path=="bounded_retry" for path in recovery_paths.values())
         record={
             "schema":"stage5i-two-UE-t3517-cause9-v1",
             "source":"disposable-real-OAI-W45-RFsim-dual-UE",
             "amf_only_fault":True,
             "two_ue_processes_unchanged":True,
             "cause9_re_registration_observed_for_both":True,
-            "bounded_service_request_retry_observed_for_both":True,
+            "bounded_service_request_retry_observed_for_both":all_retried,
+            "recovery_paths":recovery_paths,
             "postfault_bidirectional_gtpu_verified_by_stage5e":True,
             "postfault_gtpu_pcap_sha256":hashlib.sha256(pcap.read_bytes()).hexdigest(),
             "postfault_gtpu_evidence":json.loads(gtpu.read_text()),
@@ -121,7 +161,7 @@ def build(opts):
             "production_decision":"NO_GO",
         }
         (self.out/"stage5i-runtime.json").write_text(json.dumps(record,indent=2)+"\n")
-        self.record("STAGE5I","PASS",scope="both unchanged UEs: bounded SR retry, cause9->SUCI NAS/PDU and bidirectional F1U/NGU",production_decision="NO_GO")
+        self.record("STAGE5I","PASS",scope="both unchanged UEs: direct or bounded Service Reject, cause9->SUCI NAS/PDU and bidirectional F1U/NGU",production_decision="NO_GO")
 
 
     def capture_exit_diagnostics(self):
