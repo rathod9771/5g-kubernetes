@@ -43,7 +43,7 @@ timeout -k 15s 3m cmake -S "$source_dir" -B "$build_dir" \
 ninja -C "$build_dir" -t commands l3_ngap_snapshot_freshness > "$results/build-commands.txt"
 python3 "$input/verify_isolation.py" "$mode" "$build_dir" "$overlay" "$results/build-commands.txt" "$source_dir" > "$results/compile-isolation.json"
 timeout -k 15s 5m nice -n 10 cmake --build "$build_dir" --parallel 2 --target l3_ngap_snapshot_freshness
-# Prove the standalone TU used only the overlay header, and linked support objects used neither variant.
+# Check the standalone TU and transitive build-graph objects (not linker-extracted archive members).
 python3 - "$input" "$build_dir" "$results" "$overlay" "$mode" <<'PY'
 import json,subprocess,sys
 from pathlib import Path
@@ -53,7 +53,7 @@ meta=json.loads((out/'compile-isolation.json').read_text())
 proc=subprocess.run(['ninja','-C',str(build),'-t','deps',meta['freshness_object']]+meta['support_objects'],capture_output=True,text=True,timeout=30,check=True)
 assert len(proc.stdout.encode())<=64*1024**2,'Dependency evidence exceeded 64 MiB'
 (out/'linked-header-dependencies.txt').write_text(proc.stdout)
-report=verify_deps(proc.stdout,meta['freshness_object'],overlay/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h',meta['support_objects'])
+report=verify_deps(proc.stdout,meta['freshness_object'],overlay/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h',meta['support_objects'],build)
 normal={}
 for target in ['lib/cu_cp/libsrsran_cu_cp.a','lib/support/libsrsran_support.a','lib/srslog/libsrslog.a','external/fmt/libfmt.a','tests/unittests/cu_cp/cu_cp_test','l3-stage-b-tests/l3_ngap_snapshot_component','l3-stage-c-tests/l3_ngap_snapshot_concurrency']:
     text=subprocess.check_output(['nm','-C',str(build/target)],text=True,timeout=30)
