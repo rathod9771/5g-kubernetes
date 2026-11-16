@@ -2,7 +2,8 @@ name: H-CRAN Stage 5Q guarded cached BWP0 liveness three-cycle research - NO DEP
 
 # One GitHub-hosted diagnostic session with THREE consecutive AMF
 # faults against the SAME two unchanged UE processes. REBUILD test-only
-# pinned UE with BWP0 liveness patch; use frozen Stage3 patched CU.
+# pinned UE with BWP0 liveness patch; rebuild pinned Stage3 NGAP CU.
+# No historical artifact fetch; this rebuilds a source-equivalent CU, not bit-identical.
 # This never touches HP, Kubernetes, OSM, production keys or subscribers.
 on:
   push:
@@ -98,14 +99,18 @@ jobs:
             --set-string image.pullPolicy=IfNotPresent \
             > "$RUNNER_TEMP/stage5p-render/small.yaml"
 
-      - name: Retrieve immutable Stage3 patched CU archive
-        uses: actions/download-artifact@v4
-        with:
-          repository: rathod9771/5g-kubernetes
-          run-id: 43157479388
-          name: oai-ngap-stage3-portable-4
-          github-token: \${{ github.token }}
-          path: \${{ runner.temp }}/stage5p-inputs/cu
+      - name: Rebuild OAI W13 Stage3 NGAP patched CU from pinned upstream source
+        shell: bash
+        env:
+          OAI_SOURCE: ${{ runner.temp }}/stage5q-pinned-stage3-cu-source
+          OUTPUT: ${{ runner.temp }}/stage5q-cu-build-proof
+        run: |
+          set -euo pipefail
+          bash -n qualification/scripts/hcran_build_pinned_stage3_ngap_cu.sh
+          cd "$GITHUB_WORKSPACE/qualification"
+          export GITHUB_WORKSPACE="$PWD"
+          export IMAGE="$CU_IMG"
+          bash scripts/hcran_build_pinned_stage3_ngap_cu.sh
 
       - name: Verify exact pinned source-builder syntax
         shell: bash
@@ -117,9 +122,9 @@ jobs:
       - name: Rebuild pinned OAI W45 research UE with Stage5Q guarded BWP0 candidate
         shell: bash
         env:
-          OAI_SOURCE: \${{ runner.temp }}/stage5q-pinned-source
-          OUTPUT: \${{ runner.temp }}/stage5q-build-proof
-          IMAGE: hcran-stage5q-pinned-bwp0:run-\${{ github.run_number }}
+          OAI_SOURCE: ${{ runner.temp }}/stage5q-pinned-source
+          OUTPUT: ${{ runner.temp }}/stage5q-build-proof
+          IMAGE: hcran-stage5q-pinned-bwp0:run-${{ github.run_number }}
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/qualification"
@@ -128,22 +133,14 @@ jobs:
           grep -q 'Stage5Q' "$OUTPUT/test-only-UE-stage5q-bwp0-liveness.patch"
           docker image inspect "$IMAGE" --format '{{.Id}}'
 
-      - name: Verify pinned CU image archive and load isolated core/DU containers
+      - name: Verify source-rebuilt CU and isolated core/DU container images
         shell: bash
         run: |
           set -euo pipefail
-          cu="$RUNNER_TEMP/stage5p-inputs/cu/oai-ngap-stage3-portable.tar.gz"
-          gzip -t "$cu"
-          sha256sum "$cu" > "$RUNNER_TEMP/stage5p-evidence/pinned-cu-input.sha256"
-          python3 - "$cu" <<'PY'
-          import hashlib, sys
-          want = "97b456a24402043d48489c0336154457ce6c29c2ab947d52442b0979e7b4369d"
-          have = hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()
-          if have != want: raise SystemExit("FAIL CLOSED: expected pinned Stage3 CU archive SHA-256")
-          print("PASS pinned Stage3 CU archive SHA-256")
-          PY
-          docker load -i "$cu"
-          docker image inspect "$UE_IMG" --format '{{.Id}}' > "$RUNNER_TEMP/stage5p-evidence/stage5q-candidate-id.txt"
+          docker image inspect "$CU_IMG" --format '{{.Id}}' \
+            > "$RUNNER_TEMP/stage5p-evidence/source-rebuilt-cu-id.txt"
+          docker image inspect "$UE_IMG" --format '{{.Id}}' \
+            > "$RUNNER_TEMP/stage5p-evidence/stage5q-candidate-id.txt"
           for image in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG"; do docker pull "$image"; done
 
       - name: Audit fail-closed multicycle harness syntax
@@ -178,12 +175,22 @@ jobs:
           rm -rf "$RUNNER_TEMP/stage5p-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
           test ! -e "$RUNNER_TEMP/stage5p-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
 
+      - name: Archive reproducible Stage3 NGAP CU source-build proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage5q-stage3-cu-build-proof-${{ github.run_number }}
+          path: ${{ runner.temp }}/stage5q-cu-build-proof/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
+
       - name: Preserve pinned research source build proof, including full Stage5Q patch
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hcran-stage5q-pinned-source-build-proof-\${{ github.run_number }}
-          path: \${{ runner.temp }}/stage5q-build-proof/
+          name: hcran-stage5q-pinned-source-build-proof-${{ github.run_number }}
+          path: ${{ runner.temp }}/stage5q-build-proof/
           if-no-files-found: warn
           retention-days: 7
           compression-level: 2

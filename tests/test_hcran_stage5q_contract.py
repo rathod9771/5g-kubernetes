@@ -57,6 +57,8 @@ class Stage5QContracts(unittest.TestCase):
         self.assertIn("--cycles 3 --verify-gtpu",w)
         self.assertIn("verify_three_cycle_recovery.py",w)
         self.assertIn("stage5q/patch_mac_bwp0_liveness.py",w)
+        self.assertIn("hcran_build_pinned_stage3_ngap_cu.sh",w)
+        self.assertNotIn("actions/download-artifact",w)
         self.assertNotIn("helm upgrade",w)
         self.assertNotIn("kubectl apply",w)
         self.assertNotIn("osm ns-",w)

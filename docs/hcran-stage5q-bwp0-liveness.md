@@ -52,3 +52,15 @@ is not a specification-conformant recovery procedure by itself.
 - This diagnostic research branch makes no installer, main, RIC, live
   subscriber, Kubernetes or OSM changes. Staging rollback, negative
   protocol cases, heavy-load soak and long-duration metrics remain open.
+
+## 16 Nov artifact transport blocker and reproducible CU rebuild
+
+The first Stage5Q workflow attempts failed **before compilation** at
+`actions/download-artifact@v4` with GitHub's `Bad credentials` response
+while fetching historical Stage3 CU. The updated workflow removes that
+artifact dependency and compiles a source-equivalent test-only CU from OAI
+2026.w13 commit `4941f44043e6dcec81b2041e83dbae4bee6f737d`, checking
+NGAP source blob `da4108df125218f3470940389fdd4cfa496bd81e` and applying
+`experiments/oai-ngap-2026w13/ngap-retry-v2.patch` before building.
+This rebuilt CU is not guaranteed bit-identical to the historical archived
+Stage3 CU; acceptance applies to the pinned *rebuilt* variant only.
