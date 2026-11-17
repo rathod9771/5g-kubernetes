@@ -1,0 +1,88 @@
+name: Experimental Stage D1 native build only (no protocol execution)
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_review:
+        description: Exact Stage D1 source and dependency pins reviewed
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: l3-d1-native-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build-only:
+    if: github.ref == 'refs/heads/feature/layer3-srsran-ngap-native-build-d2b' && github.event_name == 'workflow_dispatch' && inputs.confirm_review == 'APPROVED_SOURCE_AND_DEPENDENCY_PINS'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    env:
+      INPUT: ci/experimental/srsran-ngap-stage-d1
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Dependencies on disposable hosted runner only
+        timeout-minutes: 5
+        run: |
+          sudo -n apt-get -o Acquire::Retries=0 update
+          sudo -n apt-get -o Acquire::Retries=0 install -y --no-install-recommends build-essential cmake ninja-build meson pkg-config bison flex libsctp-dev libgnutls28-dev libgcrypt20-dev libssl-dev libidn11-dev libmongoc-dev libbson-dev libyaml-dev libnghttp2-dev libmicrohttpd-dev libcurl4-gnutls-dev libtalloc-dev libmbedtls-dev libyaml-cpp-dev libfftw3-dev libgtest-dev python3-venv binutils bubblewrap iproute2 e2fsprogs util-linux systemd
+      - name: Isolated Python harness dependencies
+        timeout-minutes: 5
+        run: |
+          /usr/bin/python3 -c "import sys,platform; assert sys.version_info[:2] == (3,10) and platform.machine() == 'x86_64'"
+          # Public wheel acquisition is separate from offline installation and native build.
+          (cd "$INPUT" && sha256sum -c SHA256SUMS)
+          python3 -B "$INPUT/workflow_evidence.py" run wheel_acquisition # wheelhouse_acquire.py, fixed allowlist
+          python3 -B "$INPUT/workflow_evidence.py" run python_setup # offline_python.py, fixed allowlist
+      - name: Offline preparation tests
+        timeout-minutes: 3
+        run: |
+          cd "$INPUT"
+          sha256sum -c SHA256SUMS
+          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py
+      - name: Acquire exact public source before offline configuration
+        timeout-minutes: 10
+        run: |
+          python3 -B "$INPUT/acquire_sources.py" --github-acquire-only
+      - name: Hard-limited isolated native compile and link only
+        timeout-minutes: 80
+        run: |
+          set -o pipefail
+          sudo -n --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,GITHUB_WORKSPACE,RUNNER_TEMP,ImageOS,ImageVersion \
+            /usr/bin/unshare --mount --propagation private -- \
+            /usr/bin/timeout -k 15s 77m /usr/bin/python3 -B "$INPUT/build-only.py" --github-build-only
+      - name: Preserve bounded auxiliary diagnostics before admission
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 -B "$INPUT/workflow_evidence.py" collect
+      - name: Require complete external and per-phase evidence
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 -B "$INPUT/finalize_build_evidence.py" stage-d1-build-results
+      - name: Export only allowlisted bounded diagnostic evidence
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 -B "$INPUT/workflow_evidence.py" export
+      - id: evidence_upload
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: l3-stage-d1-native-build-${{ github.run_id }}
+          path: stage-d1-reviewed-evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Require successful diagnostic upload for final qualification
+        if: always()
+        timeout-minutes: 1
+        env:
+          PRIOR_JOB_STATUS: ${{ job.status }}
+          UPLOAD_OUTCOME: ${{ steps.evidence_upload.outcome }}
+          ARTIFACT_ID: ${{ steps.evidence_upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.evidence_upload.outputs.artifact-digest }}
+        run: |
+          python3 -B "$INPUT/workflow_evidence.py" upload "$UPLOAD_OUTCOME" "$ARTIFACT_ID" "$ARTIFACT_DIGEST" stage-d1-reviewed-evidence

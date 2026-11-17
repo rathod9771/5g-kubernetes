@@ -1,0 +1,502 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Future genuine runtime evidence; no subscriber fields accepted",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "synthetic",
+    "experiment_id",
+    "test_id",
+    "event_id",
+    "kind",
+    "provenance",
+    "observed_wall_ns",
+    "observed_monotonic_ns",
+    "timing_uncertainty_ns",
+    "uncertainty_reason",
+    "process_incarnation",
+    "local_nf_id",
+    "amf_index",
+    "peer_id",
+    "expected_amf_name",
+    "observed_amf_name",
+    "association_epoch",
+    "snapshot",
+    "independent_protocol_event",
+    "independent_evidence_refs",
+    "expected_states",
+    "actual_state",
+    "classification",
+    "failure_or_limitation",
+    "protocol_coverage"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "l3-ngap-runtime-evidence-v1"
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "experiment_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "test_id": {
+      "enum": [
+        "D0-T1",
+        "D0-T2",
+        "D0-T3",
+        "D0-T4",
+        "D0-T5",
+        "D0-T6",
+        "D0-T7"
+      ]
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "enum": [
+        "snapshot",
+        "protocol",
+        "action_receipt",
+        "assessment",
+        "source_unavailable"
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "srsran_revision",
+        "instrumentation_patch_sha256",
+        "experiment_patch_sha256",
+        "cu_binary_sha256",
+        "amf_binary_sha256",
+        "amf_source_revision",
+        "config_sha256",
+        "network_namespace_inode",
+        "boot_id"
+      ],
+      "properties": {
+        "srsran_revision": {
+          "const": "11c9bbabb69873752500d676f55e0034f6caa5c5"
+        },
+        "instrumentation_patch_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "experiment_patch_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "cu_binary_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "amf_binary_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "amf_source_revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "network_namespace_inode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "boot_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "observed_wall_ns": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "observed_monotonic_ns": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timing_uncertainty_ns": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "uncertainty_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "process_incarnation": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "local_nf_id": {
+      "const": "l3-d0-cucp-01"
+    },
+    "amf_index": {
+      "const": 0
+    },
+    "peer_id": {
+      "const": "l3-d0-amf-01@n2-loopback"
+    },
+    "expected_amf_name": {
+      "const": "l3-d0-amf-01"
+    },
+    "observed_amf_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "association_epoch": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "snapshot": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "valid",
+        "complete",
+        "application_state",
+        "reason",
+        "generation",
+        "sequence",
+        "revision",
+        "producer_wall_ns",
+        "producer_monotonic_ns",
+        "transition_known",
+        "transition_wall_ns",
+        "transition_monotonic_ns"
+      ],
+      "properties": {
+        "valid": {
+          "type": "boolean"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "application_state": {
+          "enum": [
+            "UP",
+            "DOWN",
+            "UNKNOWN"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "generation": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sequence": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "producer_wall_ns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "producer_monotonic_ns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "transition_known": {
+          "type": "boolean"
+        },
+        "transition_wall_ns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "transition_monotonic_ns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "independent_protocol_event": {
+      "enum": [
+        null,
+        "NG_SETUP_REQUEST",
+        "NG_SETUP_RESPONSE",
+        "NG_SETUP_FAILURE",
+        "SCTP_COMM_UP",
+        "SCTP_COMM_LOST",
+        "SCTP_SHUTDOWN",
+        "SOURCE_UNAVAILABLE"
+      ]
+    },
+    "independent_evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 16
+    },
+    "expected_states": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "UP",
+          "DOWN",
+          "UNKNOWN",
+          "UNAVAILABLE",
+          "NO_SUPERSEDED_UP"
+        ]
+      },
+      "minItems": 1
+    },
+    "actual_state": {
+      "enum": [
+        "UP",
+        "DOWN",
+        "UNKNOWN",
+        "UNAVAILABLE"
+      ]
+    },
+    "classification": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "INCONCLUSIVE",
+        "NOT_ASSESSED"
+      ]
+    },
+    "failure_or_limitation": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "protocol_coverage": {
+      "enum": [
+        "APPLICATION_CONFIRMED",
+        "TRANSPORT_ONLY",
+        "MISSING",
+        "CONTRADICTORY"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "classification": {
+            "const": "PASS"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "independent_evidence_refs": {
+            "minItems": 1
+          },
+          "failure_or_limitation": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "snapshot": {
+            "type": "object",
+            "properties": {
+              "valid": {
+                "const": false
+              }
+            },
+            "required": [
+              "valid"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actual_state": {
+            "enum": [
+              "UNKNOWN",
+              "UNAVAILABLE"
+            ]
+          },
+          "snapshot": {
+            "properties": {
+              "application_state": {
+                "const": "UNKNOWN"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "synthetic": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "classification": {
+            "const": "NOT_ASSESSED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "classification": {
+            "enum": [
+              "PASS",
+              "FAIL"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "synthetic": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "snapshot": {
+            "type": "object",
+            "properties": {
+              "complete": {
+                "const": false
+              }
+            },
+            "required": [
+              "complete"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actual_state": {
+            "enum": [
+              "UNKNOWN",
+              "UNAVAILABLE"
+            ]
+          },
+          "snapshot": {
+            "properties": {
+              "application_state": {
+                "const": "UNKNOWN"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "snapshot": {
+            "type": "object",
+            "properties": {
+              "valid": {
+                "const": true
+              }
+            },
+            "required": [
+              "valid"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "process_incarnation": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "snapshot": {
+            "properties": {
+              "complete": {
+                "const": true
+              },
+              "sequence": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "generation": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "producer_wall_ns": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "producer_monotonic_ns": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

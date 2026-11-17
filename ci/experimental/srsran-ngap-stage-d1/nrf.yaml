@@ -1,0 +1,13 @@
+logger:
+  level: info
+global:
+  max:
+    ue: 8
+    peer: 8
+nrf:
+  serving:
+    - plmn_id: {mcc: '001', mnc: '01'}
+  sbi:
+    server:
+      - address: 127.0.0.30
+        port: 7777

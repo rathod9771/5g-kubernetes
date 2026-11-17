@@ -1,0 +1,81 @@
+--- a/lib/cu_cp/cu_cp_impl.h
++++ b/lib/cu_cp/cu_cp_impl.h
+@@ -71,6 +71,12 @@
+ {
+ public:
+   explicit cu_cp_impl(const cu_cp_configuration& config_);
++  // PROPOSED: internal experiment-only composition; no application CLI or public factory enables it.
++  cu_cp_impl(const cu_cp_configuration& config_, const ngap_snapshot::config& snapshot_config);
++  ngap_snapshot::text l3_experiment_snapshot_incarnation()
++  { return controller.amf_connection_handler().ngap_snapshot_incarnation(); }
++  std::shared_ptr<ngap_snapshot::ticket> l3_experiment_request_snapshot()
++  { return controller.amf_connection_handler().request_ngap_application_snapshot(); }
+   ~cu_cp_impl() override;
+ 
+   bool start() override;
+--- a/lib/cu_cp/cu_cp_impl.cpp
++++ b/lib/cu_cp/cu_cp_impl.cpp
+@@ -67,7 +67,9 @@
+   report_error_if_not(cfg.admission.max_nof_cu_ups <= MAX_NOF_CU_UPS, "Invalid max number of CU-UPs");
+ }
+ 
+-cu_cp_impl::cu_cp_impl(const cu_cp_configuration& config_) :
++cu_cp_impl::cu_cp_impl(const cu_cp_configuration& config_) : cu_cp_impl(config_, ngap_snapshot::config{}) {}
++
++cu_cp_impl::cu_cp_impl(const cu_cp_configuration& config_, const ngap_snapshot::config& snapshot_config) :
+   cfg(config_),
+   ue_mng(cfg),
+   cell_meas_mng(cfg.mobility.meas_manager_config, cell_meas_mobility_notifier, ue_mng),
+@@ -90,7 +92,7 @@
+              ngap_db,
+              cu_up_db,
+              du_db,
+-             *cfg.services.cu_cp_executor),
++             *cfg.services.cu_cp_executor, snapshot_config),
+   metrics_hdlr(std::make_unique<metrics_handler_impl>(*cfg.services.cu_cp_executor,
+                                                       *cfg.services.timers,
+                                                       ue_mng,
+--- a/lib/cu_cp/cu_cp_controller/cu_cp_controller.h
++++ b/lib/cu_cp/cu_cp_controller/cu_cp_controller.h
+@@ -56,6 +56,16 @@
+                    du_processor_repository&        dus_,
+                    task_executor&                  ctrl_exec);
+ 
++  // PROPOSED: internal construction for a separate, fully rebuilt runtime experiment.
++  cu_cp_controller(const cu_cp_configuration& config_,
++                   cu_cp_amf_reconnection_handler& cu_cp_notifier,
++                   common_task_scheduler& common_task_sched_,
++                   ngap_repository& ngaps_,
++                   cu_up_processor_repository& cu_ups_,
++                   du_processor_repository& dus_,
++                   task_executor& ctrl_exec,
++                   const ngap_snapshot::config& snapshot_config);
++
+   void stop();
+ 
+   amf_connection_manager& amf_connection_handler() { return amf_mng; }
+--- a/lib/cu_cp/cu_cp_controller/cu_cp_controller.cpp
++++ b/lib/cu_cp/cu_cp_controller/cu_cp_controller.cpp
+@@ -35,10 +35,21 @@
+                                    cu_up_processor_repository&     cu_ups_,
+                                    du_processor_repository&        dus_,
+                                    task_executor&                  ctrl_exec_) :
++  cu_cp_controller(config_, cu_cp_notifier, common_task_sched_, ngaps_, cu_ups_, dus_, ctrl_exec_,
++                   ngap_snapshot::config{}) {}
++
++cu_cp_controller::cu_cp_controller(const cu_cp_configuration& config_,
++                                   cu_cp_amf_reconnection_handler& cu_cp_notifier,
++                                   common_task_scheduler& common_task_sched_,
++                                   ngap_repository& ngaps_,
++                                   cu_up_processor_repository& cu_ups_,
++                                   du_processor_repository& dus_,
++                                   task_executor& ctrl_exec_,
++                                   const ngap_snapshot::config& snapshot_config) :
+   cfg(config_),
+   ctrl_exec(ctrl_exec_),
+   logger(srslog::fetch_basic_logger("CU-CP")),
+-  amf_mng(ngaps_, cu_cp_notifier, *cfg.services.timers, ctrl_exec_, common_task_sched_),
++  amf_mng(ngaps_, cu_cp_notifier, *cfg.services.timers, ctrl_exec_, common_task_sched_, snapshot_config),
+   du_mng(cfg.admission.max_nof_dus, dus_, ctrl_exec, common_task_sched_),
+   cu_up_mng(cfg.admission.max_nof_cu_ups, cu_ups_, ctrl_exec, common_task_sched_)
+ {

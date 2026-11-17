@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "phase",
+    "started_at",
+    "ended_at",
+    "elapsed_seconds",
+    "command_sha256",
+    "exit_code",
+    "signal",
+    "resource_limit_status",
+    "log",
+    "log_sha256",
+    "outputs",
+    "classification",
+    "commands",
+    "timeout",
+    "validation_completed"
+  ],
+  "properties": {
+    "phase": {
+      "enum": [
+        "dependency_acquisition",
+        "source_verification",
+        "patch_application",
+        "cmake_configuration",
+        "meson_configuration",
+        "srsran_compilation",
+        "open5gs_compilation",
+        "linkage_verification",
+        "binary_inspection",
+        "final_evidence_verification"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$"
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$"
+    },
+    "elapsed_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "command_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "signal": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "resource_limit_status": {
+      "enum": [
+        "VERIFIED",
+        "NOT_APPLICABLE_ACQUISITION_ONLY",
+        "UNVERIFIED"
+      ]
+    },
+    "log": {
+      "type": "string"
+    },
+    "log_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "classification": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCKED",
+        "INCOMPLETE"
+      ]
+    },
+    "commands": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "required": [
+          "argv",
+          "started_at",
+          "ended_at",
+          "elapsed_seconds",
+          "exit_code",
+          "signal",
+          "timeout",
+          "forced",
+          "log_budget_exceeded",
+          "classification",
+          "log",
+          "log_sha256"
+        ],
+        "properties": {
+          "argv": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|\\+00:00)$"
+          },
+          "elapsed_seconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "timeout": {
+            "type": "boolean"
+          },
+          "forced": {
+            "type": "boolean"
+          },
+          "log_budget_exceeded": {
+            "type": "boolean"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "signal": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "classification": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "BLOCKED",
+              "INCOMPLETE"
+            ]
+          },
+          "log": {
+            "type": "string",
+            "minLength": 1
+          },
+          "log_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "classification": {
+                  "const": "PASS"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "timeout": {
+                  "const": false
+                },
+                "signal": {
+                  "type": "null"
+                },
+                "exit_code": {
+                  "const": 0
+                },
+                "forced": {
+                  "const": false
+                },
+                "log_budget_exceeded": {
+                  "const": false
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "reason": {
+      "type": "string"
+    },
+    "timeout": {
+      "type": "boolean"
+    },
+    "validation_completed": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "classification": {
+            "const": "PASS"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "timeout": {
+            "const": false
+          },
+          "signal": {
+            "type": "null"
+          },
+          "exit_code": {
+            "const": 0
+          },
+          "validation_completed": {
+            "const": true
+          }
+        }
+      }
+    }
+  ]
+}

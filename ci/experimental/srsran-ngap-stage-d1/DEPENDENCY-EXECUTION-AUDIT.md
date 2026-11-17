@@ -1,0 +1,28 @@
+# D2A dependency execution policy (source-only review)
+
+All four commits are unchanged. `dependency-command-policy.json` pins pristine Git archive SHA-256 and every build-control file for these plus both upstream trees. No configure/build script was executed during this review. No additional source/dependency was fetched after the four approved checkouts already recorded in D2A.
+
+| Source/path | Selected path and classification |
+|---|---|
+| freeDiameter Meson root/includes/libfdproto/libfdcore/extensions | APPROVED_LOCAL_BUILD_OPERATION: compiler/header/function/link checks, pkg/library lookup, configure_file, static/shared module/library compilation/linkage. These do not start Diameter/NGAP services. |
+| freeDiameter libfdcore, acl_wl, rt_default Meson generators | APPROVED_LOCAL_CODE_GENERATION: installed flex/bison with the exact pinned input grammars and output arguments. No newly compiled protocol executable is a generator. |
+| freeDiameter alternate CMake Flex/Bison helpers and Hg version target | Not selected; no .hg is acquired. Local generation/version operations excluded from this Meson plan. |
+| freeDiameter alternate CMake dict_json/dbg_interactive | UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL if selected: SWIG/xxd, json-schema-to-c native generator, optional JSON schema/JSONCPP/Python tooling. Not dependencies of the selected Meson path. Excluded; no expansion to the acquisition lock. |
+| freeDiameter contrib nightly scripts | PROHIBITED_NETWORK_OPERATION: wget/remote scripts and Hg checkout; excluded. No CTest dashboard or nightly target runs. |
+| libtins Meson root/include/src | APPROVED_LOCAL_BUILD_OPERATION: compiler support checks, header generation and library compilation. Selected during Open5GS configuration; not a network test. |
+| libtins alternate CMake CheckCXXFeatures, docs, uninstall | UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL if selected: native feature try_run, Doxygen and uninstall. Excluded from selected Meson route. |
+| libtins alternate CMake tests/ExternalProject googletest | Excluded. Its ExternalProject uses existing submodule source with DOWNLOAD_COMMAND empty; no submodules are fetched. Does not authorize GoogleTest acquisition, native test execution or examples. |
+| prometheus-client-c root + prom CMake | APPROVED_LOCAL_BUILD_OPERATION: installed cat/sed read VERSION, Threads/compiler/atomic compile-link checks, build only prom. Root adds prom only. |
+| prom/CMakeLists.txt optional if ($ENV{TEST}) | Guard's exact source hash and syntax checked. Environment function rejects TEST even if empty; explicit allowlist construction does not inherit it. Therefore test/CMakeLists.txt is not included under the approved environment. BUILD_TESTING/nodownload alone are not used as this proof. |
+| prom/test and vendor Unity download/extract stamps | PROHIBITED_NETWORK_OPERATION; Unity is unnecessary for libprom. No Unity acquisition/target/execute is authorized. Generated CMake caches/Ninja graph must contain prom and no Unity/promTest/promtest/Parson targets. Generated evidence is required later, not claimed to exist now. |
+| prometheus promtest | Excluded: dpkg local installation is UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL; Unity/Parson curl/git acquisition is PROHIBITED_NETWORK_OPERATION. Not entered by the root configuration. |
+| prometheus promhttp, autolib/docker | Not selected. Version helpers are unnecessary; provisioning/download scripts are prohibited. No alternate project, Docker build, packaging/install target or test is selected. |
+| usrsctp | Not selected on approved Linux: Open5GS uses lksctp. Source nevertheless pinned/verified. Meson compile checks and library declarations reviewed; MSVC dumpbin/gen-def.py and optional SCTP programs are excluded. No usrsctp example/program execution. |
+| Any AMF/NRF/driver/test invocation | PROHIBITED_PROTOCOL_RUNTIME_OPERATION in this experiment, even in the isolated namespace. No native tests are authorized by build-only scope. |
+| Any other generated command/helper/network dependency | UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL; fail closed, no automatic allowlist expansion or rerun. |
+
+The machine execution-site inventory in the review package records discovered locations and classifications. All build-control file bytes are pinned, including excluded paths. The selected graph is rechecked on the future runner, not inferred merely from PRE_TEST. Only the six explicit top-level binary/library target names are built. Compiler/linker/ar tools and audited local flex/bison/version/symbol helpers are allowed; native output paths are never allowable command executables. An unrecognized Meson helper serialization or platform-specific command blocks before compilation rather than being executed speculatively.
+
+Configuration and compilation run in a fresh network namespace with only lo and no non-loopback route, read-only root, unprivileged UID, zero capabilities and NoNewPrivileges. Source acquisition precedes this namespace. Meson uses nodownload and CMake's FetchContent disconnected flags are defense in depth, not network enforcement. No host-wide networking or kernel settings are changed. Runtime support for these mechanisms remains unverified until separately authorized CI admission.
+
+Installed toolchain inputs are separately content/version locked during the future acquisition phase and reverified offline; /usr/local fallback is hidden. This is in addition to the fixed source commits, archive hashes and immutable Python wheel hashes, not a claim that apt package versions were preselected offline. No installed-toolchain scan was executed on HP.

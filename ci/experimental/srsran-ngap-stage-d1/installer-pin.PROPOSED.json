@@ -1,0 +1,16 @@
+{
+  "name": "pip",
+  "version": "26.2",
+  "filename": "pip-26.2-py3-none-any.whl",
+  "sha256": "931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad",
+  "size": 1816475,
+  "requires_python": ">=3.10",
+  "url": "https://files.pythonhosted.org/packages/62/36/a3aed958d60531cb442b7ab4596cda7b3621cfb916f8ae1d6769795c7dc1/pip-26.2-py3-none-any.whl",
+  "metadata_source": "https://pypi.org/pypi/pip/26.2/json",
+  "source_review": [
+    "https://raw.githubusercontent.com/pypa/pip/26.2/src/pip/__main__.py",
+    "https://raw.githubusercontent.com/pypa/pip/26.2/src/pip/_internal/cli/cmdoptions.py"
+  ],
+  "status": "PROPOSED_NOT_DOWNLOADED_OR_EXECUTED",
+  "method": "RUN_VERIFIED_WHEEL_DIRECTLY_NO_INSTALLER_BOOTSTRAP"
+}

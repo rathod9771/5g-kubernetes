@@ -1,0 +1,16 @@
+name: Experimental Stage D2B native build registration (inert on main)
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_review:
+        description: Select the separately approved experimental D2B ref
+        required: true
+        type: string
+permissions: {}
+jobs:
+  registration-only:
+    if: ${{ false }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 1
+    steps:
+      - run: ':'

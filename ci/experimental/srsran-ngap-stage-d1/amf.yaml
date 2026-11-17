@@ -1,0 +1,36 @@
+# Synthetic, isolated N2 only. No subscriber database, keys, TUN or user plane.
+logger:
+  level: info
+global:
+  max:
+    ue: 8
+    peer: 8
+amf:
+  sbi:
+    server:
+      - address: 127.0.0.20
+        port: 7777
+    client:
+      nrf:
+        - uri: http://127.0.0.30:7777
+  ngap:
+    server:
+      - address: 127.0.0.20
+        port: 38412
+  guami:
+    - plmn_id: {mcc: '001', mnc: '01'}
+      amf_id: {region: 2, set: 1, pointer: 0}
+  tai:
+    - plmn_id: {mcc: '001', mnc: '01'}
+      tac: 7
+  plmn_support:
+    - plmn_id: {mcc: '001', mnc: '01'}
+      s_nssai:
+        - sst: 1
+  security:
+    integrity_order: [NIA2, NIA1, NIA0]
+    ciphering_order: [NEA0, NEA1, NEA2]
+  network_name: {full: L3-D1-SYNTHETIC, short: L3-D1}
+  amf_name: l3-d0-amf-01
+  time:
+    t3512: {value: 540}

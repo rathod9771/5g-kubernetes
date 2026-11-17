@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema",
+    "phase",
+    "classification",
+    "started_at",
+    "ended_at",
+    "elapsed_seconds",
+    "command",
+    "interpreter",
+    "installer",
+    "policy",
+    "resource_evidence",
+    "artifacts",
+    "source_sha256"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "phase": {
+      "enum": [
+        "wheel_acquisition",
+        "python_setup"
+      ]
+    },
+    "classification": {
+      "enum": [
+        "PASS",
+        "FAIL",
+        "BLOCKED",
+        "INCOMPLETE"
+      ]
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "ended_at": {
+      "type": "string"
+    },
+    "elapsed_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "command": {
+      "type": "object"
+    },
+    "interpreter": {
+      "type": "object"
+    },
+    "installer": {
+      "type": "object"
+    },
+    "policy": {
+      "type": "object"
+    },
+    "resource_evidence": {
+      "type": "object"
+    },
+    "artifacts": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

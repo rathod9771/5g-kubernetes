@@ -1,0 +1,556 @@
+{
+  "scope": "ALL_TRACKED_BUILD_CONTROL_FILES_IN_FOUR_PINNED_SOURCES",
+  "build_control_files_read": 139,
+  "execution_sites": [
+    {
+      "source": "freeDiameter",
+      "file": "libfdcore/meson.build",
+      "line": 52,
+      "operation": "lgen = generator(flex,",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_CODE_GENERATION",
+      "file_sha256": "4ab2d8376c6ff0bca9efacf150a9a722d5f828ff46f064face776fd4e5e83abd"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "libfdcore/meson.build",
+      "line": 58,
+      "operation": "pgen = generator(bison,",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_CODE_GENERATION",
+      "file_sha256": "4ab2d8376c6ff0bca9efacf150a9a722d5f828ff46f064face776fd4e5e83abd"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "extensions/dbg_interactive/CMakeLists.txt",
+      "line": 51,
+      "operation": "ADD_CUSTOM_COMMAND(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "e9f6f9045096947f6f8ebd7782fccd2e37d67fc6587715bc45db880e59a2fdc5"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "extensions/acl_wl/meson.build",
+      "line": 1,
+      "operation": "lgen = generator(flex,",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_CODE_GENERATION",
+      "file_sha256": "1b53b749d617d66fd2f76a5cce7b39ba54759c3dbbf2ffa69f1de1680a5652b8"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "extensions/acl_wl/meson.build",
+      "line": 6,
+      "operation": "pgen = generator(bison,",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_CODE_GENERATION",
+      "file_sha256": "1b53b749d617d66fd2f76a5cce7b39ba54759c3dbbf2ffa69f1de1680a5652b8"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "extensions/rt_default/meson.build",
+      "line": 9,
+      "operation": "lgen = generator(flex,",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_CODE_GENERATION",
+      "file_sha256": "e62ae433f16a3e49a5ee4d600af867c3b67c6882ed1cd5a0f3e42dc1567ab5b1"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "extensions/rt_default/meson.build",
+      "line": 15,
+      "operation": "pgen = generator(bison,",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_CODE_GENERATION",
+      "file_sha256": "e62ae433f16a3e49a5ee4d600af867c3b67c6882ed1cd5a0f3e42dc1567ab5b1"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "extensions/dict_json/CMakeLists.txt",
+      "line": 36,
+      "operation": "ADD_CUSTOM_COMMAND(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "42a62028cd1c1b6e5af72d325eac22ba857b2324d3b4dedf60298967a3327e96"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "include/freeDiameter/CMakeLists.txt",
+      "line": 201,
+      "operation": "ADD_CUSTOM_TARGET(version_information",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "88f5238101d93f19e31e8502ebcab99a2fb3b0f4e12aa645b050c10634bc4465"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "include/freeDiameter/CMakeLists.txt",
+      "line": 211,
+      "operation": "ADD_CUSTOM_TARGET(version_information DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/version.h)",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "88f5238101d93f19e31e8502ebcab99a2fb3b0f4e12aa645b050c10634bc4465"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "include/freeDiameter/CMakeLists.txt",
+      "line": 216,
+      "operation": "ADD_CUSTOM_TARGET(version_information DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/version.h)",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "88f5238101d93f19e31e8502ebcab99a2fb3b0f4e12aa645b050c10634bc4465"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "cmake/Modules/CMakeUserUseFlex.cmake",
+      "line": 38,
+      "operation": "ADD_CUSTOM_COMMAND(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "915bc707e16c4c36e6d28227330b24f08b8780f43e95869cedf7c5cbe5ea17b6"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "cmake/Modules/GetVersionWithHg.cmake",
+      "line": 3,
+      "operation": "EXECUTE_PROCESS(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "5c466ab87f92a77ca2ebb7c75264861d71f439c85a8241d5a7a2362015664ca1"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "cmake/Modules/GetVersionWithHg.cmake",
+      "line": 10,
+      "operation": "EXECUTE_PROCESS(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "5c466ab87f92a77ca2ebb7c75264861d71f439c85a8241d5a7a2362015664ca1"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "cmake/Modules/CMakeUserUseBison.cmake",
+      "line": 51,
+      "operation": "ADD_CUSTOM_COMMAND(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "96954b976c33d7ac4b0bcdabafb674141abefb7d8b3eee13fdd7f11db44b2730"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "cmake/Modules/CMakeUserUseBison.cmake",
+      "line": 62,
+      "operation": "ADD_CUSTOM_COMMAND(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "96954b976c33d7ac4b0bcdabafb674141abefb7d8b3eee13fdd7f11db44b2730"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "contrib/nightly_tests/cronjob.sh",
+      "line": 6,
+      "operation": "wget \"http://www.freediameter.net/hg/freeDiameter/raw-file/tip/contrib/nightly_tests/runtests.sh\"",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "5a25f74827e8be4e45c9c70815fcbfed0c09c52ceba6235f722c7a4b33b1ec3e"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "contrib/nightly_tests/runtests.sh",
+      "line": 34,
+      "operation": "wget \"http://www.freediameter.net/hg/freeDiameter/raw-file/tip/CTestConfig.cmake\" -O $WORKDIR/1_default.cmake",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "10d487bf6f56dde1d7bd42ff6e97758682af33dc6939d5e015a5f63ca5504f46"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "contrib/nightly_tests/runtests.sh",
+      "line": 41,
+      "operation": "wget \"http://www.freediameter.net/hg/freeDiameter/raw-file/tip/contrib/nightly_tests/tests.list\" -O $WORKDIR/2_tests.list",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "10d487bf6f56dde1d7bd42ff6e97758682af33dc6939d5e015a5f63ca5504f46"
+    },
+    {
+      "source": "freeDiameter",
+      "file": "contrib/nightly_tests/runtests.sh",
+      "line": 77,
+      "operation": "wget \"http://www.freediameter.net/hg/freeDiameter/raw-file/tip/contrib/nightly_tests/$t.conf\" -O $WORKDIR/$t/params.conf",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "10d487bf6f56dde1d7bd42ff6e97758682af33dc6939d5e015a5f63ca5504f46"
+    },
+    {
+      "source": "libtins",
+      "file": "CMakeLists.txt",
+      "line": 90,
+      "operation": "INCLUDE(ExternalProject)",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "4f5ce4daf6b2c5a85c05f6dac7e81a6dfa7f48bca04fff2acee1f8effa653ffc"
+    },
+    {
+      "source": "libtins",
+      "file": "CMakeLists.txt",
+      "line": 220,
+      "operation": "ADD_CUSTOM_TARGET(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "4f5ce4daf6b2c5a85c05f6dac7e81a6dfa7f48bca04fff2acee1f8effa653ffc"
+    },
+    {
+      "source": "libtins",
+      "file": "CMakeLists.txt",
+      "line": 265,
+      "operation": "ADD_CUSTOM_TARGET(uninstall",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "4f5ce4daf6b2c5a85c05f6dac7e81a6dfa7f48bca04fff2acee1f8effa653ffc"
+    },
+    {
+      "source": "libtins",
+      "file": "CMakeLists.txt",
+      "line": 291,
+      "operation": "ExternalProject_Add(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "4f5ce4daf6b2c5a85c05f6dac7e81a6dfa7f48bca04fff2acee1f8effa653ffc"
+    },
+    {
+      "source": "libtins",
+      "file": "examples/CMakeLists.txt",
+      "line": 33,
+      "operation": "ADD_CUSTOM_TARGET(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "97cb4af509700f8765bf3cc9a3d7dea69ea22a418a8610db605970dddf0b218b"
+    },
+    {
+      "source": "libtins",
+      "file": "cmake/Modules/CheckCXXFeatures.cmake",
+      "line": 90,
+      "operation": "try_run(_RUN_RESULT_VAR _COMPILE_RESULT_VAR",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "2a59dc36e9a6b163caa84168c60a9dcbf457250d36e41ad47e07e064606c1808"
+    },
+    {
+      "source": "libtins",
+      "file": "cmake/Modules/CheckCXXFeatures.cmake",
+      "line": 99,
+      "operation": "try_run(_RUN_RESULT_VAR _COMPILE_RESULT_VAR",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "2a59dc36e9a6b163caa84168c60a9dcbf457250d36e41ad47e07e064606c1808"
+    },
+    {
+      "source": "libtins",
+      "file": "tests/src/CMakeLists.txt",
+      "line": 25,
+      "operation": "ADD_CUSTOM_TARGET(tests)",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "b7bd92740de75139b7d35d9731d9b2b87bb83ad008cf5ebb223d3d33c46989c3"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "CMakeLists.txt",
+      "line": 3,
+      "operation": "execute_process(",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_BUILD_OPERATION",
+      "file_sha256": "65991864ebad7849503715a373703dd76888b225d7f905aec77a0862f4ea0628"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "autolib/docker.sh",
+      "line": 17,
+      "operation": "apt-get install -y curl tar build-essential git pkg-config gdb valgrind gcc-10 libmicrohttpd-dev doxygen graphviz && \\",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "d7378a7334cb9d3a5c7c692021c915036b94f9199efd6969a6d54f965cf96de5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "autolib/docker.sh",
+      "line": 20,
+      "operation": "curl -sL https://github.com/Kitware/CMake/releases/download/v3.14.5/cmake-3.14.5-Linux-x86_64.tar.gz | tar xzf - -C /opt && \\",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "d7378a7334cb9d3a5c7c692021c915036b94f9199efd6969a6d54f965cf96de5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "autolib/docker.sh",
+      "line": 23,
+      "operation": "curl -sL https://dl.google.com/go/go1.13.1.linux-amd64.tar.gz 2> /dev/null | tar xzf - -C /usr/local && \\",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "d7378a7334cb9d3a5c7c692021c915036b94f9199efd6969a6d54f965cf96de5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "autolib/docker.sh",
+      "line": 49,
+      "operation": "apt-get install -y curl tar build-essential git pkg-config gdb valgrind gcc libmicrohttpd-dev doxygen graphviz && \\",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "d7378a7334cb9d3a5c7c692021c915036b94f9199efd6969a6d54f965cf96de5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "autolib/docker.sh",
+      "line": 50,
+      "operation": "curl -sL https://github.com/Kitware/CMake/releases/download/v3.14.5/cmake-3.14.5-Linux-x86_64.tar.gz | tar xzf - -C /opt && \\",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "d7378a7334cb9d3a5c7c692021c915036b94f9199efd6969a6d54f965cf96de5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "autolib/docker.sh",
+      "line": 53,
+      "operation": "curl -sL https://dl.google.com/go/go1.13.1.linux-amd64.tar.gz 2> /dev/null | tar xzf - -C /usr/local && \\",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "d7378a7334cb9d3a5c7c692021c915036b94f9199efd6969a6d54f965cf96de5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "autolib/docker.sh",
+      "line": 79,
+      "operation": "apt-get install -y curl tar build-essential git pkg-config gdb valgrind gcc libmicrohttpd-dev doxygen graphviz && \\",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "d7378a7334cb9d3a5c7c692021c915036b94f9199efd6969a6d54f965cf96de5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "autolib/docker.sh",
+      "line": 80,
+      "operation": "curl -sL https://github.com/Kitware/CMake/releases/download/v3.14.5/cmake-3.14.5-Linux-x86_64.tar.gz | tar xzf - -C /opt && \\",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "d7378a7334cb9d3a5c7c692021c915036b94f9199efd6969a6d54f965cf96de5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "autolib/docker.sh",
+      "line": 83,
+      "operation": "curl -sL https://dl.google.com/go/go1.13.1.linux-amd64.tar.gz 2> /dev/null | tar xzf - -C /usr/local && \\",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "d7378a7334cb9d3a5c7c692021c915036b94f9199efd6969a6d54f965cf96de5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promhttp/CMakeLists.txt",
+      "line": 5,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "7c95d416db4ca4aa36d39c19d56ba64d1241ffa033992dc7c13cb558741104ae"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promhttp/CMakeLists.txt",
+      "line": 11,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "7c95d416db4ca4aa36d39c19d56ba64d1241ffa033992dc7c13cb558741104ae"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promhttp/CMakeLists.txt",
+      "line": 18,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "7c95d416db4ca4aa36d39c19d56ba64d1241ffa033992dc7c13cb558741104ae"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promhttp/CMakeLists.txt",
+      "line": 25,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "7c95d416db4ca4aa36d39c19d56ba64d1241ffa033992dc7c13cb558741104ae"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "prom/CMakeLists.txt",
+      "line": 5,
+      "operation": "execute_process(",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_BUILD_OPERATION",
+      "file_sha256": "68762065a33d3b9ba107486a089aa584dbfae268c14c2b5df6970d6f57829af5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "prom/CMakeLists.txt",
+      "line": 11,
+      "operation": "execute_process(",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_BUILD_OPERATION",
+      "file_sha256": "68762065a33d3b9ba107486a089aa584dbfae268c14c2b5df6970d6f57829af5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "prom/CMakeLists.txt",
+      "line": 18,
+      "operation": "execute_process(",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_BUILD_OPERATION",
+      "file_sha256": "68762065a33d3b9ba107486a089aa584dbfae268c14c2b5df6970d6f57829af5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "prom/CMakeLists.txt",
+      "line": 25,
+      "operation": "execute_process(",
+      "selected": true,
+      "classification": "APPROVED_LOCAL_BUILD_OPERATION",
+      "file_sha256": "68762065a33d3b9ba107486a089aa584dbfae268c14c2b5df6970d6f57829af5"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 5,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 11,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 18,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 25,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 37,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 46,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 66,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 67,
+      "operation": "COMMAND curl -L https://github.com/ThrowTheSwitch/Unity/archive/v${unity_version}.tar.gz",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 89,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "promtest/CMakeLists.txt",
+      "line": 90,
+      "operation": "COMMAND git clone https://github.com/kgabis/parson ${vendor_dir}/parson",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "41259efba6e640fc93eba3b3bf5940c99b5de808617a4bc13de085529556ef6e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "vendor/src/Unity-stamp/download-Unity.cmake",
+      "line": 71,
+      "operation": "execute_process(COMMAND \"${CMAKE_COMMAND}\" -E sleep \"${sleep_seconds}\")",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "3ef5d0ad40dac4861e686b3057b6f7427cc3836bc5f7e63b10c4a2cc3d04b65e"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "vendor/src/Unity-stamp/extract-Unity.cmake",
+      "line": 26,
+      "operation": "execute_process(COMMAND ${CMAKE_COMMAND} -E tar xfz ${filename}",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "87372b02c8431daa05f38c11a200592154ec4bf87848f2de49aec4802ef9bef4"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "prom/test/CMakeLists.txt",
+      "line": 12,
+      "operation": "execute_process(",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "9b936a0ad6e2dc2e7aa9d43a5169788808db2f7c10dc349ee61cbf88fd887451"
+    },
+    {
+      "source": "prometheus-client-c",
+      "file": "prom/test/CMakeLists.txt",
+      "line": 13,
+      "operation": "COMMAND curl -L https://github.com/ThrowTheSwitch/Unity/archive/v${unity_version}.tar.gz",
+      "selected": false,
+      "classification": "PROHIBITED_NETWORK_OPERATION",
+      "file_sha256": "9b936a0ad6e2dc2e7aa9d43a5169788808db2f7c10dc349ee61cbf88fd887451"
+    },
+    {
+      "source": "usrsctp",
+      "file": "meson.build",
+      "line": 177,
+      "operation": "usrsctp_def = custom_target('usrsctp.def',",
+      "selected": false,
+      "classification": "UNREVIEWED_OPERATION_REQUIRING_SEPARATE_APPROVAL_IF_SELECTED",
+      "file_sha256": "b84b835835ab7d4da826f15559f279aaac2d2c99bf5257c89afc504ab5ad2857"
+    }
+  ],
+  "classification_notes": "Excluded alternate build systems, contrib, tests and Windows paths are not approved executions. Direct downloads and optional dependency paths are blocked; see narrative audit. Standard compiler sanity probes are local configure operations, not NGAP runtime. No new required dependency identified."
+}

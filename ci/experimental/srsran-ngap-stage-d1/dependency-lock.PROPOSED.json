@@ -1,0 +1,30 @@
+[
+  {
+    "name": "freeDiameter",
+    "url": "https://github.com/open5gs/freeDiameter.git",
+    "original_ref": "r1.5.0",
+    "proposed_commit": "539ca5f2ded19413b756544ef8538755e9792877",
+    "status": "PROPOSED_PUBLIC_DEPENDENCY_PIN_FOR_REVIEW"
+  },
+  {
+    "name": "libtins",
+    "url": "https://github.com/open5gs/libtins.git",
+    "original_ref": "r4.5",
+    "proposed_commit": "bf22438172d269e6db70e27246dffd8e1f0b96e3",
+    "status": "PROPOSED_PUBLIC_DEPENDENCY_PIN_FOR_REVIEW"
+  },
+  {
+    "name": "prometheus-client-c",
+    "url": "https://github.com/open5gs/prometheus-client-c.git",
+    "original_ref": "open5gs",
+    "proposed_commit": "a58ba25bf87a9b1b7c6be4e6f4c62047d620f402",
+    "status": "PROPOSED_PUBLIC_DEPENDENCY_PIN_FOR_REVIEW"
+  },
+  {
+    "name": "usrsctp",
+    "url": "https://github.com/sctplab/usrsctp.git",
+    "original_ref": "0.9.5.0",
+    "proposed_commit": "07f871bda23943c43c9e74cc54f25130459de830",
+    "status": "PROPOSED_PUBLIC_DEPENDENCY_PIN_FOR_REVIEW"
+  }
+]

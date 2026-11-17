@@ -1,0 +1,103 @@
+{
+  "repository_baseline": "c99f7c53d557a475f2dd563a810fe9385b2a5ced",
+  "srsran_revision": "11c9bbabb69873752500d676f55e0034f6caa5c5",
+  "open5gs_revision": "7dfd9a39649700c24c22f1978ed7a35541a72cca",
+  "original_instrumentation_patch_sha256": "95a2a9598bdb44deca598c5e26478b276968169f54da538d5173a32432444747",
+  "stage_a_files": {
+    "lib/cu_cp/cu_cp_controller/amf_connection_manager.cpp": "c247c19ac86104751837fa331b78a3f2d07c91fc029c64c52f82c12a2d995b86",
+    "lib/cu_cp/cu_cp_controller/amf_connection_manager.h": "262d1d53224acea019f9e0f7e5c912b7547f5b73fca0587ec9ddba33c255d427",
+    "lib/cu_cp/routines/amf_connection_removal_routine.cpp": "c517c5acade006272c7c895d465c6f4a7322f5ee82043263eeaf1cbd9c183d0c",
+    "lib/cu_cp/routines/amf_connection_removal_routine.h": "387801bc7516075742a778f2f45beb5a2e8a9cac6a795c0207f9353098277f55",
+    "lib/cu_cp/routines/amf_connection_setup_routine.cpp": "aa35d982f7219888a8580ccc8556043d2c93f2fd2cc641b4ec53702fd329101e",
+    "lib/cu_cp/routines/amf_connection_setup_routine.h": "b10f9bea8949ccf4b948d9b6a3e7625b424ea9b8da1cf467906b34db37d73fe4",
+    "lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h": "6044bfb98dfb64c519ca59a99182671c82c1516fd80c9c187ebffd49cd0cd6dd",
+    "tests/offline_ngap_snapshot/stage_a_mock_model.py": "84256e412b127fd0c1084036aae0f48059e5b8bc77459ea4cc276900df0dbfed",
+    "tests/offline_ngap_snapshot/test_stage_a_snapshot.py": "95ae99d70b365079ddcb7d9254e13b51672c87a09c4adb3c0daac38870d77c33",
+    "tests/offline_ngap_snapshot/README.md": "eae999b9ef7a06459c99c5144e558b0e025de16b8469f4b19c5ed0fead68dbc1"
+  },
+  "activation_source_files": {
+    "lib/cu_cp/cu_cp_impl.h": {
+      "before": "2a6d358b7078407f453d050d94df7e8f33919136a176a46e228f07bb38049662",
+      "proposed": "e07d4f66da04d537c1e23f91314aef453c2d812afeee06c156991444b3d26fd2"
+    },
+    "lib/cu_cp/cu_cp_impl.cpp": {
+      "before": "2b906d609e94d4d6a7ce9149035b19bc90621a0ddd3e31d61777160f7c479e71",
+      "proposed": "ea913f9b46b11ee5523b9a12aa672171bae9855dd4b8a2274495586bc1cb9570"
+    },
+    "lib/cu_cp/cu_cp_controller/cu_cp_controller.h": {
+      "before": "3dbf2b458a8e0cdc5768924e3cf0703fb6ad06ae26be21ceea0b3f98b59750e8",
+      "proposed": "0fbf6efbeb5009de18e2ee69f95b1cd16e0752db458c29a2c8cbedaedc96dc2a"
+    },
+    "lib/cu_cp/cu_cp_controller/cu_cp_controller.cpp": {
+      "before": "eb33354fe278693ffaace40486ddb5cdde1d8dd51f76e3e21820c746fa4bfb46",
+      "proposed": "02b7e389a57eb4cf7926f58a0789337d95f3098ab604c5ad9c46361a4060bc8c"
+    }
+  },
+  "open5gs_source_files": {
+    "src/amf/init.c": "122747fcf92533b4952bd53ae78a9cd0e5fe033a703e48967293cc5e8dc102e7",
+    "src/amf/app.c": "0257b049c7f0bc9afa454e16bfabbc1203d8ddb99255825dfae822a365d85e3f",
+    "src/amf/context.c": "b0ba8b5b9801ff184a812618028a528f70c9980a6430b07ab67044f01ad78b4f",
+    "src/amf/sbi-path.c": "5bd7ab833e284faa3127fa588ceca4ac290855a1bfba25b1f428db388809f67a",
+    "src/amf/ngap-sctp.c": "c72fbc1b145684d51e27f9c4162413fb6c6837fa8ba328bf4278ff7ecb8441f3",
+    "src/amf/ngap-handler.c": "28f2ce137044e41bba8b95d65a617b0e42ce56f7ecad03d2823b734592b72e6d",
+    "src/amf/ngap-build.c": "437af3fa09e621b256ab355ae95de508e6f9895c23d8df27ad62c0b25474bfdb",
+    "src/amf/meson.build": "681d16b97619f44acc2512d57905d7f09e08feb3e3e5fd98c71021ad59a56b78",
+    "src/nrf/init.c": "690d286a568c0d94a0f5c6f286a46fc4094e94df292f7ddb6c2e3f5b2cdae0b6",
+    "src/nrf/app.c": "d95a2d2f62907b00b54be52d9cf974b43944a32029eca239e6256a9307b16be6",
+    "src/nrf/meson.build": "9c328d061b2a67f1838b14bc36717795c7d9865f93f079ebfc29d074325eede9",
+    "lib/sbi/context.c": "4cdba67347fa3c144a5ee2f8738417b0f2387c614dcc50bc05108a2a93e040e1",
+    "lib/app/ogs-init.c": "922a2025e5214f9a4db6d81ce16dd29a2522350ab9e63dba53339ddffbecc905",
+    "lib/sctp/meson.build": "d0d591e1d7a8930bcbc4cad9bf05079217614945159a53d5ca5d05a7d3ca3d54",
+    "lib/app/meson.build": "1703c84e77f330fe9baa222f9b780fc0d524bd6ce24e276f57e450a4d5051e1a",
+    "lib/sbi/meson.build": "6712f637f5b91c8f27faa424b07cf954dbbf890557ff665b55ca0ea35478ba66",
+    "lib/dbi/meson.build": "c0da60f45ee89eb72bd4ef3bb4f578c251ca6ac804e29a91569de64ff7f7809e",
+    "lib/metrics/meson.build": "b019d6bac84bb1e6e862a485b5b6d85539d2b926baba7fb23f845f61ff308334",
+    "configs/open5gs/amf.yaml.in": "1af75a978f963c0ea8ba171a2d88ff58d13493f1429c11ecbc1b1d7d28d0b6e2",
+    "configs/open5gs/nrf.yaml.in": "c5052b6be7ad9a1551af9d6bbcd085269e8628285fb350e976e2efd5ab4c7c2b",
+    "meson.build": "afc7edc5c1787291bd3bb626fbcb5d3ffad26393bbf1d8d704612cbb24581e7d",
+    "meson_options.txt": "71258ac7b7f966f06914ae55769c220d0c76d0ccbb7ab41d41b054b7e2df3e92",
+    "lib/asn1c/ngap/NGAP_ProcedureCode.h": "279233be0a01df8f5d98db7b18e5193fc319e553d8039331c6d685cb8a54bf7a",
+    "src/main.c": "089b3b4cd49e6c806b128eb19cd5902a615373a702d560b046f2727d0dc8437e",
+    "lib/metrics/context.c": "41013c74d8651163b7bcdea52f0e5dc10acdd0e4c182846b0c7ee89cfd0baf99"
+  },
+  "native_compilation": "NOT_RUN",
+  "runtime_execution": "NOT_RUN",
+  "preserved_repository_inputs": {
+    ".github/workflows/experimental-srsran-ngap-native.yml": "738b93e9e5c1559c37b9d82f163dafb681cb57b6726d4fb911304ff3c9731ee3",
+    ".github/workflows/experimental-srsran-ngap-sanitizers.yml": "4b9c8e55e06e88e2bf21b0506ea1e74b0a37e710d468acc719058794ef0ad9a6",
+    "ci/experimental/srsran-ngap-stage-c/CMakeLists.txt": "0d9bf8abfe1738c50e152a023b3e6241216a12155f3d6082e3e068c3cfa43f55",
+    "ci/experimental/srsran-ngap-stage-c/FRESHNESS-SEAM.PROPOSAL.md": "fde8e995366e454e83fdff617e735ac2ae246e6cb6db96fe59b304de2d00f191",
+    "ci/experimental/srsran-ngap-stage-c/README.md": "d094db9995caae0a8ec3948394c91da16fdc94654835114aa75b8f10944ae08a",
+    "ci/experimental/srsran-ngap-stage-c/SHA256SUMS": "c18b8998ab19117295d629012ed7c1e5a306ba93972e7bf18d8931a590c460f2",
+    "ci/experimental/srsran-ngap-stage-c/concurrency_component.cpp": "1efbfb438839e8f8734cee052e2743ac829155aef92a8f9640a3008cf17ed3a4",
+    "ci/experimental/srsran-ngap-stage-c/preserved-b2-hashes.json": "0e70029982cbcfd03df9f2efc87083f606d6002bb4e23580cd15fc504514453c",
+    "ci/experimental/srsran-ngap-stage-c/run.sh": "54a141c6ceaab53a4daf987fbe46812cbf3dbda97a9c0d10690a840287584e28",
+    "ci/experimental/srsran-ngap-stage-c/test-inventory.json": "dff4d9b8dec26c254eb8c93473f3189abf28ae190a0ac40d5ceb15b13cf62039",
+    "ci/experimental/srsran-ngap-stage-c/test_preparation.py": "bcfe5579ab44e8a0abc04c7f867697453b5cb283fec55157f50a314ebe050b42",
+    "ci/experimental/srsran-ngap-stage-c/verify_instrumentation.py": "af22d1bc4aaa9ecca1858316418e38e9ddea7567a99fbd500d7d798899909ed3",
+    "ci/experimental/srsran-ngap-stage-c/verify_results.py": "427997c059a9871324a79e4658f83e9301758c9c5c124724fb9c79bda2ccae96",
+    "ci/experimental/srsran-ngap/CMakeLists.txt": "23c4a63d9a892e2ddb00769cf04ad3ea647ccfc34a4dc91db880c89356249e4c",
+    "ci/experimental/srsran-ngap/NATIVE-TESTS.md": "c661044632ac184f36d8909e9056dc111b95dace5f8ab7d6bd01a35d81cd1104",
+    "ci/experimental/srsran-ngap/SHA256SUMS": "a3d23d206e5d7398c9a53cb90754c82596d8cf01f4ba9fd798b826cf03a93c89",
+    "ci/experimental/srsran-ngap/build.sh": "583fb57adf239d2b289c9e3e41c73d5a8b3ee24ba585f6c7a95e2fabe29527d4",
+    "ci/experimental/srsran-ngap/prepare.py": "6f1c6ed6ee6c160836f05335a869602e6107b37065f429f4cd837649a03c8235",
+    "ci/experimental/srsran-ngap/snapshot_component.cpp": "fb02265fee3b6855b9f059947f0b787b0d89f2953c7560babca25e584161518e",
+    "ci/experimental/srsran-ngap/source-manifest.json": "0c1b4c3b0500b5b73b3b440f105bc5ba9580c173f54d81fe68d4d57041140890",
+    "ci/experimental/srsran-ngap/stage-a-complete.patch": "95a2a9598bdb44deca598c5e26478b276968169f54da538d5173a32432444747",
+    "ci/experimental/srsran-ngap/test_review_checks.py": "c46c2a9e2e15b9b5dc032b2df82da57ee068ffb609aff0f49391d5576b46f46a",
+    "ci/experimental/srsran-ngap/verify_cu_cp_tests.py": "fd689b9384bf50992a0870129a991fdc0b87a68df0565cd373a1310f434c5048",
+    "ci/experimental/srsran-ngap-stage-c3/source-manifest.json": "797d3f26c04e6ccaedab025e5d76a8051fd53c22e176ea11d1f4adc25777f708",
+    "ci/experimental/srsran-ngap-stage-c3/README.md": "ddb92dde161d732d47b7c546deb95743423864f124c5d096bb7c9dd68045ab7c",
+    "ci/experimental/srsran-ngap-stage-c3/prepare_overlay.py": "981a703d92d5319fc9cb794fb7b90c076ecd1c26d06a3f90eea844478d4931d9",
+    "ci/experimental/srsran-ngap-stage-c3/verify_isolation.py": "ed0d65e28b4aeabb52bd8fad5b451238e10e40e55f07a9dac36717a77c8a59f4",
+    "ci/experimental/srsran-ngap-stage-c3/CMakeLists.txt": "3400f8c84266a800e4352f786cf1167ae47dfbba5896251d06dc5482dc9dd9bb",
+    "ci/experimental/srsran-ngap-stage-c3/freshness_component.cpp": "0a86d409f81dac3ae3cc1cd090a642567e6abd235e3e87644937c68714d39e0c",
+    "ci/experimental/srsran-ngap-stage-c3/run.sh": "b06aa97ea5b6dbb9357d76c48f759ff5bd92a30aca34ce51b080408dd24b96b7",
+    "ci/experimental/srsran-ngap-stage-c3/SHA256SUMS": "5c51c83f9cb820ab3870ebc6fa3f3ddc0ada14f6ca9fe37ffbdf66bf79a915e5",
+    "ci/experimental/srsran-ngap-stage-c3/preserved-c2-hashes.json": "8a19c3de44607ea75959872285cc18303a6da1435c020aad7098b82f42842991",
+    "ci/experimental/srsran-ngap-stage-c3/case-inventory.json": "ed6257cf4d3f4286007246b9f0e1a4f93eec05ef8f5106d8c7c5f6b812b41471",
+    "ci/experimental/srsran-ngap-stage-c3/test_preparation.py": "092bfcfb8907c30a02bcfa35f0082c5a2e6a53f686c08b8cd3bef26b44da7164",
+    "ci/experimental/srsran-ngap-stage-c3/verify_results.py": "e60b93e9012f1fffb0a7222167136cfeab350c94b23ed893f79803203ef039cd",
+    "ci/experimental/srsran-ngap-stage-c3/source-clock-seam.PROPOSED.patch": "9a2f04ebb24e273e015b8d704fed18a1c92fc1e6817e2019dbfed2af7d6e7893"
+  }
+}
