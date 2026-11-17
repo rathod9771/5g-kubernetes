@@ -4,6 +4,7 @@ from pathlib import Path
 from build_policy import Blocked, digest, PHASES, successful
 from build_receipts import atomic, command, stamp
 from offline_python import PIN, inventory
+from toolchain_lock import ACQUISITION_DIAGNOSTICS, POLICY as TOOLCHAIN_POLICY, POLICY_SHA256 as TOOLCHAIN_POLICY_SHA256
 P = Path(__file__).resolve().parent
 AUX = ('wheel_acquisition', 'python_setup')
 LIMIT = 64 * 1024**2
@@ -136,14 +137,14 @@ def collect(temp,root):
     # Source acquisition precedes the supervisor; preserve its partial diagnostics
     # even when failure prevents the supervisor from ever being started.
     source_root=Path(temp)/'l3-d2a-acquired';worker=root/'worker';worker.mkdir(mode=0o700,exist_ok=True)
-    source_names=['dependency_acquisition.receipt.json','dependency_acquisition.log','source-archives.json','toolchain-lock.json']+['dependency_acquisition.'+str(i)+'.log' for i in range(18)]
+    source_names=list(ACQUISITION_DIAGNOSTICS)+['dependency_acquisition.receipt.json','dependency_acquisition.log','source-archives.json','toolchain-lock.json']+['dependency_acquisition.'+str(i)+'.log' for i in range(18)]
     for name in source_names:
         try:
             f=checked(source_root,name);total+=f.stat().st_size
             if total>256*1024**2:raise Blocked('COLLECTION_TOTAL_BUDGET')
-            target=worker/name
+            target=worker/('acquisition-'+name if name in ACQUISITION_DIAGNOSTICS else name)
             if target.exists():
-                if digest(checked(worker,name))!=digest(f):raise Blocked('SOURCE_DIAGNOSTIC_COLLISION')
+                if digest(checked(worker,target.name))!=digest(f):raise Blocked('SOURCE_DIAGNOSTIC_COLLISION')
             else:shutil.copyfile(f,target);target.chmod(0o600)
         except Blocked as e:errors.append(str(e))
     inputs=root/'inputs';inputs.mkdir(mode=0o700,exist_ok=True)
@@ -195,6 +196,24 @@ def inspection_manifest(root):
     if actual!=set(result):raise Blocked('UNEXPECTED_INSPECTION_OUTPUT')
     return result
 
+def validate_toolchain_diagnostics(root):
+    root=Path(root);r=json.loads(checked(root,'worker/dependency_acquisition.receipt.json').read_text())
+    for name in ACQUISITION_DIAGNOSTICS:
+        f=checked(root,'worker/acquisition-'+name)
+        if digest(f)!=r.get('outputs',{}).get(name):raise Blocked('UNBOUND_TOOLCHAIN_DIAGNOSTIC')
+    lockfile=checked(root,'worker/toolchain-lock.json');lock=json.loads(lockfile.read_text())
+    if lock.get('policy_sha256')!=TOOLCHAIN_POLICY_SHA256 or lock.get('approved_selection') is not True:raise Blocked('UNAPPROVED_TOOLCHAIN_LOCK')
+    if r['outputs'].get('toolchain-lock.json')!=digest(lockfile):raise Blocked('UNBOUND_TOOLCHAIN_LOCK')
+    for prefix,operation in [('acquisition-','toolchain-operation'),('','toolchain-verification')]:
+        entry=json.loads(checked(root,'worker/'+prefix+operation+'.receipt.json').read_text());successful(entry);timing(entry)
+        if entry.get('forced') is not False or entry.get('log_budget_exceeded') is not False:raise Blocked('INCOMPLETE_TOOLCHAIN_OPERATION')
+        if digest(checked(root,'worker/'+prefix+operation+'.log'))!=entry['log_sha256']:raise Blocked('TOOLCHAIN_LOG_HASH')
+        diag=json.loads(checked(root,'worker/'+prefix+'toolchain-progress.json').read_text())
+        if diag.get('classification')!='PASS' or diag.get('stage')!='completed' or diag.get('policy')!=TOOLCHAIN_POLICY:raise Blocked('INCOMPLETE_TOOLCHAIN_PROGRESS')
+    for name in ('toolchain-versions','toolchain-database','toolchain-paths'):
+        entry=json.loads(checked(root,'worker/acquisition-'+name+'.receipt.json').read_text());successful(entry);timing(entry)
+        if digest(checked(root,'worker/acquisition-'+name+'.log'))!=entry['log_sha256']:raise Blocked('TOOLCHAIN_QUERY_LOG_HASH')
+
 def export_bundle(root,bundle):
     # Upload only reviewed evidence paths. Never upload a workspace or source tree.
     root=Path(root);bundle=Path(bundle)
@@ -202,6 +221,8 @@ def export_bundle(root,bundle):
     bundle.mkdir(mode=0o700)
     names=set(ROOT_FILES)|{'inputs/'+name for name in INPUT_FILES}
     names|={'worker/'+n for n in WORKER_FILES}
+    names|={'worker/acquisition-'+n for n in ACQUISITION_DIAGNOSTICS}
+    names|={'worker/'+n for n in ('toolchain-verification.log','toolchain-verification.receipt.json','toolchain-progress.json')}
     for phase in PHASES:
         names|={'worker/'+phase+'.receipt.json','worker/'+phase+'.log'}
         names|={'worker/'+phase+'.'+str(i)+'.log' for i in range(18)}

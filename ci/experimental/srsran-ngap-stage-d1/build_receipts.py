@@ -41,13 +41,15 @@ def command(argv,cwd,env,log,timeout):
 
 class Recorder:
     def __init__(self,root,env):self.root=Path(root);self.env=env;self.receipts={}
-    def phase(self,name,commands,cwd,action=None,outputs=(),timeout=120):
-        start=time.monotonic();r={'phase':name,'started_at':stamp(),'ended_at':None,'elapsed_seconds':None,'command_sha256':hashlib.sha256(json.dumps({'phase':name,'commands':commands,'source_file_sha256':digest(action.__code__.co_filename) if action else digest(__file__)},sort_keys=True).encode()).hexdigest(),'exit_code':None,'signal':None,'resource_limit_status':'VERIFIED','classification':'INCOMPLETE','timeout':False,'validation_completed':False,'outputs':{},'log':str(self.root/(name+'.log')),'log_sha256':None,'commands':[]}
+    def phase(self,name,commands,cwd,action=None,outputs=(),timeout=120,resource_limit_status='VERIFIED'):
+        start=time.monotonic();r={'phase':name,'started_at':stamp(),'ended_at':None,'elapsed_seconds':None,'command_sha256':hashlib.sha256(json.dumps({'phase':name,'commands':commands,'source_file_sha256':digest(action.__code__.co_filename) if action else digest(__file__)},sort_keys=True).encode()).hexdigest(),'exit_code':None,'signal':None,'resource_limit_status':resource_limit_status,'classification':'INCOMPLETE','timeout':False,'validation_completed':False,'outputs':{},'log':str(self.root/(name+'.log')),'log_sha256':None,'commands':[]}
         log=Path(r['log']);log.write_text('')
+        atomic(self.root/(name+'.receipt.json'),r)  # Incomplete checkpoint, never PASS.
         try:
             for i,argv in enumerate(commands):
                 entry=command(argv,cwd,self.env,self.root/(name+f'.{i}.log'),timeout);r['commands'].append(entry)
                 with log.open('a') as f:f.write(json.dumps(entry)+'\n')
+                atomic(self.root/(name+'.receipt.json'),r)
                 if entry['classification']!='PASS':
                     r.update(exit_code=entry['exit_code'],signal=entry['signal'],timeout=entry['timeout'],classification=entry['classification']);raise PhaseError(name,entry['classification'])
             if action:action()

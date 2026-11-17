@@ -46,6 +46,24 @@ def inspection_fixture(root):
     (w/'binary-inventory.json').write_text(json.dumps(inventory))
     receipt=w/'binary_inspection.receipt.json';r=json.loads(receipt.read_text());r['outputs'].update(outputs);r['outputs']['/work/evidence/binary-inventory.json']=digest(w/'binary-inventory.json');receipt.write_text(json.dumps(r))
 
+def toolchain_fixture(root):
+    """Synthetic timing/receipt evidence; no query or toolchain scan."""
+    root=Path(root);w=root/'worker'
+    base={'argv':['SYNTHETIC_NOT_EXECUTED'],'started_at':'2026-11-16T12:00:00+00:00','ended_at':'2026-11-16T12:00:01+00:00','elapsed_seconds':1,'classification':'PASS','exit_code':0,'signal':None,'timeout':False,'forced':False,'log_budget_exceeded':False}
+    source=json.loads((w/'dependency_acquisition.receipt.json').read_text())
+    (w/'toolchain-lock.json').write_text(json.dumps({'schema':2,'policy_sha256':we.TOOLCHAIN_POLICY_SHA256,'approved_selection':True,'selected_packages':{'SYNTHETIC_NOT_REAL':'1'}}))
+    source['outputs']['toolchain-lock.json']=digest(w/'toolchain-lock.json')
+    for phase in ('toolchain-operation','toolchain-versions','toolchain-database','toolchain-paths'):
+        log=w/('acquisition-'+phase+'.log');log.write_text('SYNTHETIC_PUBLIC_PACKAGE_DIAGNOSTIC')
+        (w/('acquisition-'+phase+'.receipt.json')).write_text(json.dumps(dict(base,log=phase+'.log',log_sha256=digest(log))))
+    (w/'acquisition-toolchain-progress.json').write_text(json.dumps({'classification':'PASS','stage':'completed','policy':we.TOOLCHAIN_POLICY}))
+    (w/'acquisition-toolchain-selection.json').write_text(json.dumps({'policy_sha256':we.TOOLCHAIN_POLICY_SHA256,'selected_paths':['SYNTHETIC_ONLY']}))
+    for name in we.ACQUISITION_DIAGNOSTICS:source['outputs'][name]=digest(w/('acquisition-'+name))
+    (w/'dependency_acquisition.receipt.json').write_text(json.dumps(source))
+    log=w/'toolchain-verification.log';log.write_text('SYNTHETIC_VERIFICATION')
+    (w/'toolchain-verification.receipt.json').write_text(json.dumps(dict(base,log=log.name,log_sha256=digest(log))))
+    (w/'toolchain-progress.json').write_text(json.dumps({'classification':'PASS','stage':'completed','policy':we.TOOLCHAIN_POLICY}))
+
 class WorkflowEvidence(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)

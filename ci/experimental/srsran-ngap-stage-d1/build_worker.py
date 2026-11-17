@@ -3,7 +3,7 @@ import json,os,shutil,subprocess,sys,tarfile,time,stat
 from pathlib import Path
 from build_policy import Blocked,LIMITS,VERSIONS,PHASES,digest,environment,resource_admission,check_dependency_tree,audit_graph,unity_generated
 from build_receipts import Recorder,atomic
-from toolchain_lock import verify as verify_toolchain
+from toolchain_lock import run_bounded as verify_toolchain,verify_acquisition
 
 def run_output(argv,env):return subprocess.check_output(argv,env=env,text=True,timeout=30)
 def main():
@@ -32,9 +32,9 @@ def main():
     for logfile in sources.glob('dependency_acquisition*.log'):shutil.copy2(logfile,out/logfile.name)
     shutil.copy2(sources/'source-archives.json',out/'source-archives.json')
     def source_verify():
-        toolchain=json.loads((sources/'toolchain-lock.json').read_text())
-        verify_toolchain(toolchain,(w/'platform-packages.txt').read_text())
+        verify_acquisition(sources)
         shutil.copy2(sources/'toolchain-lock.json',out/'toolchain-lock.json')
+        verify_toolchain('--verify',out,env,w,w/'platform-packages.txt')
         for name,d in policy['sources'].items():
             archive=sources/(name+'.tar')
             if digest(archive)!=d['archive_sha256']:raise Blocked('SOURCE_ARCHIVE_HASH')
@@ -49,7 +49,7 @@ def main():
         for name,h in manifest['preserved_repository_inputs'].items():
             if digest(repo/name)!=h:raise Blocked('PRESERVED_INPUT_DRIFT')
         atomic(out/'verified-source-archives.json',{k:{'revision':v['revision'],'sha256':v['archive_sha256']} for k,v in policy['sources'].items()})
-    rec.phase('source_verification',[],w,source_verify,outputs=[out/'verified-source-archives.json'])
+    rec.phase('source_verification',[],w,source_verify,outputs=[out/'verified-source-archives.json',out/'toolchain-lock.json',out/'toolchain-verification.receipt.json',out/'toolchain-verification.log',out/'toolchain-progress.json'])
     s=w/'srsran';ogs=w/'open5gs';sb=w/'srs-build';ob=w/'ogs-build'
     for name in ('freeDiameter','libtins','prometheus-client-c','usrsctp'):shutil.move(str(w/name),ogs/'subprojects'/name)
     stage=repo/'ci/experimental/srsran-ngap/stage-a-complete.patch'

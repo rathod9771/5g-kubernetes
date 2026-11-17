@@ -34,10 +34,11 @@ def validate_native(root):
     return {'classification':'PASS_BUILD_ONLY','native_tests_executed':0,'runtime_executed':False}
 def validate(root):
     # Native success alone is never whole-workflow success.
-    from workflow_evidence import validate_aux, timing, checked, INPUT_FILES, P, inspection_manifest
+    from workflow_evidence import validate_aux, timing, checked, INPUT_FILES, P, inspection_manifest, validate_toolchain_diagnostics
     root=Path(root)
     result=validate_native(root)
     inspection_manifest(root)
+    validate_toolchain_diagnostics(root)
     windows=validate_aux(root/'auxiliary')
     for name in INPUT_FILES:
         if digest(checked(root,'inputs/'+name))!=digest(P/name):raise Blocked('INPUT_EVIDENCE_HASH:'+name)

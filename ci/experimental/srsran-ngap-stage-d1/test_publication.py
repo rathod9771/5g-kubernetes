@@ -112,6 +112,8 @@ class Publication(unittest.TestCase):
    f.write_text(json.dumps(r))
   from test_workflow_evidence import inspection_fixture
   inspection_fixture(root)
+  from test_workflow_evidence import toolchain_fixture
+  toolchain_fixture(root)
   final=dict(x[3],status='PASS_BUILD_ONLY_ZERO_NATIVE_TESTS');self.rehash(root,final);return final
  def rehash(self,root,final):
   root=Path(root);final['evidence_sha256']={str(f.relative_to(root)):bp.digest(f) for f in root.rglob('*') if f.is_file() and f.name!='supervisor-final.json' and 'auxiliary' not in f.relative_to(root).parts and f.name!='preservation.json' and 'inputs' not in f.relative_to(root).parts}
