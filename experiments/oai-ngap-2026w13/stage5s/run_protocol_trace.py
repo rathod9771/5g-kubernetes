@@ -129,6 +129,7 @@ class DiagnosticCollector:
         self.threads = []
         self.missing_sources = []
         self.limit_reached = False
+        self.header_samples_suppressed = Counter()  # expected high-volume header-only SCTP sampling
         self.wire_counts = Counter()
         self.wire_events = []
         self.stopped = False
@@ -143,9 +144,18 @@ class DiagnosticCollector:
         with self.lock:
             self.counts[role][category] += 1
             ck = (role, category)
-            if (len(self.events) >= MAX_EVENTS or
-                    self.emitted[ck] >= MAX_ROLE_CATEGORY_EVENTS):
-                self.limit_reached = True
+            if len(self.events) >= MAX_EVENTS:
+                self.limit_reached = True  # a real bounded-observation gap
+                return
+            if self.emitted[ck] >= MAX_ROLE_CATEGORY_EVENTS:
+                # Stage5V: wire-level packet metadata is counted exhaustively
+                # but only the first 100 events per type are displayed.
+                # The intentional header sampling cap is NOT missing UE
+                # RRC, NAS, BWP, or harness protocol evidence.
+                if role == "wire-headers":
+                    self.header_samples_suppressed[category] += 1
+                else:
+                    self.limit_reached = True  # a safety-critical category was capped
                 return
             self.emitted[ck] += 1
             self.events.append({"source": role, "event": category,
@@ -255,6 +265,12 @@ class DiagnosticCollector:
                 "production_decision": "NO_GO", "production_authorized": False,
                 "privacy": "this timeline excludes raw payloads/identifiers; separate Stage5P synthetic evidence includes logs and GTP PCAPs",
                 "collection_limit_reached": self.limit_reached,
+                "wire_header_sampling": {
+                    "per_category_display_cap": MAX_ROLE_CATEGORY_EVENTS,
+                    "suppressed_header_only_samples": dict(self.header_samples_suppressed),
+                    "all_header_packets_counted": True,
+                    "required_ue_events_truncated": self.limit_reached,
+                },
                 "collection_issues": list(self.missing_sources),
                 "category_counts": {role:dict(counts) for role,counts in self.counts.items()},
                 "events": sorted(self.events,key=lambda e:e["elapsed_seconds"]),

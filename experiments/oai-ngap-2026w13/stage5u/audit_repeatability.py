@@ -54,6 +54,15 @@ def verify_stage5u(root):
         errors.append("Stage5U protocol timeline is not a completed NO_GO research PASS")
     if timeline.get("collection_issues")!=[] or timeline.get("collection_limit_reached") is not False:
         errors.append("Stage5U incomplete/dropped bounded live observations")
+    # Stage5V: distinguish intentional wire-header display sampling from
+    # safety-critical UE/NAS/RRC event loss; never waive real event truncation.
+    sampled=timeline.get("wire_header_sampling")
+    if (not isinstance(sampled,dict) or
+            sampled.get("all_header_packets_counted") is not True or
+            sampled.get("required_ue_events_truncated") is not False or
+            sampled.get("per_category_display_cap") != 100 or
+            not isinstance(sampled.get("suppressed_header_only_samples"),dict)):
+        errors.append("Stage5V missing or malformed header sampling audit")
     events=timeline.get("events")
     if not isinstance(events,list) or len(events)<50 or len(events)>MAX_TRACE_EVENTS:
         errors.append("Stage5U missing/overflowed diagnostic events")
@@ -163,6 +172,7 @@ def run(root):
         "negative_controls":{},
         "production_authorized":False,
         "production_decision":"NO_GO",
+        "trace_header_sampling_policy":"count-all-SCTP-headers-sample-first-100-per-kind; never omit UE/NAS/RRC",
     }
     if ok:
         with tempfile.TemporaryDirectory(prefix="hcran-stage5u-negative-") as td:
