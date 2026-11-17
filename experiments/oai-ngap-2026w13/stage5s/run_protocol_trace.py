@@ -77,6 +77,7 @@ DU_RULES = (
 CORE_RULES = (
     ("amf_ngap_accept", r"gNB-N2 accepted"),
     ("amf_ngap_initial_ue", r"InitialUEMessage"),
+    ("amf_initial_ue_cell", r"RAN_UE_NGAP_ID\[[0-9]+\].*CellID\[0x[0-9a-f]+\]"),
     ("amf_unknown_tmsi", r"Unknown UE by 5G-S_TMSI"),
     ("amf_nas_service", r"Service Request"),
     ("amf_nas_registration", r"Registration Request|Registration complete"),
@@ -90,6 +91,7 @@ RULES = {
     "macro": tuple((k, re.compile(v, re.I)) for k,v in DU_RULES),
     "small": tuple((k, re.compile(v, re.I)) for k,v in DU_RULES),
     "amf-snapshot": tuple((k, re.compile(v, re.I)) for k,v in CORE_RULES),
+    "core": tuple((k, re.compile(v, re.I)) for k,v in CORE_RULES),
 }
 DIAG_KEYS = ("count", "mac_state", "ra_state", "ul_count", "dl_count",
              "mib", "configured_ul0", "configured_dl0")
@@ -114,6 +116,14 @@ def classify_lines(role, lines):
                     m = re.search(r"\b" + key + r"=(-?\d+)\b", clipped)
                     if m:
                         metadata[key] = int(m.group(1))
+            if role == "cu" and category in ("cu_rrc_setup_complete","cu_ul_nas"):
+                m = re.search(r"\[UL\] \(cellID ([0-9]+), UE ID [0-9]+", clipped)
+                if m:
+                    metadata["cell_id"] = int(m.group(1))
+            if role == "core" and category == "amf_initial_ue_cell":
+                m = re.search(r"CellID\[(0x[0-9a-f]+)\]", clipped, re.I)
+                if m:
+                    metadata["cell_id"] = int(m.group(1), 16)
             out.append((category, metadata))
     return out
 
@@ -186,11 +196,13 @@ class DiagnosticCollector:
 
     def start(self):
         from run_ue_registration import name
-        for role in ("ue", "ue-small", "cu", "macro", "small"):
+        for role in ("ue", "ue-small", "cu", "macro", "small", "core"):
             try:
                 p = subprocess.Popen(
                     ["docker", "logs", "--timestamps", "--follow", "--tail", "0", name(role)],
-                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    # Docker logs may emit Open5GS AMF messages on STDERR.
+                    # Merge into the same allowlist parser; never archive raw text.
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding="utf-8", errors="replace", bufsize=1)
                 self.procs.append(p)
                 t = threading.Thread(target=self.consume, args=(role,p), daemon=True)
@@ -263,7 +275,8 @@ class DiagnosticCollector:
                 "source": "docker-log-allowlist+SCTP-headers+synthetic-AMF-allowlist",
                 "verdict_from_genuine_stage5p_harness": verdict,
                 "production_decision": "NO_GO", "production_authorized": False,
-                "privacy": "this timeline excludes raw payloads/identifiers; separate Stage5P synthetic evidence includes logs and GTP PCAPs",
+                "privacy": "Only synthetic lab cell IDs and allowlisted protocol categories; no IMSI/SUPI/SUCI, NAS payload, RNTI or subscriber credentials saved in this timeline",
+                "stage5x_streams": ["cu", "core"],
                 "collection_limit_reached": self.limit_reached,
                 "wire_header_sampling": {
                     "per_category_display_cap": MAX_ROLE_CATEGORY_EVENTS,
