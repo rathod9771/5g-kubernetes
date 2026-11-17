@@ -1,0 +1,210 @@
+name: H-CRAN Stage 5T pre-SIB1 MAC RA ordering three-cycle qualification - NO DEPLOY
+
+# Two independently hosted diagnostic sessions, each with THREE consecutive AMF
+# faults against the SAME two unchanged UE processes. REBUILD test-only
+# pinned UE with pre-SIB1 MAC RA ordering guard; rebuild pinned Stage3 NGAP CU.
+# No historical artifact fetch; this rebuilds a source-equivalent CU, not bit-identical.
+# This never touches HP, Kubernetes, OSM, production keys or subscribers.
+on:
+  push:
+    branches:
+      - experiment/hcran-stage5t-rrc-sib1-ra-ordering-20261117
+    paths:
+      - .github/workflows/hcran-stage5t-rrc-sib1-ra-ordering.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: hcran-stage5t-20261116-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-independent-trial:
+    name: Stage5T UE SIB1 and 3-cycle fault-recovery trial ${{ matrix.trial }}/2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        trial: [1, 2]
+    env:
+      CORE_IMG: gradiant/open5gs:2.7.6
+      MONGO_IMG: mongo:6.0
+      CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w45
+      UE_IMG: hcran-stage5t-pinned-presib1:run-${{ github.run_number }}
+    steps:
+      - name: Checkout Stage5P qualification source (current experimental commit)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: qualification
+
+      - name: Checkout frozen Stage4P AMF fault harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 4080110a74bf6ba58804797c5b7216458e2f0a93
+          path: baseline
+
+      - name: Install isolated test dependencies and kernel prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage5p-evidence" "$RUNNER_TEMP/stage5p-render" "$RUNNER_TEMP/stage5p-inputs"
+          python3 -m venv "$RUNNER_TEMP/stage5p-venv"
+          "$RUNNER_TEMP/stage5p-venv/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tcpdump
+          test -c /dev/net/tun || sudo modprobe tun
+          test -c /dev/net/tun
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -d /proc/net/sctp
+          {
+            echo "trial=${{ matrix.trial }}"
+            echo "upstream_stage5m_run=43588828565"
+            uname -a
+            free -h
+            df -h /
+          } > "$RUNNER_TEMP/stage5p-evidence/runner-preflight.txt"
+
+      - name: Install Helm for static H-CRAN manifests
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Render two-DU H-CRAN source without deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm template hcran-oai-cu qualification/helm/cran-oai/cu \
+            -f qualification/helm/cran-oai/cu/values-hcran.yaml \
+            -f qualification/helm/cran-oai/cu/values-hcran-secure-staging.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5p-render/cu.yaml"
+          helm template hcran-oai-macro qualification/helm/cran-oai/du \
+            -f qualification/helm/cran-oai/du/values-hcran-macro.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5p-render/macro.yaml"
+          helm template hcran-oai-small qualification/helm/cran-oai/du \
+            -f qualification/helm/cran-oai/du/values-hcran-small.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5p-render/small.yaml"
+
+      - name: Rebuild OAI W13 Stage3 NGAP patched CU from pinned upstream source
+        shell: bash
+        env:
+          OAI_SOURCE: ${{ runner.temp }}/stage5q-pinned-stage3-cu-source
+          OUTPUT: ${{ runner.temp }}/stage5q-cu-build-proof
+        run: |
+          set -euo pipefail
+          bash -n qualification/scripts/hcran_build_pinned_stage3_ngap_cu.sh
+          cd "$GITHUB_WORKSPACE/qualification"
+          export GITHUB_WORKSPACE="$PWD"
+          export IMAGE="$CU_IMG"
+          bash scripts/hcran_build_pinned_stage3_ngap_cu.sh
+
+      - name: Verify exact pinned source-builder syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n qualification/scripts/hcran_build_pinned_w45_ue_stage5t.sh
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5q/patch_mac_bwp0_liveness.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5t/patch_pre_sib1_ra_ordering.py
+
+      - name: Rebuild pinned OAI W45 research UE with Stage5T SIB1 RA ordering candidate
+        shell: bash
+        env:
+          OAI_SOURCE: ${{ runner.temp }}/stage5t-pinned-source
+          OUTPUT: ${{ runner.temp }}/stage5t-build-proof
+          IMAGE: hcran-stage5t-pinned-presib1:run-${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/qualification"
+          export GITHUB_WORKSPACE="$PWD"
+          bash scripts/hcran_build_pinned_w45_ue_stage5t.sh
+          grep -q 'Stage5T' "$OUTPUT/test-only-UE-stage5t-presib1-ra-ordering.patch"
+          docker image inspect "$IMAGE" --format '{{.Id}}'
+
+      - name: Verify source-rebuilt CU and isolated core/DU container images
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker image inspect "$CU_IMG" --format '{{.Id}}' \
+            > "$RUNNER_TEMP/stage5p-evidence/source-rebuilt-cu-id.txt"
+          docker image inspect "$UE_IMG" --format '{{.Id}}' \
+            > "$RUNNER_TEMP/stage5p-evidence/stage5t-candidate-id.txt"
+          for image in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG"; do docker pull "$image"; done
+
+      - name: Audit fail-closed multicycle harness syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/run_bounded_recovery_stage5s.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/verify_bounded_recovery_stage5s.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/run_three_cycle_recovery.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/run_protocol_trace.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/verify_three_cycle_recovery.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/verify_bounded_recovery_stage5s.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5k/verify_tun_renewal.py
+
+      - name: Live Stage5R protocol timeline plus genuine three-cycle Stage5P acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/stage5p-venv/bin/python" -u \
+            qualification/experiments/oai-ngap-2026w13/stage5s/run_protocol_trace.py \
+            --baseline "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13" \
+            --rendered "$RUNNER_TEMP/stage5p-render" \
+            --output "$RUNNER_TEMP/stage5p-evidence" \
+            --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
+            --cycles 3 --verify-gtpu \
+            2>&1 | tee "$RUNNER_TEMP/stage5p-console.log"
+          "$RUNNER_TEMP/stage5p-venv/bin/python" \
+            qualification/experiments/oai-ngap-2026w13/stage5s/verify_three_cycle_recovery.py \
+            "$RUNNER_TEMP/stage5p-evidence"
+
+      - name: Remove private test material before artifact upload
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/stage5p-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          test ! -e "$RUNNER_TEMP/stage5p-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+
+      - name: Archive reproducible Stage3 NGAP CU source-build proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage5t-stage3-cu-build-proof-${{ github.run_number }}-${{ matrix.trial }}
+          path: ${{ runner.temp }}/stage5q-cu-build-proof/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
+
+      - name: Preserve pinned research source build proof, including full Stage5T patch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage5t-ue-source-proof-${{ github.run_number }}-${{ matrix.trial }}
+          path: ${{ runner.temp }}/stage5t-build-proof/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
+
+      - name: Preserve redacted evidence whether pass or fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcran-stage5t-protocol-diagnostics-trial-${{ matrix.trial }}
+          path: ${{ runner.temp }}/stage5p-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 2
