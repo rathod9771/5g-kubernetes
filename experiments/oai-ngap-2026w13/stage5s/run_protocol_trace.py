@@ -222,6 +222,13 @@ class DiagnosticCollector:
             self.threads.append(t)
         except (OSError, ValueError) as exc:
             self.missing_sources.append({"source":"wire-headers","error_type":type(exc).__name__})
+        # Stage5Y: Open5GS writes AMF InitialUEMessage and its cell ID
+        # on separate lines of files in /tmp/stage4k-log/. The generic
+        # docker-logs stream alone does NOT establish per-cell ingress.
+        from amf_ingress_stream_stage5y import observe_amf_files
+        t = threading.Thread(target=observe_amf_files, args=(self,), daemon=True)
+        t.start()
+        self.threads.append(t)
 
     def milestone(self, label, status, more):
         if label not in STAGE_MARKERS:
