@@ -62,3 +62,5 @@ jobs:
           assert "verify_guard_release_end(" in supervisor
           print("OFFLINE_PINNED_NATIVE_ADMISSION_REVIEW_ONLY__NO_NATIVE_EXECUTION")
           PY
+
+# Requalification after guarded native-evidence fixture updates (offline only).
