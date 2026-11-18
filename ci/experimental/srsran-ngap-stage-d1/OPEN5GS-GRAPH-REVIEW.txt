@@ -6,3 +6,8 @@ Two linker response-file references exist; their expanded arguments are NOT
 contained in the retained diagnostic ZIP and require independent review.
 No additional CI dispatch, native build execution, or deployment is authorized.
 All source pins, srsRAN audit rules, and sandbox limits remain unchanged.
+
+NEXT GATE (2026-11-18): Review-only response-file evidence collection.
+The collector reads generated Meson/Ninja build.ninja and optionally existing
+rsp bytes, emits open5gs-rsp-review.json, and deliberately BLOCKS native build.
+No expanded arguments or new live build result have yet been obtained.

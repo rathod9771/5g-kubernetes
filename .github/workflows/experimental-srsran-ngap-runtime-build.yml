@@ -40,7 +40,7 @@ jobs:
         run: |
           cd "$INPUT"
           sha256sum -c SHA256SUMS
-          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py test_toolchain_bounded.py test_open5gs_graph_gate.py
+          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py test_toolchain_bounded.py test_open5gs_graph_gate.py test_open5gs_rsp_review.py
       - name: Acquire exact public source before offline configuration
         timeout-minutes: 10
         run: |
