@@ -152,6 +152,14 @@ class Harness(unittest.TestCase):
     def test_unit_must_have_started(self):self.assertFalse(supervisor.check_terminal({'SubState':'dead','ExecMainStartTimestampMonotonic':'0'}))
     def test_pipeline_no_test_or_nf_execution(self):
         src=(P/'build_worker.py').read_text();self.assertNotIn("['ctest'",src);self.assertIn("['/usr/bin/readelf'",src);self.assertNotIn("['/usr/bin/ldd'",src);self.assertIn('audit_graph(graph)',src)
+    def test_user_namespace_required_for_custom_uid_gid(self):
+        src=(P/'build_supervisor.py').read_text()
+        self.assertIn("argv=['/usr/bin/bwrap','--unshare-user','--unshare-net'",src)
+        self.assertIn("'--uid',str(uid),'--gid',str(gid),'--cap-drop','ALL'",src)
+        self.assertIn("'--property=NoNewPrivileges=yes'",src)
+        self.assertNotIn("'--unshare-user-try'",src)
+        self.assertNotIn("'--not-a-security-boundary'",src)
+        self.assertIn("'--unshare-ipc'",src)
     def test_supervisor_isolated_hard_limits(self):
         src=(P/'build_supervisor.py').read_text()
         for flag in ('--unshare-net','--ro-bind','--clearenv','NoNewPrivileges=yes','KillMode=control-group','MemoryMax=','CPUQuota=200%','TasksMax=','RuntimeMaxSec=4500s'):self.assertIn(flag,src)
