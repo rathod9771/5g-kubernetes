@@ -5,12 +5,15 @@ name: H-CRAN Stage 5Y live Open5GS AMF cell-ingress evidence gate - NO DEPLOY
 # pinned Stage5T UE with unchanged pre-SIB1 MAC guard; rebuild pinned Stage3 NGAP CU.
 # No historical artifact fetch; this rebuilds a source-equivalent CU, not bit-identical.
 # Stage5Y-A: test-only race-safe /proc AMF count; frozen Stage4P baseline unchanged.
+# Stage5ZB: additional radio/RRC log categories are read-only, no runtime changes.
+# The real Stage5P, Stage5U and Stage5Y acceptance gates remain fail-closed.
 # This never touches HP, Kubernetes, OSM, production keys or subscribers.
 on:
   push:
     branches:
       - experiment/hcran-stage5y-amf-ingress-observer-20261118
       - experiment/hcran-stage5z-amf-selection-observer-20261118
+      - experiment/hcran-stage5zb-rrc-radio-boundary-20261118
     paths:
       - .github/workflows/hcran-stage5y-amf-ingress-observer.yml
   workflow_dispatch:
@@ -156,6 +159,8 @@ jobs:
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/run_protocol_trace.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/amf_process_count_stage5y.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/cu_amf_selection_stage5z.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/rrc_radio_boundary_stage5zb.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5zb/analyze_rrc_radio_boundary.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5z/analyze_amf_selection_stage5z.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/verify_three_cycle_recovery.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5u/audit_repeatability.py
@@ -212,6 +217,14 @@ jobs:
         run: |
           set -euo pipefail
           python3 qualification/experiments/oai-ngap-2026w13/stage5z/analyze_amf_selection_stage5z.py \
+            "$RUNNER_TEMP/stage5p-evidence"
+
+      - name: Stage5ZB diagnose UE and DU RA/RRC-to-CU boundary, even on real recovery failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 qualification/experiments/oai-ngap-2026w13/stage5zb/analyze_rrc_radio_boundary.py \
             "$RUNNER_TEMP/stage5p-evidence"
 
       - name: Stage5Y independently require both live AMF cell ingress categories per genuine recovery cycle
