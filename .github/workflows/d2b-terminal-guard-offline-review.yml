@@ -66,3 +66,5 @@ jobs:
 # Requalification after guarded native-evidence fixture updates (offline only).
 
 # Offline recheck after consistent unittest class method indentation.
+
+# Offline rerun: synthetic toolchain negative-fixture correction, no native execution.

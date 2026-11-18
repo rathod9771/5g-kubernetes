@@ -109,11 +109,13 @@ class Publication(unittest.TestCase):
    for c in r['commands']:c.update(log=str(cmd),log_sha256=bp.digest(cmd))
    (w/(phase+'.receipt.json')).write_text(json.dumps(r))
   for name,value in [('toolchain.json',x[1]),('binary-inventory.json',x[2]),('enforcement.json',original.Harness().limits())]:(w/name).write_text(json.dumps(value))
-  graph,review,expanded,_=admission_fixture()
+  graph,review,expanded,pins=admission_fixture()
   (w/'open5gs-commands.txt').write_text(graph)
   (w/'open5gs-rsp-review.json').write_text(json.dumps(review))
   (w/'open5gs-rsp-expanded.json').write_text(json.dumps(expanded))
-  (w/'d2b-native-admission.json').write_text(json.dumps(nba.admit_reviewed_open5gs_graph(graph,review,expanded)))
+  with patch.object(nba,'PINNED_OPEN5GS_GRAPH',nba._sha(graph)),patch.object(nba,'PINNED_EXPANSION_STDOUT','2'*64),patch.object(nba,'PINNED_COMMANDS',pins):
+   synthetic_admission=nba.admit_reviewed_open5gs_graph(graph,review,expanded)
+  (w/'d2b-native-admission.json').write_text(json.dumps(synthetic_admission))
   (root/'post-worker-guard-accounting.json').write_text(json.dumps({
       'classification':'POST_WORKER_SNAPSHOT_REQUIRES_TERMINAL_CONFIRMATION',
       'proof':{'worker_exit_code':0,'mode':'POST_WORKER_QUIESCENT_GUARD_HELD',
