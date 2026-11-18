@@ -47,6 +47,10 @@ def build_report(evidence):
         if trace.get('schema')!='hcran-stage5r-bounded-protocol-observation-v1':
             raise ValueError('Wrong timeline schema')
         events = trace['events']
+        mode = trace.get('stage5za_cu_selection_observer_mode', 'on')
+        if mode not in ('on', 'off'):
+            raise ValueError('Invalid experimental observer mode')
+        report['cu_selection_observer_mode'] = mode
         if not isinstance(events,list):
             raise ValueError('Missing event list')
         complete = (trace.get('collection_issues')==[] and
@@ -57,7 +61,7 @@ def build_report(evidence):
                   type(e.get('cycle')) is int]
         starts.sort(key=lambda e:e['elapsed_seconds'])
         report['observation_complete'] = complete
-        report['status'] = 'DIAGNOSTIC_ONLY' if starts and complete else 'INCOMPLETE_OBSERVATION'
+        report['status'] = ('CONTROL_DIAGNOSTIC_ONLY' if mode == 'off' else 'DIAGNOSTIC_ONLY') if starts and complete else 'INCOMPLETE_OBSERVATION'
         for i, start in enumerate(starts):
             next_start = starts[i+1]['elapsed_seconds'] if i+1<len(starts) else float('inf')
             segment = [e for e in events if start['elapsed_seconds'] <= e.get('elapsed_seconds',-1) < next_start]

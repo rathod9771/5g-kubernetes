@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "stage5s"))
 from run_three_cycle_recovery import configure
 from amf_process_count_stage5y import count_amf_processes
-from cu_amf_selection_stage5z import CUSelectionObserver
+from cu_amf_selection_stage5z import CUSelectionObserver, observer_enabled
 
 MAX_EVENTS = 1800
 MAX_ROLE_CATEGORY_EVENTS = 100
@@ -145,6 +145,7 @@ class DiagnosticCollector:
         self.wire_counts = Counter()
         self.wire_events = []
         self.stopped = False
+        self.stage5za_cu_observer_enabled = observer_enabled()
 
     def stamp(self):
         return {
@@ -175,7 +176,7 @@ class DiagnosticCollector:
 
     def consume(self, role, process):
         try:
-            cu_selection = CUSelectionObserver() if role == "cu" else None
+            cu_selection = CUSelectionObserver() if role == "cu" and self.stage5za_cu_observer_enabled else None
             for line in process.stdout:
                 for key, metadata in classify_lines(role, (line,)):
                     self.add(role, key, metadata)
@@ -292,6 +293,7 @@ class DiagnosticCollector:
                 "production_decision": "NO_GO", "production_authorized": False,
                 "privacy": "Only synthetic lab cell IDs and allowlisted protocol categories; no IMSI/SUPI/SUCI, NAS payload, RNTI or subscriber credentials saved in this timeline",
                 "stage5x_streams": ["cu", "core"],
+                "stage5za_cu_selection_observer_mode": ("on" if self.stage5za_cu_observer_enabled else "off"),
                 "collection_limit_reached": self.limit_reached,
                 "wire_header_sampling": {
                     "per_category_display_cap": MAX_ROLE_CATEGORY_EVENTS,

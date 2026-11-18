@@ -6,7 +6,16 @@ log adjacency, not UE identity. Never exports UE IDs, RNTI, cell subscriber
 identifiers, PLMN values, NAS messages or raw log lines. Association is a
 hypothesis, *not* wire-delivery or per-subscriber proof.
 """
+import os
 import re
+
+def observer_enabled(environment=None):
+    """Strict test-only A/B switch. Never touches CU or UE protocol code."""
+    env = os.environ if environment is None else environment
+    value = env.get("STAGE5ZA_CU_OBSERVER", "on")
+    if value not in ("on", "off"):
+        raise ValueError("STAGE5ZA_CU_OBSERVER must be on or off")
+    return value == "on"
 
 RRC_SETUP = re.compile(r'\[UL\]\s*\(cellID\s+(\d+),\s*UE ID\s+\d+[^\n]*?\)\s*Received RRCSetupComplete', re.I)
 NO_MATCH = re.compile(r'No matching AMF found for PLMN', re.I)

@@ -5,12 +5,15 @@ name: H-CRAN Stage 5Y live Open5GS AMF cell-ingress evidence gate - NO DEPLOY
 # pinned Stage5T UE with unchanged pre-SIB1 MAC guard; rebuild pinned Stage3 NGAP CU.
 # No historical artifact fetch; this rebuilds a source-equivalent CU, not bit-identical.
 # Stage5Y-A: test-only race-safe /proc AMF count; frozen Stage4P baseline unchanged.
-# This never touches HP, Kubernetes, OSM, production keys or subscribers.
+# Stage5ZA: four independent sessions, two with and two without only the CU
+# selection-category observer; all original Stage5Y recovery gates unchanged.
+# Research-only; no HP, Kubernetes, OSM, production keys or subscribers.
 on:
   push:
     branches:
       - experiment/hcran-stage5y-amf-ingress-observer-20261118
       - experiment/hcran-stage5z-amf-selection-observer-20261118
+      - experiment/hcran-stage5za-observer-ab-20261118
     paths:
       - .github/workflows/hcran-stage5y-amf-ingress-observer.yml
   workflow_dispatch:
@@ -25,7 +28,7 @@ concurrency:
 
 jobs:
   isolated-independent-trial:
-    name: Stage5Y pinned 2UE 3-fault live AMF-cell ingress proof trial ${{ matrix.trial }}/2
+    name: Stage5ZA pinned 2UE 3-fault observational A/B trial ${{ matrix.trial }}/2 mode ${{ matrix.observer_mode }}
     runs-on: ubuntu-24.04
     timeout-minutes: 95
     strategy:
@@ -33,12 +36,14 @@ jobs:
       max-parallel: 2
       matrix:
         trial: [1, 2]
+        observer_mode: ['on', 'off']
     env:
       CORE_IMG: gradiant/open5gs:2.7.6
       MONGO_IMG: mongo:6.0
       CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
       DU_IMG: oaisoftwarealliance/oai-gnb:2026.w45
       UE_IMG: hcran-stage5t-pinned-presib1:run-${{ github.run_number }}
+      STAGE5ZA_CU_OBSERVER: ${{ matrix.observer_mode }}
     steps:
       - name: Checkout Stage5P qualification source (current experimental commit)
         uses: actions/checkout@v4
@@ -237,7 +242,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hcran-stage5y-stage3-cu-build-proof-${{ github.run_number }}-${{ matrix.trial }}
+          name: hcran-stage5za-stage3-cu-build-proof-${{ github.run_number }}-${{ matrix.trial }}-${{ matrix.observer_mode }}
           path: ${{ runner.temp }}/stage5q-cu-build-proof/
           if-no-files-found: warn
           retention-days: 7
@@ -247,7 +252,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hcran-stage5y-stage5t-ue-source-proof-${{ github.run_number }}-${{ matrix.trial }}
+          name: hcran-stage5za-stage5t-ue-source-proof-${{ github.run_number }}-${{ matrix.trial }}-${{ matrix.observer_mode }}
           path: ${{ runner.temp }}/stage5t-build-proof/
           if-no-files-found: warn
           retention-days: 7
@@ -257,7 +262,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hcran-stage5y-repeatability-trial-${{ matrix.trial }}
+          name: hcran-stage5za-repeatability-trial-${{ matrix.trial }}-${{ matrix.observer_mode }}
           path: ${{ runner.temp }}/stage5p-evidence/
           if-no-files-found: warn
           retention-days: 7
