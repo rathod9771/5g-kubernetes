@@ -25,6 +25,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "stage5s"))
 from run_three_cycle_recovery import configure
 from amf_process_count_stage5y import count_amf_processes
+from cu_amf_selection_stage5z import CUSelectionObserver
 
 MAX_EVENTS = 1800
 MAX_ROLE_CATEGORY_EVENTS = 100
@@ -174,9 +175,15 @@ class DiagnosticCollector:
 
     def consume(self, role, process):
         try:
+            cu_selection = CUSelectionObserver() if role == "cu" else None
             for line in process.stdout:
                 for key, metadata in classify_lines(role, (line,)):
                     self.add(role, key, metadata)
+                if cu_selection is not None:
+                    # Only allowlisted categories and synthetic cell labels.
+                    # Log adjacency is not UE identity or NGAP delivery proof.
+                    for key, metadata in cu_selection.process(line):
+                        self.add("cu", key, metadata)
         except (OSError, ValueError) as exc:
             with self.lock:
                 self.missing_sources.append({"source":role,"error_type":type(exc).__name__})
