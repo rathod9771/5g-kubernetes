@@ -35,3 +35,36 @@ jobs:
           bwrap --unshare-user --unshare-net --unshare-pid --unshare-ipc --unshare-uts --new-session --die-with-parent --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /lib64 /lib64 --ro-bind /etc /etc --ro-bind "$GITHUB_WORKSPACE" /repo --proc /proc --dev /dev --uid "$(id -u)" --gid "$(id -g)" --cap-drop ALL /usr/bin/python3 -B -c 'import os; print("RUNNER_BWRAP_REPO_MOUNT_OK",os.getuid())'
           echo "runner_userns_exit=$?"
           set -e
+      - name: Test systemd privilege drop and root-owned private scratch (no build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_UID="$(id -u)"
+          RUN_GID="$(id -g)"
+          PRIVATE="$(sudo -n mktemp -d -p "$RUNNER_TEMP" l3-d2b-synthetic.XXXXXXXX)"
+          trap 'sudo -n rm -rf -- "$PRIVATE"' EXIT
+          sudo -n install -d -m 0700 -o "$RUN_UID" -g "$RUN_GID" "$PRIVATE/volume"
+          sudo -n touch "$PRIVATE/build.ext4"
+          sudo -n chmod 0600 "$PRIVATE/build.ext4"
+          sudo -n chmod 0711 "$PRIVATE"
+          sudo -n stat -c 'scratch mode=%a owner=%u group=%g path=%n' "$PRIVATE" "$PRIVATE/volume" "$PRIVATE/build.ext4"
+          if test -r "$PRIVATE/build.ext4"; then
+            echo "POLICY_FAIL: backing image readable by worker" >&2
+            exit 1
+          fi
+          sudo -n systemd-run --wait --collect --unit="d2b-workspace-smoke-${GITHUB_RUN_ID}" \
+            --service-type=exec \
+            --property=NoNewPrivileges=yes --property=MemoryMax=6442450944 \
+            --property=MemorySwapMax=0 --property=CPUQuota=200% \
+            --property=TasksMax=256 \
+            -- /usr/bin/setpriv --reuid "$RUN_UID" --regid "$RUN_GID" --clear-groups \
+            /usr/bin/bwrap --unshare-user --unshare-net --unshare-pid \
+            --unshare-ipc --unshare-uts --new-session --die-with-parent \
+            --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib \
+            --ro-bind /lib64 /lib64 --ro-bind /etc /etc \
+            --ro-bind "$GITHUB_WORKSPACE" /repo \
+            --bind "$PRIVATE/volume" /work --proc /proc --dev /dev \
+            --uid "$RUN_UID" --gid "$RUN_GID" --cap-drop ALL \
+            --chdir /work /usr/bin/python3 -B -c \
+            'import os,pathlib; assert os.getuid()==1001 and os.getgid()==1001; assert pathlib.Path("/repo/ci/experimental/srsran-ngap-stage-d1/build_supervisor.py").is_file(); print("PRIVILEGE_DROP_WORKSPACE_AND_SCRATCH_PASS")'
+          echo "SYSTEMD_SETPRIV_WORKSPACE_SMOKE_PASS"
