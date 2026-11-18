@@ -27,6 +27,7 @@ from run_three_cycle_recovery import configure
 from amf_process_count_stage5y import count_amf_processes
 from cu_amf_selection_stage5z import CUSelectionObserver
 from rrc_radio_boundary_stage5zb import classify as classify_radio_boundary
+from sib1_reacquisition_stage5zc import classify as classify_sib1_reacquisition
 
 MAX_EVENTS = 1800
 MAX_ROLE_CATEGORY_EVENTS = 100
@@ -183,6 +184,9 @@ class DiagnosticCollector:
                 # Stage5ZB: category-only, unmodified OAI UE/DU log observation.
                 for category in classify_radio_boundary(role, line):
                     self.add(role, category)
+                # Stage5ZC: independent bounded, category-only SIB1/BWP0 timeline.
+                for category, metadata in classify_sib1_reacquisition(role, line):
+                    self.add(role, category, metadata)
                 if cu_selection is not None:
                     # Only allowlisted categories and synthetic cell labels.
                     # Log adjacency is not UE identity or NGAP delivery proof.
@@ -297,6 +301,7 @@ class DiagnosticCollector:
                 "privacy": "Only synthetic lab cell IDs and allowlisted protocol categories; no IMSI/SUPI/SUCI, NAS payload, RNTI or subscriber credentials saved in this timeline",
                 "stage5x_streams": ["cu", "core"],
                 "stage5zb_radio_boundary_categories": True,
+                "stage5zc_sib1_reacquisition_categories": True,
                 "collection_limit_reached": self.limit_reached,
                 "wire_header_sampling": {
                     "per_category_display_cap": MAX_ROLE_CATEGORY_EVENTS,
