@@ -1,0 +1,37 @@
+name: D2B workspace bind permission probe (no native build)
+on:
+  push:
+    branches:
+      - experiment/layer3-d2b-workspace-access-20261118
+permissions:
+  contents: read
+jobs:
+  workspace-access-only:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/experiment/layer3-d2b-workspace-access-20261118'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install isolated namespace tool only
+        run: |
+          sudo -n apt-get -o Acquire::Retries=0 update
+          sudo -n apt-get -o Acquire::Retries=0 install -y --no-install-recommends bubblewrap
+      - name: Inspect directory modes and test bounded workspace binds
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner uid:gid=$(id -u):$(id -g)"
+          echo "workspace parent directory permission chain (no contents)"
+          namei -l "$GITHUB_WORKSPACE" | tail -n 8
+          echo "workspace and temp stats"
+          stat -c 'mode=%a owner=%u group=%g path=%n' "$GITHUB_WORKSPACE" "$RUNNER_TEMP"
+          echo "root userns workspace bind:"
+          set +e
+          sudo -n bwrap --unshare-user --unshare-net --unshare-pid --unshare-ipc --unshare-uts --new-session --die-with-parent --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /lib64 /lib64 --ro-bind /etc /etc --ro-bind "$GITHUB_WORKSPACE" /repo --proc /proc --dev /dev --uid "$(id -u)" --gid "$(id -g)" --cap-drop ALL /usr/bin/python3 -B -c 'import os; print("ROOT_BWRAP_REPO_MOUNT_OK",os.getuid())'
+          echo "root_userns_exit=$?"
+          echo "runner userns workspace bind:"
+          bwrap --unshare-user --unshare-net --unshare-pid --unshare-ipc --unshare-uts --new-session --die-with-parent --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /lib64 /lib64 --ro-bind /etc /etc --ro-bind "$GITHUB_WORKSPACE" /repo --proc /proc --dev /dev --uid "$(id -u)" --gid "$(id -g)" --cap-drop ALL /usr/bin/python3 -B -c 'import os; print("RUNNER_BWRAP_REPO_MOUNT_OK",os.getuid())'
+          echo "runner_userns_exit=$?"
+          set -e
