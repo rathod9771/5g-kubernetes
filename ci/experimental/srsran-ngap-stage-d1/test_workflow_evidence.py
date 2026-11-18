@@ -67,7 +67,8 @@ def toolchain_fixture(root):
 class WorkflowEvidence(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)
-        from test_publication import Publication
+        from test_publication import Publication,synthetic_native_pins
+        synthetic_native_pins(self)
         Publication().evidence(self.root)
     def edit(self,path,change):
         f=self.root/path;r=json.loads(f.read_text());change(r);f.write_text(json.dumps(r))

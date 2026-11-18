@@ -1,5 +1,8 @@
 """Offline publication admission regression tests; no acquisition/build execution."""
 import copy,json,math,subprocess,sys,tempfile,unittest
+from unittest.mock import patch
+import native_build_admission as nba
+from test_native_build_admission import fixture as admission_fixture
 from pathlib import Path
 import yaml
 import build_policy as bp
@@ -7,7 +10,15 @@ import pip_acquisition as pip
 import test_build_harness as original
 import finalize_build_evidence as finalizer
 P=Path(__file__).parent
+def synthetic_native_pins(case):
+    graph,review,expanded,pins=admission_fixture()
+    for name,value in [('PINNED_OPEN5GS_GRAPH',nba._sha(graph)),
+                       ('PINNED_EXPANSION_STDOUT','2'*64),
+                       ('PINNED_COMMANDS',pins)]:
+        p=patch.object(nba,name,value);p.start();case.addCleanup(p.stop)
+
 class Publication(unittest.TestCase):
+  def setUp(self):synthetic_native_pins(self)
  def workflow(self):return yaml.load((P/'native-build.WORKFLOW.PROPOSED.yml').read_text(),Loader=yaml.BaseLoader)
  def fixture(self):return original.Harness().complete()
  def rejected(self,edit):
@@ -98,7 +109,20 @@ class Publication(unittest.TestCase):
    for c in r['commands']:c.update(log=str(cmd),log_sha256=bp.digest(cmd))
    (w/(phase+'.receipt.json')).write_text(json.dumps(r))
   for name,value in [('toolchain.json',x[1]),('binary-inventory.json',x[2]),('enforcement.json',original.Harness().limits())]:(w/name).write_text(json.dumps(value))
-  (root/'resource-usage.json').write_text(json.dumps({'usage':x[4]}))
+  graph,review,expanded,_=admission_fixture()
+  (w/'open5gs-commands.txt').write_text(graph)
+  (w/'open5gs-rsp-review.json').write_text(json.dumps(review))
+  (w/'open5gs-rsp-expanded.json').write_text(json.dumps(expanded))
+  (w/'d2b-native-admission.json').write_text(json.dumps(nba.admit_reviewed_open5gs_graph(graph,review,expanded)))
+  (root/'post-worker-guard-accounting.json').write_text(json.dumps({
+      'classification':'POST_WORKER_SNAPSHOT_REQUIRES_TERMINAL_CONFIRMATION',
+      'proof':{'worker_exit_code':0,'mode':'POST_WORKER_QUIESCENT_GUARD_HELD',
+               'worker_accounting_complete':True,'terminal_cgroup_empty':False,
+               'native_compilation_authorized':False}}))
+  (root/'resource-usage.json').write_text(json.dumps({
+      'usage':x[4],'accounting_mode':'POST_WORKER_QUIESCENT_GUARD_HELD',
+      'terminal_accounting_complete':True,'guard_only_at_capture':True,
+      'capture_boundary':'POST_WORKER_PRE_GUARD_EXIT'}))
   # Existing native fixture retained; add mandatory synthetic auxiliary evidence.
   from test_workflow_evidence import auxiliary_fixture
   auxiliary_fixture(root)

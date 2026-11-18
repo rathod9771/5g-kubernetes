@@ -56,9 +56,8 @@ class AdmissionTests(unittest.TestCase):
         with self.assertRaises(Blocked):self.admit()
     def test_invalid_types(self):
         with self.assertRaises(Blocked):n.admit_reviewed_open5gs_graph(None,self.review,self.expanded)
-    def test_published_pins(self):
-        self.assertEqual(len(n.PINNED_COMMANDS),2)
-        self.assertEqual(n.PINNED_OPEN5GS_GRAPH,'9f086ee1c67d2716a69b5ccf45379231897c29a059f2c51d2d3bc5d257e8fd6c')
+    def test_synthetic_pin_is_local_to_test(self):
+        self.assertEqual(n.PINNED_OPEN5GS_GRAPH,n._sha(self.graph))
 
 class TerminalTests(unittest.TestCase):
     def make(self,dirname):
@@ -96,3 +95,9 @@ class TerminalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p,f,u=self.make(d);u['usage']['oom_kill']=1
             with self.assertRaises(Blocked):n.verify_native_terminal_guard(d,f,u)
+
+class PublishedPins(unittest.TestCase):
+    def test_real_pin_is_not_synthetic(self):
+        self.assertEqual(n.PINNED_OPEN5GS_GRAPH,'9f086ee1c67d2716a69b5ccf45379231897c29a059f2c51d2d3bc5d257e8fd6c')
+        self.assertEqual(n.PINNED_EXPANSION_STDOUT,'b2eb1cd7664e7bbbc70cdad4d642c349d9f9785abf14ce38aacc2c14627aa310')
+        self.assertEqual(len(n.PINNED_COMMANDS),2)
