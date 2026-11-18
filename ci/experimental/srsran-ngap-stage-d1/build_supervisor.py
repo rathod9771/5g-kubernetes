@@ -7,6 +7,7 @@ from pathlib import Path
 from build_policy import Blocked,LIMITS,digest,environment,verify_complete
 from build_receipts import atomic,stamp
 from cgroup_accounting_review import select_review_accounting
+from cgroup_terminal_guard import validate_guard_status,validate_quiescent_capture,verify_guard_release_end
 
 CONTROL_LOG=None
 SCRATCH_MIN_FREE_BYTES=18*1024**3
@@ -67,7 +68,11 @@ def main():
     global CONTROL_LOG
     CONTROL_LOG=results/'supervisor-control.jsonl'
     unit='l3-d2a-'+uuid.uuid4().hex;private=Path(tempfile.mkdtemp(prefix='l3-d2a-',dir=temp));image=private/'build.ext4';mount=private/'volume';mount.mkdir()
-    start=time.monotonic();final={'status':'INCOMPLETE','started_at':stamp(),'exit_code':None,'signal':None,'timeout':False,'native_tests_executed':0,'runtime_executed':False};mounted=False;launched=False;accounting={};disk_peak=0
+    control=private/'terminal-control';control.mkdir(mode=0o711);os.chmod(control,0o711)
+    guard_status=control/'worker-exited.json';guard_status.touch(mode=0o600,exist_ok=False)
+    os.chown(guard_status,uid,gid);os.chmod(guard_status,0o600)
+    guard_release=control/'release';guard_release.write_text('HOLD\n');os.chmod(guard_release,0o644)
+    start=time.monotonic();final={'status':'INCOMPLETE','started_at':stamp(),'exit_code':None,'signal':None,'timeout':False,'native_tests_executed':0,'runtime_executed':False};mounted=False;launched=False;accounting={};disk_peak=0;guard_state=None;held_accounting=None;guard_readback=None;guard_released=False
     def interrupted(signum,frame):
         signal.signal(signum,signal.SIG_IGN);final['supervisor_signal']=signum
         raise InterruptedError('SUPERVISOR_INTERRUPTED')
@@ -146,7 +151,7 @@ def main():
         for k,v in env.items():argv+=['--setenv',k,v]
         argv+=['--uid',str(uid),'--gid',str(gid),'--cap-drop','ALL','--chdir','/work','/usr/bin/python3','-B',str(Path('/repo')/p.relative_to(repo)/'build_worker.py'),'--isolated-build-only']
         if ctl(['/usr/bin/systemctl','show',unit,'--property=LoadState','--value']).strip()!='not-found':raise Blocked('UNIT_COLLISION')
-        command=['/usr/bin/systemd-run','--quiet','--unit='+unit,'--description=Layer3 D2A '+unit,'--service-type=exec','--property=RemainAfterExit=yes','--property=MemoryMax='+str(LIMITS['memory.max']),'--property=MemorySwapMax=0','--property=CPUQuota=200%','--property=CPUQuotaPeriodSec=100ms','--property=TasksMax='+str(LIMITS['pids.max']),'--property=MemoryAccounting=yes','--property=CPUAccounting=yes','--property=TasksAccounting=yes','--property=OOMPolicy=kill','--property=NoNewPrivileges=yes','--property=KillMode=control-group','--property=TimeoutStopSec=10s','--property=RuntimeMaxSec=4500s','--','/usr/bin/nsenter','--mount=/proc/'+str(os.getpid())+'/ns/mnt','--','/usr/bin/setpriv','--reuid',str(uid),'--regid',str(gid),'--clear-groups',*argv]
+        command=['/usr/bin/systemd-run','--quiet','--unit='+unit,'--description=Layer3 D2A '+unit,'--service-type=exec','--property=RemainAfterExit=yes','--property=MemoryMax='+str(LIMITS['memory.max']),'--property=MemorySwapMax=0','--property=CPUQuota=200%','--property=CPUQuotaPeriodSec=100ms','--property=TasksMax='+str(LIMITS['pids.max']),'--property=MemoryAccounting=yes','--property=CPUAccounting=yes','--property=TasksAccounting=yes','--property=OOMPolicy=kill','--property=NoNewPrivileges=yes','--property=KillMode=control-group','--property=TimeoutStopSec=10s','--property=RuntimeMaxSec=4500s','--','/usr/bin/nsenter','--mount=/proc/'+str(os.getpid())+'/ns/mnt','--','/usr/bin/setpriv','--reuid',str(uid),'--regid',str(gid),'--clear-groups','/usr/bin/python3','-B',str(p/'guarded_worker.py'),'--control',str(control),'--',*argv]
         atomic(results/'supervisor-start.json',{'unit':unit,'argv':command,'limits':LIMITS,'runner_image':{k:os.environ.get(k) for k in ('ImageOS','ImageVersion')},'started_at':stamp()})
         launched=True;ctl(command,20);cg=None;last={};last_live_cg=None
         while True:
@@ -154,6 +159,22 @@ def main():
             if q.get('ControlGroup'):
                 cg=Path('/sys/fs/cgroup')/q['ControlGroup'].lstrip('/')
                 if cg.exists():accounting=capture(cg);last_live_cg=str(cg)
+            if not guard_released and guard_status.stat().st_size:
+                raw=guard_status.read_text()
+                if raw.endswith('\nCOMMITTED\n'):
+                    if cg is None or not cg.exists():raise Blocked('TERMINAL_GUARD_CGROUP_DISAPPEARED')
+                    guard_state=validate_guard_status(raw,int(q.get('ExecMainPID','0')))
+                    held_accounting=capture(cg)
+                    guard_readback=validate_quiescent_capture(
+                        held_accounting,guard_state,(cg/'cgroup.procs').read_text(),
+                        (cg/'pids.current').read_text(),
+                        [x.name for x in cg.iterdir() if x.is_dir()],q)
+                    atomic(results/'post-worker-guard-accounting.json',
+                           {'classification':'POST_WORKER_SNAPSHOT_REQUIRES_TERMINAL_CONFIRMATION',
+                            'proof':guard_readback,'cgroup':str(cg),
+                            'captured_at':stamp(),
+                            'worker_returncode':guard_state['worker_returncode']})
+                    guard_release.write_text('RELEASE\n');guard_released=True
             fs=os.statvfs(mount);disk_peak=max(disk_peak,(fs.f_blocks-fs.f_bfree)*fs.f_frsize)
             if check_terminal(q):last=q;break
             if time.monotonic()-start>=LIMITS['wall_seconds']:
@@ -164,7 +185,15 @@ def main():
         (results/'unit-startup.log').write_text(journal)
         final.update(observe_exit(last,final['timeout']));final['systemd_result']=last.get('Result');final['observed_properties']=last
         accounting_mode='TERMINAL_CGROUP_CAPTURE'
-        if cg is None or not cg.exists():
+        if guard_released:
+            if held_accounting is None or guard_state is None or guard_readback is None:
+                raise Blocked('TERMINAL_GUARD_MISSING_QUIESCENT_PROOF')
+            verify_guard_release_end(guard_state,last,final)
+            accounting=held_accounting
+            accounting_mode='POST_WORKER_QUIESCENT_GUARD_HELD'
+            if cg is not None and cg.exists() and 'populated 0' not in capture(cg)['cgroup.events']:
+                raise Blocked('TERMINAL_GUARD_POST_RELEASE_RESIDUAL')
+        elif cg is None or not cg.exists():
             accounting,accounting_mode=select_review_accounting(
                 False,accounting,last_live_cg,last,final['exit_code'],final['signal'],final['timeout'])
         else:
@@ -181,7 +210,7 @@ def main():
             shutil.copytree(ev,results/'worker')
         def counters(name):return dict((k,int(v)) for k,v in (x.split() for x in accounting[name].splitlines()))
         usage={'memory_peak_bytes':int(accounting['memory.peak']),'cpu_usage_usec':counters('cpu.stat')['usage_usec'],'pids_peak':int(accounting['pids.peak']),'disk_used_peak_bytes':disk_peak,'disk_used_final_bytes':(os.statvfs(mount).f_blocks-os.statvfs(mount).f_bfree)*os.statvfs(mount).f_frsize,'oom_kill':counters('memory.events')['oom_kill'],'pids_limit_events':counters('pids.events')['max']}
-        atomic(results/'resource-usage.json',{'limits':LIMITS,'readback':accounting,'usage':usage,'accounting_mode':accounting_mode,'terminal_accounting_complete':accounting_mode=='TERMINAL_CGROUP_CAPTURE','disk_peak_method':'100ms statvfs samples; capacity is hard, peak is a sampled lower bound'})
+        atomic(results/'resource-usage.json',{'limits':LIMITS,'readback':accounting,'usage':usage,'accounting_mode':accounting_mode,'terminal_accounting_complete':accounting_mode in {'TERMINAL_CGROUP_CAPTURE','POST_WORKER_QUIESCENT_GUARD_HELD'},'capture_boundary':('POST_WORKER_PRE_GUARD_EXIT' if guard_released else 'CGROUP_TERMINAL_OR_LAST_LIVE'),'guard_only_at_capture':bool(guard_released),'disk_peak_method':'100ms statvfs samples; capacity is hard, peak is a sampled lower bound'})
         worker=results/'worker'
         if final['exit_code']!=0 or final['signal'] is not None or final['timeout']:
             classification='INCOMPLETE' if final['timeout'] or final['signal'] is not None or final['exit_code'] is None else 'FAIL'

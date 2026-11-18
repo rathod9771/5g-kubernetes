@@ -158,7 +158,7 @@ def collect(temp,root):
     atomic(root/'preservation.json',{'classification':'INCOMPLETE' if errors else 'PASS','errors':errors,'auxiliary_allowlist':names,'source_allowlist':source_names,'input_allowlist':list(INPUT_FILES),'bytes':total})
     return not errors
 
-ROOT_FILES={'supervisor-final.json','supervisor-start.json','supervisor-control.jsonl','unit-startup.log','resource-usage.json','partial-accounting.json','preservation.json','ci-evidence-status.json'}
+ROOT_FILES={'supervisor-final.json','supervisor-start.json','supervisor-control.jsonl','unit-startup.log','resource-usage.json','post-worker-guard-accounting.json','partial-accounting.json','preservation.json','ci-evidence-status.json'}
 WORKER_FILES={'toolchain.json','binary-inventory.json','enforcement.json','source-archives.json','toolchain-lock.json','verified-source-archives.json','applied-patches.json','os-release.txt','packages.txt','srsran-commands.txt','open5gs-commands.txt','open5gs-rsp-review.json','open5gs-rsp-expanded.json','srs-compile-commands.json','ogs-compile-commands.json','CMakeCache.txt','meson-log.txt','worker-completion.json','worker-status.json'}|{n+'.deps.txt' for n in ('runtime_driver.cpp','snapshot_observer.cpp','cu_cp_impl.cpp','cu_cp_controller.cpp','amf_connection_manager.cpp')}
 INSPECTION_EXTENSIONS=('readelf','objdump','symbols')
 INSPECTION_MAX_BINARIES=517  # Five executables plus the existing 512-library budget.
