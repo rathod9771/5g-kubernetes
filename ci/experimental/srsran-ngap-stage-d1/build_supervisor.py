@@ -2,12 +2,23 @@
 Requires a separately approved root invocation in a private mount namespace.
 No native build command starts unless kernel limits and filesystem confinement read back correctly.
 """
-import json,os,shutil,signal,subprocess,sys,tempfile,time,uuid
+import json,os,shutil,signal,stat,subprocess,sys,tempfile,time,uuid
 from pathlib import Path
 from build_policy import Blocked,LIMITS,digest,environment,verify_complete
 from build_receipts import atomic,stamp
 
 CONTROL_LOG=None
+SCRATCH_MIN_FREE_BYTES=18*1024**3
+SCRATCH_DISK_FILESYSTEMS=frozenset(('ext2/ext3','ext4','xfs','btrfs'))
+
+def validate_scratch_storage(temp,private,filesystem_type,available_bytes,temp_device,private_device):
+    """Fail closed unless the image is on the approved disk-backed runner scratch filesystem."""
+    if Path(private).parent!=Path(temp):raise Blocked('SCRATCH_PARENT_MISMATCH')
+    if filesystem_type not in SCRATCH_DISK_FILESYSTEMS:raise Blocked('UNAPPROVED_SCRATCH_FILESYSTEM')
+    if temp_device!=private_device:raise Blocked('SCRATCH_FILESYSTEM_MISMATCH')
+    if type(available_bytes) is not int or available_bytes<SCRATCH_MIN_FREE_BYTES:raise Blocked('DISK_HEADROOM')
+    return {'filesystem_type':filesystem_type,'available_bytes':available_bytes,
+            'required_free_bytes':SCRATCH_MIN_FREE_BYTES,'disk_limit_bytes':LIMITS['disk_bytes']}
 def ctl(argv,timeout=15):
     start=time.monotonic();record={'argv':argv,'started_at':stamp()}
     try:
@@ -41,7 +52,7 @@ def main():
     sources=temp/'l3-d2a-acquired';results=repo/'stage-d1-build-results';results.mkdir(mode=0o700)
     global CONTROL_LOG
     CONTROL_LOG=results/'supervisor-control.jsonl'
-    unit='l3-d2a-'+uuid.uuid4().hex;private=Path(tempfile.mkdtemp(prefix='l3-d2a-',dir='/run'));image=private/'build.ext4';mount=private/'volume';mount.mkdir()
+    unit='l3-d2a-'+uuid.uuid4().hex;private=Path(tempfile.mkdtemp(prefix='l3-d2a-',dir=temp));image=private/'build.ext4';mount=private/'volume';mount.mkdir()
     start=time.monotonic();final={'status':'INCOMPLETE','started_at':stamp(),'exit_code':None,'signal':None,'timeout':False,'native_tests_executed':0,'runtime_executed':False};mounted=False;launched=False;accounting={};disk_peak=0
     def interrupted(signum,frame):
         signal.signal(signum,signal.SIG_IGN);final['supervisor_signal']=signum
@@ -72,9 +83,19 @@ def main():
         raise Blocked('UNIT_NOT_EMPTY_AFTER_KILL')
     try:
         if os.stat('/proc/self/ns/mnt').st_ino==os.stat('/proc/1/ns/mnt').st_ino:raise Blocked('PRIVATE_MOUNT_NAMESPACE_REQUIRED')
-        for tool in ('systemd-run','systemctl','journalctl','bwrap','fallocate','mkfs.ext4','mount','umount','nsenter','ip','readelf','objdump'):
+        for tool in ('systemd-run','systemctl','journalctl','bwrap','stat','fallocate','mkfs.ext4','mount','umount','nsenter','ip','readelf','objdump'):
             if not shutil.which(tool):raise Blocked('MISSING_ENFORCEMENT_TOOL:'+tool)
-        if shutil.disk_usage(temp).free<18*1024**3:raise Blocked('DISK_HEADROOM')
+        scratch_stat=os.lstat(private)
+        if not stat.S_ISDIR(scratch_stat.st_mode) or scratch_stat.st_uid!=0 or stat.S_IMODE(scratch_stat.st_mode)!=0o700:
+            raise Blocked('SCRATCH_DIRECTORY_PERMISSIONS')
+        scratch_type=ctl(['/usr/bin/stat','-f','-c','%T',str(private)]).strip()
+        scratch_free=shutil.disk_usage(private).free
+        temp_device=os.stat(temp).st_dev;private_device=scratch_stat.st_dev
+        with CONTROL_LOG.open('a') as f:
+            f.write(json.dumps({'event':'scratch_storage_preflight','filesystem_type':scratch_type,
+                'available_bytes':scratch_free,'required_free_bytes':SCRATCH_MIN_FREE_BYTES,
+                'disk_limit_bytes':LIMITS['disk_bytes'],'same_device':temp_device==private_device})+'\n')
+        validate_scratch_storage(temp,private,scratch_type,scratch_free,temp_device,private_device)
         memory=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
         current=Path('/sys/fs/cgroup')/next(x.split(':',2)[2].lstrip('/') for x in Path('/proc/self/cgroup').read_text().splitlines() if x.startswith('0::'))
         if not current.resolve().is_relative_to(Path('/sys/fs/cgroup')):raise Blocked('UNEXPECTED_CGROUP_PATH')

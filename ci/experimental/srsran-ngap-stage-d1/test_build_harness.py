@@ -225,4 +225,52 @@ class Harness(unittest.TestCase):
             r=receipts.Recorder(d,{})
             with self.assertRaises(receipts.PhaseError) as caught:r.phase('srsran_compilation',[[sys.executable,'-c','import time;time.sleep(10)']],d,timeout=.05)
             self.assertEqual(caught.exception.classification,'INCOMPLETE');self.assertEqual(json.loads((Path(d)/'srsran_compilation.receipt.json').read_text())['classification'],'INCOMPLETE')
+
+class ScratchStorageAdmission(unittest.TestCase):
+    def checked(self,**overrides):
+        root=Path('/home/runner/work/_temp')
+        args={'temp':root,'private':root/'l3-d2a-test','filesystem_type':'ext2/ext3',
+              'available_bytes':18*1024**3,'temp_device':42,'private_device':42}
+        args.update(overrides)
+        return supervisor.validate_scratch_storage(**args)
+
+    def test_disk_backed_exact_headroom_allowed(self):
+        result=self.checked()
+        self.assertEqual(result['disk_limit_bytes'],12*1024**3)
+        self.assertEqual(result['required_free_bytes'],18*1024**3)
+
+    def test_insufficient_free_space_fails_closed(self):
+        with self.assertRaisesRegex(Blocked,'DISK_HEADROOM'):
+            self.checked(available_bytes=18*1024**3-1)
+
+    def test_tmpfs_fails_closed(self):
+        with self.assertRaisesRegex(Blocked,'UNAPPROVED_SCRATCH_FILESYSTEM'):
+            self.checked(filesystem_type='tmpfs')
+
+    def test_unreviewed_filesystem_fails_closed(self):
+        with self.assertRaisesRegex(Blocked,'UNAPPROVED_SCRATCH_FILESYSTEM'):
+            self.checked(filesystem_type='overlayfs')
+
+    def test_cross_device_scratch_fails_closed(self):
+        with self.assertRaisesRegex(Blocked,'SCRATCH_FILESYSTEM_MISMATCH'):
+            self.checked(private_device=43)
+
+    def test_unexpected_parent_fails_closed(self):
+        with self.assertRaisesRegex(Blocked,'SCRATCH_PARENT_MISMATCH'):
+            self.checked(private=Path('/run/l3-d2a-test'))
+
+    def test_invalid_space_measurement_fails_closed(self):
+        with self.assertRaisesRegex(Blocked,'DISK_HEADROOM'):
+            self.checked(available_bytes=True)
+
+    def test_supervisor_uses_measured_allocation_filesystem(self):
+        source=(P/'build_supervisor.py').read_text()
+        self.assertIn("dir=temp",source)
+        self.assertIn('shutil.disk_usage(private).free',source)
+        self.assertNotIn("dir='/run'",source)
+        self.assertNotIn('shutil.disk_usage(temp).free',source)
+        self.assertIn("'/usr/bin/fallocate','-l',str(LIMITS['disk_bytes'])",source)
+        self.assertIn("'/usr/bin/mount','-o','loop,nosuid,nodev'",source)
+        self.assertEqual(policy.LIMITS['disk_bytes'],12*1024**3)
+
 if __name__=='__main__':unittest.main(verbosity=2)
