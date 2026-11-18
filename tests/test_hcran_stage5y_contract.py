@@ -64,12 +64,12 @@ class Stage5YContracts(unittest.TestCase):
                 calls.append((args,kwargs))
                 return SimpleNamespace(stdout=stdout,stderr=stderr,returncode=code)
             return fake_run
-        self.assertEqual(m.count_amf_processes("synthetic-core",run=result("1\\n")),1)
+        self.assertEqual(m.count_amf_processes("synthetic-core",run=result("1\n")),1)
         self.assertEqual(calls[0][0][:3],["docker","exec","synthetic-core"])
         for stdout,stderr,code in (
-            ("1\\ncat: /proc/369/comm: No such file or directory","",0),
-            ("1\\n","cat: disappeared",0),
-            ("not-a-count","",0), ("","",0), ("0\\n","",1),
+            ("1\ncat: /proc/369/comm: No such file or directory","",0),
+            ("1\n","cat: disappeared",0),
+            ("not-a-count","",0), ("","",0), ("0\n","",1),
         ):
             with self.subTest(stdout=stdout,stderr=stderr,code=code):
                 with self.assertRaises(RuntimeError):
