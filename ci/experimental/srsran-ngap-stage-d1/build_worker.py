@@ -4,6 +4,7 @@ from pathlib import Path
 from build_policy import Blocked,LIMITS,VERSIONS,PHASES,digest,environment,resource_admission,check_dependency_tree,audit_graph,unity_generated
 from open5gs_graph_gate import audit_open5gs_graph
 from open5gs_rsp_review import collect_rsp_review
+from open5gs_rsp_expansion import review_expanded_compdb
 from build_receipts import Recorder,atomic
 from toolchain_lock import run_bounded as verify_toolchain,verify_acquisition
 
@@ -84,7 +85,11 @@ def main():
             if (sb/'build_info.cmake').read_text()!=template:raise Blocked('UNREVIEWED_GENERATED_VERSION_HELPER')
         if name=='open5gs':
             audit_open5gs_graph(graph)
-            atomic(out/'open5gs-rsp-review.json',collect_rsp_review(ob))
+            review=collect_rsp_review(ob)
+            atomic(out/'open5gs-rsp-review.json',review)
+            expanded=run_output(['/usr/bin/ninja','-C',str(ob),'-t','compdb','-x','c_LINKER_RSP'],env)
+            if digest(ob/'build.ninja')!=review['build_ninja_sha256']:raise Blocked('OPEN5GS_RSP_MANIFEST_CHANGED')
+            atomic(out/'open5gs-rsp-expanded.json',review_expanded_compdb(expanded,review))
             raise Blocked('OPEN5GS_RSP_INDEPENDENT_REVIEW_REQUIRED')
         else:
             audit_graph(graph)

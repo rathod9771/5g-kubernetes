@@ -6,6 +6,7 @@ import json,os,shutil,signal,stat,subprocess,sys,tempfile,time,uuid
 from pathlib import Path
 from build_policy import Blocked,LIMITS,digest,environment,verify_complete
 from build_receipts import atomic,stamp
+from cgroup_accounting_review import select_review_accounting
 
 CONTROL_LOG=None
 SCRATCH_MIN_FREE_BYTES=18*1024**3
@@ -147,12 +148,12 @@ def main():
         if ctl(['/usr/bin/systemctl','show',unit,'--property=LoadState','--value']).strip()!='not-found':raise Blocked('UNIT_COLLISION')
         command=['/usr/bin/systemd-run','--quiet','--unit='+unit,'--description=Layer3 D2A '+unit,'--service-type=exec','--property=RemainAfterExit=yes','--property=MemoryMax='+str(LIMITS['memory.max']),'--property=MemorySwapMax=0','--property=CPUQuota=200%','--property=CPUQuotaPeriodSec=100ms','--property=TasksMax='+str(LIMITS['pids.max']),'--property=MemoryAccounting=yes','--property=CPUAccounting=yes','--property=TasksAccounting=yes','--property=OOMPolicy=kill','--property=NoNewPrivileges=yes','--property=KillMode=control-group','--property=TimeoutStopSec=10s','--property=RuntimeMaxSec=4500s','--','/usr/bin/nsenter','--mount=/proc/'+str(os.getpid())+'/ns/mnt','--','/usr/bin/setpriv','--reuid',str(uid),'--regid',str(gid),'--clear-groups',*argv]
         atomic(results/'supervisor-start.json',{'unit':unit,'argv':command,'limits':LIMITS,'runner_image':{k:os.environ.get(k) for k in ('ImageOS','ImageVersion')},'started_at':stamp()})
-        launched=True;ctl(command,20);cg=None;last={}
+        launched=True;ctl(command,20);cg=None;last={};last_live_cg=None
         while True:
             q=show()
             if q.get('ControlGroup'):
                 cg=Path('/sys/fs/cgroup')/q['ControlGroup'].lstrip('/')
-                if cg.exists():accounting=capture(cg)
+                if cg.exists():accounting=capture(cg);last_live_cg=str(cg)
             fs=os.statvfs(mount);disk_peak=max(disk_peak,(fs.f_blocks-fs.f_bfree)*fs.f_frsize)
             if check_terminal(q):last=q;break
             if time.monotonic()-start>=LIMITS['wall_seconds']:
@@ -162,9 +163,13 @@ def main():
         if len(journal.encode())>256*1024:raise Blocked('UNIT_DIAGNOSTIC_BUDGET')
         (results/'unit-startup.log').write_text(journal)
         final.update(observe_exit(last,final['timeout']));final['systemd_result']=last.get('Result');final['observed_properties']=last
-        if cg is None or not cg.exists():raise Blocked('FINAL_CGROUP_ACCOUNTING_UNAVAILABLE')
-        accounting=capture(cg)
-        if cg and 'populated 0' not in accounting.get('cgroup.events',''):
+        accounting_mode='TERMINAL_CGROUP_CAPTURE'
+        if cg is None or not cg.exists():
+            accounting,accounting_mode=select_review_accounting(
+                False,accounting,last_live_cg,last,final['exit_code'],final['signal'],final['timeout'])
+        else:
+            accounting=capture(cg)
+        if accounting_mode=='TERMINAL_CGROUP_CAPTURE' and 'populated 0' not in accounting.get('cgroup.events',''):
             stop_all();accounting=capture(cg);raise Blocked('UNEXPECTED_RESIDUAL_PROCESSES')
         # Copy evidence while the bounded filesystem is still mounted. Never copy binaries.
         ev=mount/'evidence'
@@ -176,7 +181,7 @@ def main():
             shutil.copytree(ev,results/'worker')
         def counters(name):return dict((k,int(v)) for k,v in (x.split() for x in accounting[name].splitlines()))
         usage={'memory_peak_bytes':int(accounting['memory.peak']),'cpu_usage_usec':counters('cpu.stat')['usage_usec'],'pids_peak':int(accounting['pids.peak']),'disk_used_peak_bytes':disk_peak,'disk_used_final_bytes':(os.statvfs(mount).f_blocks-os.statvfs(mount).f_bfree)*os.statvfs(mount).f_frsize,'oom_kill':counters('memory.events')['oom_kill'],'pids_limit_events':counters('pids.events')['max']}
-        atomic(results/'resource-usage.json',{'limits':LIMITS,'readback':accounting,'usage':usage,'disk_peak_method':'100ms statvfs samples; capacity is hard, peak is a sampled lower bound'})
+        atomic(results/'resource-usage.json',{'limits':LIMITS,'readback':accounting,'usage':usage,'accounting_mode':accounting_mode,'terminal_accounting_complete':accounting_mode=='TERMINAL_CGROUP_CAPTURE','disk_peak_method':'100ms statvfs samples; capacity is hard, peak is a sampled lower bound'})
         worker=results/'worker'
         if final['exit_code']!=0 or final['signal'] is not None or final['timeout']:
             classification='INCOMPLETE' if final['timeout'] or final['signal'] is not None or final['exit_code'] is None else 'FAIL'

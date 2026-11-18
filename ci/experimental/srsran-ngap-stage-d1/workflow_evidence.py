@@ -159,7 +159,7 @@ def collect(temp,root):
     return not errors
 
 ROOT_FILES={'supervisor-final.json','supervisor-start.json','supervisor-control.jsonl','unit-startup.log','resource-usage.json','partial-accounting.json','preservation.json','ci-evidence-status.json'}
-WORKER_FILES={'toolchain.json','binary-inventory.json','enforcement.json','source-archives.json','toolchain-lock.json','verified-source-archives.json','applied-patches.json','os-release.txt','packages.txt','srsran-commands.txt','open5gs-commands.txt','open5gs-rsp-review.json','srs-compile-commands.json','ogs-compile-commands.json','CMakeCache.txt','meson-log.txt','worker-completion.json','worker-status.json'}|{n+'.deps.txt' for n in ('runtime_driver.cpp','snapshot_observer.cpp','cu_cp_impl.cpp','cu_cp_controller.cpp','amf_connection_manager.cpp')}
+WORKER_FILES={'toolchain.json','binary-inventory.json','enforcement.json','source-archives.json','toolchain-lock.json','verified-source-archives.json','applied-patches.json','os-release.txt','packages.txt','srsran-commands.txt','open5gs-commands.txt','open5gs-rsp-review.json','open5gs-rsp-expanded.json','srs-compile-commands.json','ogs-compile-commands.json','CMakeCache.txt','meson-log.txt','worker-completion.json','worker-status.json'}|{n+'.deps.txt' for n in ('runtime_driver.cpp','snapshot_observer.cpp','cu_cp_impl.cpp','cu_cp_controller.cpp','amf_connection_manager.cpp')}
 INSPECTION_EXTENSIONS=('readelf','objdump','symbols')
 INSPECTION_MAX_BINARIES=517  # Five executables plus the existing 512-library budget.
 INSPECTION_TOTAL_LIMIT=256*1024**2  # Existing native evidence aggregate limit.
