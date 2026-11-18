@@ -1,5 +1,6 @@
 """Non-native fixtures and harmless Python children; no cgroups/mounts/network probes."""
-import copy,json,os,signal,sys,tempfile,unittest
+import copy,json,os,signal,stat,sys,tempfile,unittest
+from types import SimpleNamespace
 from pathlib import Path
 import build_policy as policy
 from build_policy import Blocked
@@ -233,6 +234,47 @@ class Harness(unittest.TestCase):
             r=receipts.Recorder(d,{})
             with self.assertRaises(receipts.PhaseError) as caught:r.phase('srsran_compilation',[[sys.executable,'-c','import time;time.sleep(10)']],d,timeout=.05)
             self.assertEqual(caught.exception.classification,'INCOMPLETE');self.assertEqual(json.loads((Path(d)/'srsran_compilation.receipt.json').read_text())['classification'],'INCOMPLETE')
+
+class WorkerNamespaceSourceAccess(unittest.TestCase):
+    def allowed(self):
+        private=SimpleNamespace(st_mode=stat.S_IFDIR|0o711,st_uid=0)
+        image=SimpleNamespace(st_mode=stat.S_IFREG|0o600,st_uid=0,st_nlink=1)
+        volume=SimpleNamespace(st_mode=stat.S_IFDIR|0o700,st_uid=1001,st_gid=1001)
+        return private,image,volume
+
+    def test_restricted_worker_scratch_permissions_pass(self):
+        self.assertTrue(supervisor.validate_worker_scratch_permissions(*self.allowed(),1001,1001))
+
+    def test_private_parent_must_remain_non_listable_and_root_owned(self):
+        for mode,uid in [(0o700,0),(0o755,0),(0o711,1001)]:
+            private,image,volume=self.allowed()
+            private.st_mode=stat.S_IFDIR|mode;private.st_uid=uid
+            with self.subTest(mode=mode,uid=uid),self.assertRaisesRegex(Blocked,'PRIVATE_SCRATCH_PARENT_PERMISSIONS'):
+                supervisor.validate_worker_scratch_permissions(private,image,volume,1001,1001)
+
+    def test_backing_image_root_only_and_not_linked(self):
+        for mode,uid,nlink in [(0o644,0,1),(0o600,1001,1),(0o600,0,2)]:
+            private,image,volume=self.allowed()
+            image.st_mode=stat.S_IFREG|mode;image.st_uid=uid;image.st_nlink=nlink
+            with self.subTest(mode=mode,uid=uid,nlink=nlink),self.assertRaisesRegex(Blocked,'PRIVATE_SCRATCH_IMAGE_PERMISSIONS'):
+                supervisor.validate_worker_scratch_permissions(private,image,volume,1001,1001)
+
+    def test_volume_must_be_exact_runner_owned_and_private(self):
+        for mode,uid,gid in [(0o755,1001,1001),(0o700,0,0),(0o700,1001,0)]:
+            private,image,volume=self.allowed()
+            volume.st_mode=stat.S_IFDIR|mode;volume.st_uid=uid;volume.st_gid=gid
+            with self.subTest(mode=mode,uid=uid,gid=gid),self.assertRaisesRegex(Blocked,'PRIVATE_SCRATCH_VOLUME_PERMISSIONS'):
+                supervisor.validate_worker_scratch_permissions(private,image,volume,1001,1001)
+
+    def test_privilege_drop_is_after_nsenter_and_before_bwrap(self):
+        src=(P/'build_supervisor.py').read_text()
+        self.assertIn("'--','/usr/bin/nsenter','--mount=/proc/'",src)
+        self.assertIn("'/usr/bin/setpriv','--reuid',str(uid),'--regid',str(gid),'--clear-groups',*argv",src)
+        self.assertIn("argv=['/usr/bin/bwrap','--unshare-user','--unshare-net'",src)
+        self.assertIn("'--property=NoNewPrivileges=yes'",src)
+        self.assertIn("'--cap-drop','ALL'",src)
+        self.assertIn("os.chmod(image,0o600);os.chmod(private,0o711)",src)
+        self.assertEqual(policy.LIMITS['disk_bytes'],12*1024**3)
 
 class ScratchStorageAdmission(unittest.TestCase):
     def checked(self,**overrides):
