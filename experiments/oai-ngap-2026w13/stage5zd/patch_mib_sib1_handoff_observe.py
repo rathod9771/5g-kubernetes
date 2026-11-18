@@ -19,7 +19,7 @@ SCHED_NEW = SCHED_ANCHOR + """  LOG_I(NR_MAC,
         mac->ul_BWPs.count, mac->dl_BWPs.count);
 """
 MIB_ANCHOR = "  nr_ue_decode_mib(mac, cc_idP);\n"
-MIB_NEW = MIB_ANCHOR + """  /* Stage5ZD: connected-state periodic MIB can be high volume and is
+MIB_NEW = MIB_ANCHOR + """  /* Connected-state periodic MIB can be high volume and is
    * irrelevant to post-idle BWP0 reacquisition. Bound this experiment's
    * logging to non-connected MAC states; do not change any state. */
   if (mac->state < UE_CONNECTED) {
