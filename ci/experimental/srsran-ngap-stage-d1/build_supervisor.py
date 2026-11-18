@@ -116,7 +116,7 @@ def main():
         atomic(mount/'spec.json',spec);os.chown(mount/'spec.json',uid,gid)
         (mount/'platform-packages.txt').write_text(ctl(['/usr/bin/dpkg-query','-W'],30));os.chown(mount/'platform-packages.txt',uid,gid)
         # Explicit bwrap environment. No inherited TEST, proxies, tokens or compiler overrides.
-        env=environment({},'/work/home','/work/tmp');argv=['/usr/bin/bwrap','--unshare-net','--unshare-pid','--unshare-ipc','--unshare-uts','--new-session','--die-with-parent']
+        env=environment({},'/work/home','/work/tmp');argv=['/usr/bin/bwrap','--unshare-user','--unshare-net','--unshare-pid','--unshare-ipc','--unshare-uts','--new-session','--die-with-parent']
         # Empty sandbox root: no host IPC socket directories or homes are inherited.
         for directory in ('/usr','/bin','/sbin','/lib','/lib64','/etc','/sys'):
             if not Path(directory).is_dir():raise Blocked('MISSING_READONLY_TOOLCHAIN_DIRECTORY')
