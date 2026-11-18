@@ -5,6 +5,7 @@ from build_policy import Blocked,LIMITS,VERSIONS,PHASES,digest,environment,resou
 from open5gs_graph_gate import audit_open5gs_graph
 from open5gs_rsp_review import collect_rsp_review
 from open5gs_rsp_expansion import review_expanded_compdb
+from native_build_admission import admit_reviewed_open5gs_graph
 from build_receipts import Recorder,atomic
 from toolchain_lock import run_bounded as verify_toolchain,verify_acquisition
 
@@ -89,8 +90,9 @@ def main():
             atomic(out/'open5gs-rsp-review.json',review)
             expanded=run_output(['/usr/bin/ninja','-C',str(ob),'-t','compdb','-x','c_LINKER_RSP'],env)
             if digest(ob/'build.ninja')!=review['build_ninja_sha256']:raise Blocked('OPEN5GS_RSP_MANIFEST_CHANGED')
-            atomic(out/'open5gs-rsp-expanded.json',review_expanded_compdb(expanded,review))
-            raise Blocked('OPEN5GS_RSP_INDEPENDENT_REVIEW_REQUIRED')
+            expanded_report=review_expanded_compdb(expanded,review)
+            atomic(out/'open5gs-rsp-expanded.json',expanded_report)
+            atomic(out/'d2b-native-admission.json',admit_reviewed_open5gs_graph(graph,review,expanded_report))
         else:
             audit_graph(graph)
     rec.phase('srsran_compilation',[['/usr/bin/ninja','-C',str(sb),'-j','2','-v',*st]],w,outputs=[sb/'l3-d1-driver/l3_ngap_protocol_runtime',sb/'apps/cu_cp/srscucp',sb/'tests/unittests/cu_cp/cu_cp_test',sb/'lib/cu_cp/libsrsran_cu_cp.a'],timeout=4200)

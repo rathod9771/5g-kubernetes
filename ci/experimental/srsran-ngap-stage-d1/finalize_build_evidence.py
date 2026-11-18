@@ -3,6 +3,7 @@ import json,sys
 from pathlib import Path
 from build_policy import Blocked,digest,PHASES,verify_artifacts,verify_complete,resource_admission
 from build_receipts import atomic
+from native_build_admission import admit_reviewed_open5gs_graph,verify_native_terminal_guard
 
 def validate_native(root):
     root=Path(root)
@@ -26,7 +27,18 @@ def validate_native(root):
     for required in ('resource-usage.json','worker/toolchain.json','worker/binary-inventory.json','worker/enforcement.json'):
         if not (root/required).is_file() or required not in final['evidence_sha256']:raise Blocked('MISSING_REQUIRED_EVIDENCE:'+required)
     resource_admission(json.loads((root/'worker/enforcement.json').read_text()))
-    verify_complete(receipts,json.loads((root/'worker/toolchain.json').read_text()),json.loads((root/'worker/binary-inventory.json').read_text()),final,json.loads((root/'resource-usage.json').read_text())['usage'])
+    usage=json.loads((root/'resource-usage.json').read_text())
+    verify_complete(receipts,json.loads((root/'worker/toolchain.json').read_text()),json.loads((root/'worker/binary-inventory.json').read_text()),final,usage['usage'])
+    verify_native_terminal_guard(root,final,usage)
+    for name in ('d2b-native-admission.json','open5gs-commands.txt','open5gs-rsp-review.json','open5gs-rsp-expanded.json'):
+        if 'worker/'+name not in final['evidence_sha256']:
+            raise Blocked('D2B_NATIVE_UNBOUND_ADMISSION_EVIDENCE:'+name)
+    expected_admission=admit_reviewed_open5gs_graph(
+        (root/'worker/open5gs-commands.txt').read_text(),
+        json.loads((root/'worker/open5gs-rsp-review.json').read_text()),
+        json.loads((root/'worker/open5gs-rsp-expanded.json').read_text()))
+    if json.loads((root/'worker/d2b-native-admission.json').read_text())!=expected_admission:
+        raise Blocked('D2B_NATIVE_ADMISSION_RECEIPT_DRIFT')
     for r in receipts.values():
         for ref in [r['log'],*[c['log'] for c in r['commands']]]:
             relative='worker/'+Path(ref).name
