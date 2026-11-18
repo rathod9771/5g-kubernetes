@@ -180,6 +180,40 @@ class BoundedToolchain(unittest.TestCase):
    with self.assertRaisesRegex(Blocked,'UNEXPECTED_TOOLCHAIN_OBJECT'):
     t.freeze([str(p)],'synthetic 1',approved=False)
 
+ def test_environment_d_configs_excluded_under_merged_usr_names(self):
+  # Systemd runtime environment configuration is not a native build input.
+  for root in ('/usr/lib/','/lib/'):
+   for suffix in ('environment.d/99-environment.conf','environment.d/10-provider.conf','environment.d/nested.conf'):
+    with self.subTest(name=root+suffix):self.assertFalse(t.allowed_file(root+suffix))
+  self.assertFalse(t.allowed_file('/etc/environment'))  # Target is never newly permitted.
+
+ def test_environment_d_exclusion_is_directory_bounded(self):
+  # Do not broaden the negative match to unrelated toolchain package paths.
+  for root in ('/usr/lib/','/lib/'):
+   for suffix in ('environment.d-backup/tool.so','environment.d.extra/tool.so','x86_64-linux-gnu/libsystemd.so.0','systemd/libsystemd-shared-249.so'):
+    with self.subTest(name=root+suffix):self.assertTrue(t.allowed_file(root+suffix))
+
+ def test_replay_environment_config_is_removed_before_symlink_visit(self):
+  # Reconstruct the selection branch in acquire(): rejected names are not lstat'ed.
+  from unittest.mock import patch
+  names=('/usr/lib/environment.d/99-environment.conf','/lib/environment.d/99-environment.conf','/usr/lib/systemd/libsystemd-shared-249.so','/usr/include/stdio.h')
+  chosen=[];excluded=[]
+  with patch.object(Path,'is_symlink',side_effect=AssertionError('excluded config may not be inspected')) as probe:
+   for name in names:
+    if t.allowed_file(name):chosen.append(name)
+    else:excluded.append(name)
+  self.assertEqual(chosen,list(names[2:]));self.assertEqual(excluded,list(names[:2]));probe.assert_not_called()
+
+ def test_environment_exclusion_is_bound_in_policy_digest(self):
+  import hashlib
+  self.assertIn('/usr/lib/environment.d/',t.POLICY['excluded_runtime_prefixes'])
+  self.assertEqual(t.POLICY_SHA256,hashlib.sha256(json.dumps(t.POLICY,sort_keys=True).encode()).hexdigest())
+  with tempfile.TemporaryDirectory() as d:
+   (Path(d)/'synthetic').write_text('safe fixture')
+   lock=t.freeze([d],'synthetic 1');lock['policy_sha256']='0'*64
+   with self.assertRaisesRegex(Blocked,'UNAPPROVED_TOOLCHAIN_POLICY'):
+    t.verify(lock,'synthetic 1')
+
  def test_runtime_exclusion_alias_is_bound_in_policy_hash(self):
   import hashlib
   self.assertEqual(t.POLICY['runtime_exclusion_aliases'],{'/lib/':'/usr/lib/'})
