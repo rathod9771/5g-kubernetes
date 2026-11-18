@@ -24,6 +24,7 @@ import types
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "stage5s"))
 from run_three_cycle_recovery import configure
+from amf_process_count_stage5y import count_amf_processes
 
 MAX_EVENTS = 1800
 MAX_ROLE_CATEGORY_EVENTS = 100
@@ -303,6 +304,17 @@ class DiagnosticCollector:
 
 def make_probe(args):
     probe = configure(args)
+    # Stage5Y ONLY: keep the Stage4P baseline frozen, but avoid its AMF-count
+    # stdout+stderr integer parse race when /proc/<pid>/comm disappears.
+    # Every original NAS/NGAP/F1-U/NG-U and AMF-ingress gate remains active.
+    from run_ue_registration import name
+    if not callable(getattr(probe, "amf_count", None)):
+        raise RuntimeError("Stage5Y expected baseline AMF process-count gate missing")
+
+    def race_safe_amf_count(self):
+        return count_amf_processes(name("core"))
+
+    probe.amf_count = types.MethodType(race_safe_amf_count, probe)
     actual = probe.fault_and_recover
     def instrumented(self):
         collector = DiagnosticCollector(self.out)

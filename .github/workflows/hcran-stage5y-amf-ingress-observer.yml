@@ -4,6 +4,7 @@ name: H-CRAN Stage 5Y live Open5GS AMF cell-ingress evidence gate - NO DEPLOY
 # faults against the SAME two unchanged UE processes. REBUILD test-only
 # pinned Stage5T UE with unchanged pre-SIB1 MAC guard; rebuild pinned Stage3 NGAP CU.
 # No historical artifact fetch; this rebuilds a source-equivalent CU, not bit-identical.
+# Stage5Y-A: test-only race-safe /proc AMF count; frozen Stage4P baseline unchanged.
 # This never touches HP, Kubernetes, OSM, production keys or subscribers.
 on:
   push:
@@ -152,6 +153,7 @@ jobs:
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/verify_bounded_recovery_stage5s.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/run_three_cycle_recovery.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/run_protocol_trace.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/amf_process_count_stage5y.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/verify_three_cycle_recovery.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5u/audit_repeatability.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5w/analyze_protocol_gap.py

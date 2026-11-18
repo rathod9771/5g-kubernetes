@@ -4,11 +4,13 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 ROOT=Path(__file__).resolve().parents[1]
 STREAM=ROOT/"experiments/oai-ngap-2026w13/stage5s/amf_ingress_stream_stage5y.py"
 VERIFIER=ROOT/"experiments/oai-ngap-2026w13/stage5y/verify_live_amf_ingress.py"
 OBSERVER=ROOT/"experiments/oai-ngap-2026w13/stage5s/run_protocol_trace.py"
+COUNTER=ROOT/"experiments/oai-ngap-2026w13/stage5s/amf_process_count_stage5y.py"
 WORKFLOW=ROOT/".github/workflows/hcran-stage5y-amf-ingress-observer.yml"
 
 def load(path, name):
@@ -50,6 +52,28 @@ class Stage5YContracts(unittest.TestCase):
             m.decode_bounded_snapshot("X"*(m.MAX_SNAPSHOT_CHARS+1))
         with self.assertRaises(ValueError):
             m.decode_bounded_snapshot(m.TOKEN+"\t/etc/passwd\t1\nxyz\n")
+
+    def test_disappearing_amf_proc_entry_counter_stays_numeric_and_fail_closed(self):
+        m=load(COUNTER,"stage5y_amf_count")
+        self.assertIn('cat "$f" 2>/dev/null',m.COUNT_SCRIPT)
+        self.assertIn('if comm=$(cat "$f" 2>/dev/null); then',m.COUNT_SCRIPT)
+        self.assertIn("probe.amf_count = types.MethodType",OBSERVER.read_text())
+        calls=[]
+        def result(stdout,stderr="",code=0):
+            def fake_run(args,**kwargs):
+                calls.append((args,kwargs))
+                return SimpleNamespace(stdout=stdout,stderr=stderr,returncode=code)
+            return fake_run
+        self.assertEqual(m.count_amf_processes("synthetic-core",run=result("1\\n")),1)
+        self.assertEqual(calls[0][0][:3],["docker","exec","synthetic-core"])
+        for stdout,stderr,code in (
+            ("1\\ncat: /proc/369/comm: No such file or directory","",0),
+            ("1\\n","cat: disappeared",0),
+            ("not-a-count","",0), ("","",0), ("0\\n","",1),
+        ):
+            with self.subTest(stdout=stdout,stderr=stderr,code=code):
+                with self.assertRaises(RuntimeError):
+                    m.count_amf_processes("synthetic-core",run=result(stdout,stderr,code))
 
     def test_core_observer_polls_real_amf_files_redacted(self):
         src=STREAM.read_text()
