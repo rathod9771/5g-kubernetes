@@ -43,6 +43,21 @@ jobs:
           sudo -n apt-get -o Acquire::Retries=0 install -y --no-install-recommends bubblewrap
           command -v bwrap
           /usr/bin/bwrap --version
+          # Exercise the userns mapping inside a constrained transient systemd unit, too.
+          RUN_UID="$(id -u)"
+          RUN_GID="$(id -g)"
+          sudo -n systemd-run --wait --collect --unit=d2b-userns-smoke-${GITHUB_RUN_ID} \
+            --service-type=exec \
+            --property=NoNewPrivileges=yes \
+            --property=MemoryMax=6442450944 --property=MemorySwapMax=0 \
+            --property=CPUQuota=200% --property=TasksMax=256 \
+            -- /usr/bin/bwrap --unshare-user --unshare-net --unshare-pid \
+            --unshare-ipc --unshare-uts --new-session --die-with-parent \
+            --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind /lib64 /lib64 \
+            --ro-bind /bin /bin --ro-bind /etc /etc \
+            --proc /proc --dev /dev --dir /tmp \
+            --uid "$RUN_UID" --gid "$RUN_GID" --cap-drop ALL --chdir /tmp \
+            /usr/bin/python3 -B -c 'import os; assert os.getuid()==1001 and os.getgid()==1001; print("SYSTEMD_USERNS_SMOKE_PASS")'
           RUN_UID="$(id -u)"
           RUN_GID="$(id -g)"
           /usr/bin/sudo -n /usr/bin/bwrap \
