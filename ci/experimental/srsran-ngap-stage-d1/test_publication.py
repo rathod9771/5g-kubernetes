@@ -18,7 +18,7 @@ def synthetic_native_pins(case):
         p=patch.object(nba,name,value);p.start();case.addCleanup(p.stop)
 
 class Publication(unittest.TestCase):
-  def setUp(self):synthetic_native_pins(self)
+ def setUp(self):synthetic_native_pins(self)
  def workflow(self):return yaml.load((P/'native-build.WORKFLOW.PROPOSED.yml').read_text(),Loader=yaml.BaseLoader)
  def fixture(self):return original.Harness().complete()
  def rejected(self,edit):
