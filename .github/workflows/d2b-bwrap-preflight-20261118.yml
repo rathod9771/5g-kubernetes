@@ -1,0 +1,53 @@
+name: D2B user namespace isolated validation only
+on:
+  push:
+    branches:
+      - experiment/layer3-d2b-bwrap-userns-20261118
+permissions:
+  contents: read
+concurrency:
+  group: d2b-userns-offline-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  offline-and-userns-preflight:
+    if: github.ref == 'refs/heads/experiment/layer3-d2b-bwrap-userns-20261118' && github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      INPUT: ci/experimental/srsran-ngap-stage-d1
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify SHA256 input policy
+        run: |
+          cd "$INPUT"
+          sha256sum -c SHA256SUMS
+      - name: Install pinned offline Python dependencies only
+        timeout-minutes: 7
+        run: |
+          /usr/bin/python3 -c "import sys,platform; assert sys.version_info[:2] == (3,10) and platform.machine() == 'x86_64'"
+          python3 -B "$INPUT/workflow_evidence.py" run wheel_acquisition
+          python3 -B "$INPUT/workflow_evidence.py" run python_setup
+      - name: Run offline suite (no native build)
+        timeout-minutes: 5
+        run: |
+          cd "$INPUT"
+          sha256sum -c SHA256SUMS
+          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py test_toolchain_bounded.py
+      - name: Isolated Bubblewrap UID GID smoke (no native build or network)
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          command -v bwrap
+          /usr/bin/bwrap --version
+          RUN_UID="$(id -u)"
+          RUN_GID="$(id -g)"
+          /usr/bin/sudo -n /usr/bin/bwrap \
+            --unshare-user --unshare-net --unshare-pid --unshare-ipc --unshare-uts \
+            --new-session --die-with-parent \
+            --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind /lib64 /lib64 \
+            --ro-bind /bin /bin --ro-bind /etc /etc \
+            --proc /proc --dev /dev --dir /tmp \
+            --uid "$RUN_UID" --gid "$RUN_GID" --cap-drop ALL --chdir /tmp \
+            /usr/bin/python3 -B -c 'import os; print("uid",os.getuid(),"gid",os.getgid()); assert os.getuid()!=0'
