@@ -19,6 +19,19 @@ def validate_scratch_storage(temp,private,filesystem_type,available_bytes,temp_d
     if type(available_bytes) is not int or available_bytes<SCRATCH_MIN_FREE_BYTES:raise Blocked('DISK_HEADROOM')
     return {'filesystem_type':filesystem_type,'available_bytes':available_bytes,
             'required_free_bytes':SCRATCH_MIN_FREE_BYTES,'disk_limit_bytes':LIMITS['disk_bytes']}
+def validate_worker_scratch_permissions(private_meta,image_meta,mount_meta,uid,gid):
+    """Enforce a traversable root-only image parent and runner-owned work volume."""
+    if (not stat.S_ISDIR(private_meta.st_mode) or private_meta.st_uid!=0
+            or stat.S_IMODE(private_meta.st_mode)!=0o711):
+        raise Blocked('PRIVATE_SCRATCH_PARENT_PERMISSIONS')
+    if (not stat.S_ISREG(image_meta.st_mode) or image_meta.st_uid!=0
+            or stat.S_IMODE(image_meta.st_mode)!=0o600 or image_meta.st_nlink!=1):
+        raise Blocked('PRIVATE_SCRATCH_IMAGE_PERMISSIONS')
+    if (not stat.S_ISDIR(mount_meta.st_mode) or mount_meta.st_uid!=uid
+            or mount_meta.st_gid!=gid or stat.S_IMODE(mount_meta.st_mode)!=0o700):
+        raise Blocked('PRIVATE_SCRATCH_VOLUME_PERMISSIONS')
+    return True
+
 def ctl(argv,timeout=15):
     start=time.monotonic();record={'argv':argv,'started_at':stamp()}
     try:
@@ -83,7 +96,7 @@ def main():
         raise Blocked('UNIT_NOT_EMPTY_AFTER_KILL')
     try:
         if os.stat('/proc/self/ns/mnt').st_ino==os.stat('/proc/1/ns/mnt').st_ino:raise Blocked('PRIVATE_MOUNT_NAMESPACE_REQUIRED')
-        for tool in ('systemd-run','systemctl','journalctl','bwrap','stat','fallocate','mkfs.ext4','mount','umount','nsenter','ip','readelf','objdump'):
+        for tool in ('systemd-run','systemctl','journalctl','bwrap','setpriv','stat','fallocate','mkfs.ext4','mount','umount','nsenter','ip','readelf','objdump'):
             if not shutil.which(tool):raise Blocked('MISSING_ENFORCEMENT_TOOL:'+tool)
         scratch_stat=os.lstat(private)
         if not stat.S_ISDIR(scratch_stat.st_mode) or scratch_stat.st_uid!=0 or stat.S_IMODE(scratch_stat.st_mode)!=0o700:
@@ -115,6 +128,10 @@ def main():
         spec={'uid':uid,'gid':gid,'host_netns_inode':os.stat('/proc/self/ns/net').st_ino,'host_mount_inode':os.stat('/proc/self/ns/mnt').st_ino,'disk_image_bytes':image.stat().st_size,'acquired':'/sources','repository':'/repo'}
         atomic(mount/'spec.json',spec);os.chown(mount/'spec.json',uid,gid)
         (mount/'platform-packages.txt').write_text(ctl(['/usr/bin/dpkg-query','-W'],30));os.chown(mount/'platform-packages.txt',uid,gid)
+        # Keep the ext4 backing file root-readable only; allow traversal to the
+        # runner-owned mount without exposing the private directory listing.
+        os.chmod(image,0o600);os.chmod(private,0o711)
+        validate_worker_scratch_permissions(os.lstat(private),os.lstat(image),os.lstat(mount),uid,gid)
         # Explicit bwrap environment. No inherited TEST, proxies, tokens or compiler overrides.
         env=environment({},'/work/home','/work/tmp');argv=['/usr/bin/bwrap','--unshare-user','--unshare-net','--unshare-pid','--unshare-ipc','--unshare-uts','--new-session','--die-with-parent']
         # Empty sandbox root: no host IPC socket directories or homes are inherited.
@@ -128,7 +145,7 @@ def main():
         for k,v in env.items():argv+=['--setenv',k,v]
         argv+=['--uid',str(uid),'--gid',str(gid),'--cap-drop','ALL','--chdir','/work','/usr/bin/python3','-B',str(Path('/repo')/p.relative_to(repo)/'build_worker.py'),'--isolated-build-only']
         if ctl(['/usr/bin/systemctl','show',unit,'--property=LoadState','--value']).strip()!='not-found':raise Blocked('UNIT_COLLISION')
-        command=['/usr/bin/systemd-run','--quiet','--unit='+unit,'--description=Layer3 D2A '+unit,'--service-type=exec','--property=RemainAfterExit=yes','--property=MemoryMax='+str(LIMITS['memory.max']),'--property=MemorySwapMax=0','--property=CPUQuota=200%','--property=CPUQuotaPeriodSec=100ms','--property=TasksMax='+str(LIMITS['pids.max']),'--property=MemoryAccounting=yes','--property=CPUAccounting=yes','--property=TasksAccounting=yes','--property=OOMPolicy=kill','--property=NoNewPrivileges=yes','--property=KillMode=control-group','--property=TimeoutStopSec=10s','--property=RuntimeMaxSec=4500s','--','/usr/bin/nsenter','--mount=/proc/'+str(os.getpid())+'/ns/mnt','--',*argv]
+        command=['/usr/bin/systemd-run','--quiet','--unit='+unit,'--description=Layer3 D2A '+unit,'--service-type=exec','--property=RemainAfterExit=yes','--property=MemoryMax='+str(LIMITS['memory.max']),'--property=MemorySwapMax=0','--property=CPUQuota=200%','--property=CPUQuotaPeriodSec=100ms','--property=TasksMax='+str(LIMITS['pids.max']),'--property=MemoryAccounting=yes','--property=CPUAccounting=yes','--property=TasksAccounting=yes','--property=OOMPolicy=kill','--property=NoNewPrivileges=yes','--property=KillMode=control-group','--property=TimeoutStopSec=10s','--property=RuntimeMaxSec=4500s','--','/usr/bin/nsenter','--mount=/proc/'+str(os.getpid())+'/ns/mnt','--','/usr/bin/setpriv','--reuid',str(uid),'--regid',str(gid),'--clear-groups',*argv]
         atomic(results/'supervisor-start.json',{'unit':unit,'argv':command,'limits':LIMITS,'runner_image':{k:os.environ.get(k) for k in ('ImageOS','ImageVersion')},'started_at':stamp()})
         launched=True;ctl(command,20);cg=None;last={}
         while True:
