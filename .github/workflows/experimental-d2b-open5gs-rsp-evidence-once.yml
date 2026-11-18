@@ -1,0 +1,128 @@
+name: Experimental D2B Open5GS linker evidence (configuration only)
+on:
+  push:
+    branches:
+      - experiment/layer3-d2b-pinned-open5gs-graph-20261118
+    paths:
+      - .github/workflows/experimental-d2b-open5gs-rsp-evidence-once.yml
+permissions:
+  contents: read
+concurrency:
+  group: d2b-rsp-evidence-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  rsp-evidence-only:
+    if: github.ref == 'refs/heads/experiment/layer3-d2b-pinned-open5gs-graph-20261118' && github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      INPUT: ci/experimental/srsran-ngap-stage-d1
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify source ledger and unconditional stop before any compilation
+        run: |
+          set -euo pipefail
+          cd "$INPUT"
+          sha256sum -c SHA256SUMS
+          python3 - <<'PY'
+          from pathlib import Path
+          source=Path("build_worker.py").read_text()
+          check="audit_open5gs_graph(graph)"
+          collect="atomic(out/'open5gs-rsp-review.json',collect_rsp_review(ob))"
+          stop="raise Blocked('OPEN5GS_RSP_INDEPENDENT_REVIEW_REQUIRED')"
+          compile_phase="rec.phase('srsran_compilation'"
+          assert all(source.count(s)==1 for s in (check,collect,stop,compile_phase))
+          assert source.index(check)<source.index(collect)<source.index(stop)<source.index(compile_phase)
+          assert source.count("rec.phase('open5gs_compilation'")==1
+          print("CONFIGURATION_ONLY_STATIC_STOP_VERIFIED")
+          PY
+      - name: Install public tools on disposable hosted runner
+        timeout-minutes: 5
+        run: |
+          sudo -n apt-get -o Acquire::Retries=0 update
+          sudo -n apt-get -o Acquire::Retries=0 install -y --no-install-recommends build-essential cmake ninja-build meson pkg-config bison flex libsctp-dev libgnutls28-dev libgcrypt20-dev libssl-dev libidn11-dev libmongoc-dev libbson-dev libyaml-dev libnghttp2-dev libmicrohttpd-dev libcurl4-gnutls-dev libtalloc-dev libmbedtls-dev libyaml-cpp-dev libfftw3-dev libgtest-dev python3-venv binutils bubblewrap iproute2 e2fsprogs util-linux systemd
+      - name: Isolated, reviewed Python setup
+        timeout-minutes: 5
+        run: |
+          /usr/bin/python3 -c "import sys,platform; assert sys.version_info[:2] == (3,10) and platform.machine() == 'x86_64'"
+          python3 -B "$INPUT/workflow_evidence.py" run wheel_acquisition
+          python3 -B "$INPUT/workflow_evidence.py" run python_setup
+      - name: Offline tests including both response-file gates
+        timeout-minutes: 4
+        run: |
+          cd "$INPUT"
+          sha256sum -c SHA256SUMS
+          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py test_toolchain_bounded.py test_open5gs_graph_gate.py test_open5gs_rsp_review.py
+      - name: Acquire exact pinned sources (no native execution)
+        timeout-minutes: 10
+        run: |
+          python3 -B "$INPUT/acquire_sources.py" --github-acquire-only
+      - name: Configure under isolated supervisor then STOP before compilation
+        timeout-minutes: 26
+        run: |
+          set -uo pipefail
+          sudo -n --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,GITHUB_WORKSPACE,RUNNER_TEMP,ImageOS,ImageVersion \
+            /usr/bin/unshare --mount --propagation private -- \
+            /usr/bin/timeout -k 15s 24m /usr/bin/python3 -B "$INPUT/build-only.py" --github-build-only
+          rc=$?
+          echo "Isolated supervisor exit code: $rc (nonzero expected from review stop)"
+          if [ "$rc" -eq 0 ]; then
+            echo "Unexpected native-build success on configuration-only run" >&2
+            exit 95
+          fi
+          if [ "$rc" -ne 1 ]; then
+            exit "$rc"
+          fi
+      - name: Preserve bounded diagnostic evidence
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 -B "$INPUT/workflow_evidence.py" collect
+      - name: Record fail-closed evidence classification
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 -B "$INPUT/finalize_build_evidence.py" stage-d1-build-results
+      - name: Validate expected review-only result and absence of native compilation
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('stage-d1-build-results')
+          worker=root/'worker'
+          status=json.loads((worker/'worker-status.json').read_text())
+          report=json.loads((worker/'open5gs-rsp-review.json').read_text())
+          supervisor=json.loads((root/'supervisor-final.json').read_text())
+          assert status=={'status':'BLOCKED','reason':'OPEN5GS_RSP_INDEPENDENT_REVIEW_REQUIRED'},status
+          assert supervisor['status']=='BLOCKED',supervisor.get('status')
+          assert report['classification']=='REVIEW_REQUIRED'
+          assert report['native_compilation_authorized'] is False
+          assert set(report['targets'])=={
+              'lib/asn1c/ngap/libogsasn1c-ngap.so.2.7.5',
+              'lib/sbi/openapi/libogssbi-openapi.so.2.7.5'}
+          assert not (worker/'srsran_compilation.receipt.json').exists()
+          assert not (worker/'open5gs_compilation.receipt.json').exists()
+          graph=(worker/'open5gs-commands.txt').read_bytes()
+          assert hashlib.sha256(graph).hexdigest()=='9f086ee1c67d2716a69b5ccf45379231897c29a059f2c51d2d3bc5d257e8fd6c'
+          print('RSP_EVIDENCE_COLLECTED_NO_COMPILATION')
+          print('Ninja bytes:',report['build_ninja_bytes'])
+          print('Response files complete:',report['response_files_complete'])
+          PY
+      - name: Export reviewed allowlist only
+        if: always()
+        timeout-minutes: 2
+        run: |
+          python3 -B "$INPUT/workflow_evidence.py" export
+      - name: Upload bounded review evidence (14-day retention)
+        if: always()
+        timeout-minutes: 4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: l3-d2b-open5gs-rsp-review-${{ github.run_id }}
+          path: stage-d1-reviewed-evidence/
+          if-no-files-found: error
+          retention-days: 14
