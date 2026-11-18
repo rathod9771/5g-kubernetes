@@ -39,6 +39,8 @@ jobs:
         timeout-minutes: 3
         run: |
           set -euo pipefail
+          sudo -n apt-get -o Acquire::Retries=0 update
+          sudo -n apt-get -o Acquire::Retries=0 install -y --no-install-recommends bubblewrap
           command -v bwrap
           /usr/bin/bwrap --version
           RUN_UID="$(id -u)"
