@@ -2,6 +2,7 @@
 import json,os,shutil,subprocess,sys,tarfile,time,stat
 from pathlib import Path
 from build_policy import Blocked,LIMITS,VERSIONS,PHASES,digest,environment,resource_admission,check_dependency_tree,audit_graph,unity_generated
+from open5gs_graph_gate import audit_open5gs_graph
 from build_receipts import Recorder,atomic
 from toolchain_lock import run_bounded as verify_toolchain,verify_acquisition
 
@@ -80,7 +81,10 @@ def main():
         if name=='srsran':
             template=(s/'cmake/modules/build_info.cmake.in').read_text().replace('@PROJECT_SOURCE_DIR@',str(s)).replace('@CMAKE_BINARY_DIR@',str(sb))
             if (sb/'build_info.cmake').read_text()!=template:raise Blocked('UNREVIEWED_GENERATED_VERSION_HELPER')
-        audit_graph(graph)
+        if name=='open5gs':
+            audit_open5gs_graph(graph)
+        else:
+            audit_graph(graph)
     rec.phase('srsran_compilation',[['/usr/bin/ninja','-C',str(sb),'-j','2','-v',*st]],w,outputs=[sb/'l3-d1-driver/l3_ngap_protocol_runtime',sb/'apps/cu_cp/srscucp',sb/'tests/unittests/cu_cp/cu_cp_test',sb/'lib/cu_cp/libsrsran_cu_cp.a'],timeout=4200)
     rec.phase('open5gs_compilation',[['/usr/bin/ninja','-C',str(ob),'-j','2','-v',*ot]],w,outputs=[ob/'src/amf/open5gs-amfd',ob/'src/nrf/open5gs-nrfd'],timeout=4200)
     bins=[sb/'l3-d1-driver/l3_ngap_protocol_runtime',sb/'apps/cu_cp/srscucp',sb/'tests/unittests/cu_cp/cu_cp_test',ob/'src/amf/open5gs-amfd',ob/'src/nrf/open5gs-nrfd']

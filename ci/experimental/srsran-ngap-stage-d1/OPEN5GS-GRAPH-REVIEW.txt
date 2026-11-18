@@ -1,0 +1,8 @@
+Open5GS D2B graph pin - REVIEW ONLY
+
+Run 44255524672, SHA b833a84f26978296d77f00e6afd126d9d784db4f.
+The graph contains 2654 cc, 15 Meson symbolextractor, 2 archive commands.
+Two linker response-file references exist; their expanded arguments are NOT
+contained in the retained diagnostic ZIP and require independent review.
+No additional CI dispatch, native build execution, or deployment is authorized.
+All source pins, srsRAN audit rules, and sandbox limits remain unchanged.
