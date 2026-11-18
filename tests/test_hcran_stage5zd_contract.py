@@ -43,6 +43,11 @@ void nr_rrc_mac_config_other_sib(int i) {}
             m.patch(tmp)
             changed=p.read_text()
             self.assertEqual(changed.count("Stage5ZD:"),3)
+            # Guard suppresses connected-state periodic MIB logging:
+            # retain original state assignments and 3GPP MAC behavior.
+            self.assertIn("if (mac->state < UE_CONNECTED)",changed)
+            self.assertIn("LOG_I(NR_MAC,",changed)
+            self.assertEqual(changed.count("mac->state ="),src.count("mac->state ="))
             self.assertIn(m.SCHED_ANCHOR,changed)
             self.assertIn(m.MIB_ANCHOR,changed)
             self.assertIn(m.SIB1_ANCHOR,changed)

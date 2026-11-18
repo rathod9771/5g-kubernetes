@@ -19,10 +19,15 @@ SCHED_NEW = SCHED_ANCHOR + """  LOG_I(NR_MAC,
         mac->ul_BWPs.count, mac->dl_BWPs.count);
 """
 MIB_ANCHOR = "  nr_ue_decode_mib(mac, cc_idP);\n"
-MIB_NEW = MIB_ANCHOR + """  LOG_I(NR_MAC,
-        "Stage5ZD: mib_configured state=%d mib_present=%d get_sib1=%d ul_bwp=%d dl_bwp=%d\\n",
-        mac->state, mac->mib != NULL, mac->get_sib1,
-        mac->ul_BWPs.count, mac->dl_BWPs.count);
+MIB_NEW = MIB_ANCHOR + """  /* Stage5ZD: connected-state periodic MIB can be high volume and is
+   * irrelevant to post-idle BWP0 reacquisition. Bound this experiment's
+   * logging to non-connected MAC states; do not change any state. */
+  if (mac->state < UE_CONNECTED) {
+    LOG_I(NR_MAC,
+          "Stage5ZD: mib_configured state=%d mib_present=%d get_sib1=%d ul_bwp=%d dl_bwp=%d\\n",
+          mac->state, mac->mib != NULL, mac->get_sib1,
+          mac->ul_BWPs.count, mac->dl_BWPs.count);
+  }
 """
 SIB1_ANCHOR = """  if (mac->state == UE_RECEIVING_SIB && can_start_ra)
     mac->state = UE_PERFORMING_RA;

@@ -153,13 +153,25 @@ class Stage5YContracts(unittest.TestCase):
     def test_2x3_pinned_research_workflow(self):
         w=WORKFLOW.read_text()
         for s in ("runs-on: ubuntu-24.04","trial: [1, 2]",
-                  "hcran_build_pinned_w45_ue_stage5t.sh",
                   "hcran_build_pinned_stage3_ngap_cu.sh",
                   "--cycles 3 --verify-gtpu",
                   "stage5u/audit_repeatability.py",
                   "stage5x/analyze_f1c_amf_ingress.py",
                   "stage5y/verify_live_amf_ingress.py"):
             self.assertIn(s,w)
+        # The baseline workflow invokes Stage5T directly. A diagnostic-only
+        # derived workflow may build the same pinned Stage5T code with extra
+        # source-pinned MIB/SIB1 LOG_I markers, but must not substitute protocol
+        # behavior, production deployment, or omit the real Stage5Y gates.
+        if "hcran_build_pinned_w45_ue_stage5zd.sh" in w:
+            builder=(ROOT/"scripts/hcran_build_pinned_w45_ue_stage5zd.sh").read_text()
+            self.assertIn("dfb296ab867050a7bde81b393fa31b757ada2c83",builder)
+            self.assertIn("stage5t/patch_pre_sib1_ra_ordering.py",builder)
+            self.assertIn("stage5zd/patch_mib_sib1_handoff_observe.py",builder)
+            self.assertIn('git -C "$OAI_SOURCE" diff --check',builder)
+            self.assertIn("stage5zd/analyze_mib_sib1_handoff.py",w)
+        else:
+            self.assertIn("hcran_build_pinned_w45_ue_stage5t.sh",w)
         for s in ("runs-on: self-hosted","kubectl apply","helm upgrade","osm ns-"):
             self.assertNotIn(s,w)
 

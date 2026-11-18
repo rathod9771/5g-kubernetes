@@ -38,3 +38,43 @@ If a failure is reproduced:
 Because logging itself can change timing, any apparent improvement is **not proof the issue is fixed**. No retry budget or state-machine behavior changes are introduced.
 
 **Hard exclusions:** no `main` update, no OSM/HP Kubernetes, no production keys/subscribers, no Near-RT RIC or E2SM-KPM, no staging or production deployment. Formal 3GPP conformance and operator authorization still outstanding.
+
+
+## Stage 5ZD initial run 44280619980 — corrections and retained FAIL
+
+The initial run built both source-pinned experimental UEs and completed isolated
+RFsim, but **neither independent trial qualified**. Trial 1 passed its first
+AMF restart and failed the second; trial 2 failed its first. The previously
+reported macro-only pattern **did not recur identically**: both failed Stage5ZD
+cycles showed the **small UE** missing a fresh post-NGSetup PDU/RA completion,
+while the macro UE did recover a fresh PDU. This cross-cell variability does
+not support a macro-only root cause or a verified UE source defect.
+
+The initial MIB hook emitted repeated `mib_configured` records while the
+UE was already connected (100 retained per UE, at the category ceiling).
+Consequently the Stage5R collector deliberately set
+`collection_limit_reached=true` in **both** archives, and all derived Stage5ZB,
+5ZC, 5ZD diagnostic reports properly returned `INCOMPLETE_OBSERVATION`.
+The archive is still useful for bounded counts, but the absence of any
+particular marker is **not** evidence that a callback never occurred.
+
+A Stage5ZD correction bounds *source logging only* with
+`if (mac->state < UE_CONNECTED)` around the periodic MIB hook. It retains
+all original MAC-state assignments and leaves Stage5T, UE timers, protocol
+code, genuine acceptance gates, privacy restrictions and source pins intact.
+SIB1 schedule and configured handoff markers remain unfiltered. A new
+isolated RFsim run must verify that this reduces source volume and clears the
+trace-overflow flag; there is **no** automatic promotion of this correction.
+
+The initial offline run failed two compatibility tests:
+the original Stage5Y test expected a direct reference to the Stage5T
+builder even though Stage5ZD deliberately uses a derived pinned-log-only
+builder; the release impact registry lacked an explicit classification of
+the new experimental builder. These are now narrowly corrected:
+Stage5Y accepts Stage5ZD **only if** its source pin, inherited Stage5T
+patch and diagnostic are present, and release impact classifies precisely
+that one research-only builder as a non-OSM package input.
+
+**Decision remains NO-GO** until new CI proves the collector is complete,
+real two-UE recovery passes independently, and separate staging, formal
+3GPP validation and operator approval are obtained.

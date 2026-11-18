@@ -51,6 +51,7 @@ NON_PACKAGE_FILES = frozenset((
     'scripts/hcran_build_pinned_w45_ue_t3517_tunrenewal_raguard.sh',
     'scripts/hcran_build_pinned_w45_ue_stage5q.sh',
     'scripts/hcran_build_pinned_w45_ue_stage5t.sh',  # isolated W45 source-pinned UE study, never OSM release input
+    'scripts/hcran_build_pinned_w45_ue_stage5zd.sh',  # Stage5ZD experimental source-pinned diagnostic UE, never OSM release input
     'scripts/hcran_build_pinned_stage3_ngap_cu.sh',  # disposable Stage3-like source rebuild, not a release package  # diagnostic research-only W45 UE build
     'scripts/hcran_as_security_log_audit.py',
     'scripts/hcran_stage4w_mobility_preflight.py', 'scripts/hcran_staging_inventory.py',
