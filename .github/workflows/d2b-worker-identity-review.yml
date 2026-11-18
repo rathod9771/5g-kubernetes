@@ -1,0 +1,66 @@
+name: D2B worker identity correction offline verification
+on:
+  push:
+    branches:
+      - experiment/layer3-d2b-setpriv-worker-20261118
+permissions:
+  contents: read
+concurrency:
+  group: d2b-identity-validation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  offline-and-sandbox-only:
+    if: github.ref == 'refs/heads/experiment/layer3-d2b-setpriv-worker-20261118' && github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      INPUT: ci/experimental/srsran-ngap-stage-d1
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify pinned project hashes
+        run: |
+          cd "$INPUT"
+          sha256sum -c SHA256SUMS
+      - name: Install pinned offline Python tools
+        timeout-minutes: 7
+        run: |
+          /usr/bin/python3 -c "import sys,platform; assert sys.version_info[:2] == (3,10) and platform.machine() == 'x86_64'"
+          python3 -B "$INPUT/workflow_evidence.py" run wheel_acquisition
+          python3 -B "$INPUT/workflow_evidence.py" run python_setup
+      - name: All offline preparation tests
+        timeout-minutes: 5
+        run: |
+          cd "$INPUT"
+          sha256sum -c SHA256SUMS
+          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py test_toolchain_bounded.py
+      - name: Validate runner-UID namespace with synthetic protected scratch (no native build)
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n apt-get -o Acquire::Retries=0 update
+          sudo -n apt-get -o Acquire::Retries=0 install -y --no-install-recommends bubblewrap util-linux
+          RUN_UID="$(id -u)"
+          RUN_GID="$(id -g)"
+          PRIVATE="$(sudo -n mktemp -d -p "$RUNNER_TEMP" l3-d2b-isolation.XXXXXXXX)"
+          trap 'sudo -n rm -rf -- "$PRIVATE"' EXIT
+          sudo -n install -d -m 0700 -o "$RUN_UID" -g "$RUN_GID" "$PRIVATE/volume"
+          sudo -n touch "$PRIVATE/build.ext4"
+          sudo -n chmod 0600 "$PRIVATE/build.ext4"
+          sudo -n chmod 0711 "$PRIVATE"
+          test ! -r "$PRIVATE/build.ext4"
+          sudo -n systemd-run --wait --collect --unit="d2b-identity-probe-${GITHUB_RUN_ID}" \
+            --service-type=exec \
+            --property=NoNewPrivileges=yes --property=MemoryMax=6442450944 \
+            --property=MemorySwapMax=0 --property=CPUQuota=200% --property=TasksMax=256 \
+            -- /usr/bin/setpriv --reuid "$RUN_UID" --regid "$RUN_GID" --clear-groups \
+            /usr/bin/bwrap --unshare-user --unshare-net --unshare-pid --unshare-ipc --unshare-uts \
+            --new-session --die-with-parent \
+            --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /lib64 /lib64 \
+            --ro-bind /etc /etc --ro-bind "$GITHUB_WORKSPACE" /repo \
+            --bind "$PRIVATE/volume" /work --proc /proc --dev /dev \
+            --uid "$RUN_UID" --gid "$RUN_GID" --cap-drop ALL --chdir /work \
+            /usr/bin/python3 -B -c 'import os,pathlib; assert os.getuid()==1001 and os.getgid()==1001; assert pathlib.Path("/repo/ci/experimental/srsran-ngap-stage-d1/build_supervisor.py").is_file()'
+          echo "SYSTEMD_UID_NAMESPACE_WORKSPACE_AND_SCRATCH_PASS"
