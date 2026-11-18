@@ -10,6 +10,7 @@ name: H-CRAN Stage 5Y live Open5GS AMF cell-ingress evidence gate - NO DEPLOY
 # Stage5ZC: add category-only post-idle SIB1/BWP0 readiness observation.
 # Preserve original Stage5P/5U/5Y live gates; NO DEPLOY.
 # Stage5ZD: test-only, pinned UE source adds LOG_I at native MIB/SIB1 handoff.
+# Stage5ZD corrected offline 1142 tests (3 skipped): rerun isolated live RFsim after MIB-volume guard.
 # Core Stage5P/5U/5Y acceptance remains unchanged. NO DEPLOY.
 # This never touches HP, Kubernetes, OSM, production keys or subscribers.
 on:
