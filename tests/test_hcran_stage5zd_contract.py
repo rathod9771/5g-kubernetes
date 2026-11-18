@@ -10,7 +10,7 @@ BASE=ROOT/"experiments/oai-ngap-2026w13"
 PATCH=BASE/"stage5zd/patch_mib_sib1_handoff_observe.py"
 RULES=BASE/"stage5s/mib_sib1_handoff_stage5zd.py"
 AUDIT=BASE/"stage5zd/analyze_mib_sib1_handoff.py"
-BUILDER=ROOT/"scripts/hcran_build_pinned_w45_ue_stage5zd.sh"
+BUILDER=ROOT/"scripts/experiments/hcran_build_pinned_w45_ue_stage5zd.sh"
 WORKFLOW=ROOT/".github/workflows/hcran-stage5y-amf-ingress-observer.yml"
 
 def load(path,name):

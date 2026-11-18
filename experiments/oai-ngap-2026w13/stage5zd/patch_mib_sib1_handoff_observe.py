@@ -19,10 +19,15 @@ SCHED_NEW = SCHED_ANCHOR + """  LOG_I(NR_MAC,
         mac->ul_BWPs.count, mac->dl_BWPs.count);
 """
 MIB_ANCHOR = "  nr_ue_decode_mib(mac, cc_idP);\n"
-MIB_NEW = MIB_ANCHOR + """  LOG_I(NR_MAC,
-        "Stage5ZD: mib_configured state=%d mib_present=%d get_sib1=%d ul_bwp=%d dl_bwp=%d\\n",
-        mac->state, mac->mib != NULL, mac->get_sib1,
-        mac->ul_BWPs.count, mac->dl_BWPs.count);
+MIB_NEW = MIB_ANCHOR + """  /* Stage5ZE: avoid periodic connected-state MIB logs. The probe is only
+   * needed when post-idle recovery lacks BWP0. No MAC state is changed. */
+  if (mac->state < UE_CONNECTED &&
+      (mac->current_UL_BWP == NULL || mac->current_DL_BWP == NULL)) {
+    LOG_I(NR_MAC,
+          "Stage5ZD: mib_configured state=%d mib_present=%d get_sib1=%d ul_bwp=%d dl_bwp=%d\\n",
+          mac->state, mac->mib != NULL, mac->get_sib1,
+          mac->ul_BWPs.count, mac->dl_BWPs.count);
+  }
 """
 SIB1_ANCHOR = """  if (mac->state == UE_RECEIVING_SIB && can_start_ra)
     mac->state = UE_PERFORMING_RA;

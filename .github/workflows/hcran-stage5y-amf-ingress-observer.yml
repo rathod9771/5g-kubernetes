@@ -20,6 +20,7 @@ on:
       - experiment/hcran-stage5zb-rrc-radio-boundary-20261118
       - experiment/hcran-stage5zc-sib1-reacquisition-observer-20261118
       - experiment/hcran-stage5zd-mib-sib1-handoff-20261118
+      - experiment/hcran-stage5ze-bounded-mib-handoff-20261118
     paths:
       - .github/workflows/hcran-stage5y-amf-ingress-observer.yml
   workflow_dispatch:
@@ -127,7 +128,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bash -n qualification/scripts/hcran_build_pinned_w45_ue_stage5zd.sh
+          bash -n qualification/scripts/hcran_build_pinned_w45_ue_stage5t.sh
+          bash -n qualification/scripts/experiments/hcran_build_pinned_w45_ue_stage5zd.sh
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5q/patch_mac_bwp0_liveness.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5t/patch_pre_sib1_ra_ordering.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5zd/patch_mib_sib1_handoff_observe.py
@@ -144,7 +146,7 @@ jobs:
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/qualification"
           export GITHUB_WORKSPACE="$PWD"
-          bash scripts/hcran_build_pinned_w45_ue_stage5zd.sh
+          bash scripts/experiments/hcran_build_pinned_w45_ue_stage5zd.sh
           grep -q 'Stage5ZD' "$OUTPUT/test-only-UE-stage5zd-mib-sib1-handoff.patch"
           docker image inspect "$IMAGE" --format '{{.Id}}'
 
