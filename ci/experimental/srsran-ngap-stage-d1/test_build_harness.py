@@ -85,6 +85,31 @@ class Harness(unittest.TestCase):
     def test_no_native_runtime_command(self):
         for executable in ('open5gs-amfd','open5gs-nrfd','l3_ngap_protocol_runtime','cu_cp_test'):
             with self.assertRaises(Blocked):policy.audit_graph('/work/'+executable)
+    def test_generated_ninja_bare_version_codegen_exact(self):
+        self.assertTrue(policy.audit_graph('cd /work/srs-build/lib/support/versioning && cmake -P /work/srs-build/build_info.cmake'))
+
+    def test_bare_version_codegen_no_reviewed_directory_rejected(self):
+        for line in ('cmake -P /work/srs-build/build_info.cmake',
+                     'cd /work/srs-build && cmake -P /work/srs-build/build_info.cmake'):
+            with self.subTest(line=line),self.assertRaisesRegex(Blocked,'UNTRUSTED_TOOL_PATH'):
+                policy.audit_graph(line)
+
+    def test_bare_version_codegen_alternate_script_rejected(self):
+        with self.assertRaisesRegex(Blocked,'UNTRUSTED_TOOL_PATH'):
+            policy.audit_graph('cd /work/srs-build/lib/support/versioning && cmake -P /work/evil.cmake')
+
+    def test_bare_version_codegen_extra_argument_rejected(self):
+        with self.assertRaisesRegex(Blocked,'UNTRUSTED_TOOL_PATH'):
+            policy.audit_graph('cd /work/srs-build/lib/support/versioning && cmake -P /work/srs-build/build_info.cmake -DUNREVIEWED=1')
+
+    def test_bare_version_codegen_extra_command_rejected(self):
+        with self.assertRaisesRegex(Blocked,'UNTRUSTED_TOOL_PATH'):
+            policy.audit_graph('cd /work/srs-build/lib/support/versioning && cmake -P /work/srs-build/build_info.cmake && /usr/bin/cc -c /work/file.c')
+
+    def test_unreviewed_cmake_executable_location_rejected(self):
+        with self.assertRaisesRegex(Blocked,'UNTRUSTED_TOOL_PATH'):
+            policy.audit_graph('cd /work/srs-build/lib/support/versioning && /usr/local/bin/cmake -P /work/srs-build/build_info.cmake')
+
     def test_version_codegen_explicit(self):self.assertTrue(policy.audit_graph('cd /work/srs-build/lib/support/versioning && /usr/bin/cmake -P /work/srs-build/build_info.cmake'))
     def test_unreviewed_cmake_script(self):
         with self.assertRaises(Blocked):policy.audit_graph('/usr/bin/cmake -P /work/evil.cmake')

@@ -40,6 +40,7 @@ def audit_graph(commands):
     """Conservative shell command grammar; unfamiliar helper invocations block the experiment."""
     if not commands.strip() or len(commands)>16*1024**2:raise Blocked('EMPTY_OR_OVERSIZED_BUILD_GRAPH')
     allowed={'cc','c++','gcc','g++','ar','ranlib','ld','strip','objcopy','flex','bison',':'}
+    reviewed_version_codegen='cd /work/srs-build/lib/support/versioning && cmake -P /work/srs-build/build_info.cmake'
     for line in commands.splitlines():
         if re.search(r'[`$|;<>\n]',line):raise Blocked('UNREVIEWED_SHELL_OPERATION')
         for segment in line.split('&&'):
@@ -47,7 +48,9 @@ def audit_graph(commands):
             t=shlex.split(segment)
             if not t:raise Blocked('EMPTY_COMMAND')
             tool=Path(t[0]).name
-            if tool not in {':','cd'} and t[0] not in {'/usr/bin/'+tool,'/bin/'+tool}:raise Blocked('UNTRUSTED_TOOL_PATH')
+            if (tool not in {':','cd'} and t[0] not in {'/usr/bin/'+tool,'/bin/'+tool}
+                    and not (t[0]=='cmake' and line==reviewed_version_codegen)):
+                raise Blocked('UNTRUSTED_TOOL_PATH')
             if tool=='cd' and len(t)==2 and t[1].startswith('/work/'):continue
             if tool in allowed:
                 if any(x.startswith(('-fplugin','-wrapper','--plugin','-specs','--specs')) for x in t[1:]):raise Blocked('UNREVIEWED_TOOL_PLUGIN')
