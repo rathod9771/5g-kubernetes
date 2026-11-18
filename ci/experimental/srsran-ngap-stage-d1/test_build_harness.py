@@ -294,7 +294,10 @@ class WorkerNamespaceSourceAccess(unittest.TestCase):
     def test_privilege_drop_is_after_nsenter_and_before_bwrap(self):
         src=(P/'build_supervisor.py').read_text()
         self.assertIn("'--','/usr/bin/nsenter','--mount=/proc/'",src)
-        self.assertIn("'/usr/bin/setpriv','--reuid',str(uid),'--regid',str(gid),'--clear-groups',*argv",src)
+        self.assertIn("'/usr/bin/setpriv','--reuid',str(uid),'--regid',str(gid),'--clear-groups','/usr/bin/python3','-B',str(p/'guarded_worker.py'),'--control',str(control),'--',*argv",src)
+        guard=(P/'guarded_worker.py').read_text()
+        self.assertIn("sys.argv[4] != '/usr/bin/bwrap'",guard)
+        self.assertIn("subprocess.Popen(argv,",guard)
         self.assertIn("argv=['/usr/bin/bwrap','--unshare-user','--unshare-net'",src)
         self.assertIn("'--property=NoNewPrivileges=yes'",src)
         self.assertIn("'--cap-drop','ALL'",src)
