@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - experiment/hcran-stage5y-amf-ingress-observer-20261118
+      - experiment/hcran-stage5z-amf-selection-observer-20261118
     paths:
       - .github/workflows/hcran-stage5y-amf-ingress-observer.yml
   workflow_dispatch:
@@ -154,6 +155,8 @@ jobs:
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/run_three_cycle_recovery.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/run_protocol_trace.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/amf_process_count_stage5y.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/cu_amf_selection_stage5z.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5z/analyze_amf_selection_stage5z.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/verify_three_cycle_recovery.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5u/audit_repeatability.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5w/analyze_protocol_gap.py
@@ -201,6 +204,14 @@ jobs:
         run: |
           set -euo pipefail
           python3 qualification/experiments/oai-ngap-2026w13/stage5x/analyze_f1c_amf_ingress.py \
+            "$RUNNER_TEMP/stage5p-evidence"
+
+      - name: Stage5Z archive bounded CU AMF-selection boundary diagnostics, even on recovery failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 qualification/experiments/oai-ngap-2026w13/stage5z/analyze_amf_selection_stage5z.py \
             "$RUNNER_TEMP/stage5p-evidence"
 
       - name: Stage5Y independently require both live AMF cell ingress categories per genuine recovery cycle
