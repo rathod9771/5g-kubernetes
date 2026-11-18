@@ -9,6 +9,9 @@ SCAN_SECONDS=180;QUERY_SECONDS=15;MAX_DIRECTORY_ENTRIES=200000
 ROOT_PACKAGES=('build-essential','cmake','ninja-build','meson','pkg-config','bison','flex','libsctp-dev','libgnutls28-dev','libgcrypt20-dev','libssl-dev','libidn11-dev','libmongoc-dev','libbson-dev','libyaml-dev','libnghttp2-dev','libmicrohttpd-dev','libcurl4-gnutls-dev','libtalloc-dev','libmbedtls-dev','libyaml-cpp-dev','libfftw3-dev','libgtest-dev','python3-venv','binutils','bubblewrap','iproute2','e2fsprogs','util-linux','systemd','git','dpkg','coreutils','python3')
 ROOTS=('/usr/bin/cc','/usr/bin/c++','/usr/bin/ld','/usr/bin/ar','/usr/bin/nm','/usr/bin/readelf','/usr/bin/objdump','/usr/bin/cmake','/usr/bin/meson','/usr/bin/ninja','/usr/bin/pkg-config','/usr/bin/bison','/usr/bin/flex','/usr/bin/git','/usr/bin/python3','/etc/ld.so.cache','/etc/ld.so.conf')
 POLICY={'schema':2,'root_packages':list(ROOT_PACKAGES),'required_paths':list(ROOTS),'selection':'INSTALLED_PACKAGE_DEPENDENCY_CLOSURE_ALL_INSTALLED_ALTERNATIVES_AND_PROVIDERS','excluded_share_groups':['doc','man','info','locale','lintian','bash-completion','zsh'],'excluded_runtime_prefixes':['/usr/lib/ssl/private','/usr/lib/ssl/certs','/usr/lib/ssl/openssl.cnf','/usr/lib/systemd/system/','/usr/lib/systemd/user/','/usr/lib/systemd/system-preset/','/usr/lib/systemd/user-preset/','/usr/lib/systemd/resolv.conf','/usr/lib/tmpfiles.d/','/usr/lib/sysusers.d/','/usr/lib/udev/rules.d/'],'generated_cache_rule':'EXACT_SELECTED_MODULE___pycache___AND_HEADER_GCH_ONLY','file_limit':MAX_FILES,'bytes_limit':MAX_BYTES,'file_bytes_limit':MAX_FILE_BYTES,'package_limit':MAX_PACKAGES,'scan_seconds':SCAN_SECONDS,'query_seconds':QUERY_SECONDS}
+# Normalize only the merged-/usr runtime exclusion namespace; never broaden the allowlist.
+# This identity is included in the policy digest and bound into toolchain evidence.
+POLICY['runtime_exclusion_aliases']={'/lib/':'/usr/lib/'}
 ACQUISITION_DIAGNOSTICS=('toolchain-selection.json','toolchain-operation.log','toolchain-operation.receipt.json','toolchain-progress.json','toolchain-versions.log','toolchain-versions.receipt.json','toolchain-database.log','toolchain-database.receipt.json','toolchain-paths.log','toolchain-paths.receipt.json')
 POLICY_SHA256=hashlib.sha256(json.dumps(POLICY,sort_keys=True).encode()).hexdigest()
 
@@ -135,7 +138,15 @@ def dependency_closure(records,roots=ROOT_PACKAGES):
 def allowed_file(name):
     p=Path(name)
     if not p.is_absolute() or '..' in p.parts:return False
-    if name.startswith(tuple(POLICY['excluded_runtime_prefixes'])):return False
+    # On Ubuntu 22.04, package-owned runtime paths can appear under /lib/ even
+    # when the reviewed exclusion list uses the canonical /usr/lib/ prefix.
+    # Apply aliases ONLY while checking exclusions, never to approve new inputs.
+    runtime_name=name
+    for alias,canonical in POLICY['runtime_exclusion_aliases'].items():
+        if name.startswith(alias):
+            runtime_name=canonical+name[len(alias):]
+            break
+    if runtime_name.startswith(tuple(POLICY['excluded_runtime_prefixes'])):return False
     if name.startswith(('/usr/bin/','/usr/sbin/','/bin/','/sbin/','/usr/include/','/usr/lib/','/usr/libexec/','/lib/','/lib64/','/usr/src/googletest/','/usr/src/gtest/')):return True
     if name.startswith('/usr/share/'):
         return p.parts[3] not in POLICY['excluded_share_groups'] if len(p.parts)>3 else False

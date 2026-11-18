@@ -133,6 +133,64 @@ class BoundedToolchain(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d:
    self.fixture(d,3);events=[];t.freeze([d],'p 1',lambda stage,**kw:events.append(stage))
    self.assertIn('filesystem_enumeration',events);self.assertIn('file_hashing',events);self.assertLess(events.index('filesystem_enumeration'),events.index('file_hashing'))
+
+ def test_merged_usr_alias_blocks_runtime_service_units(self):
+  # Runner package inventory may identify the same service content using /lib or /usr/lib.
+  cases=(
+   'systemd/system/dbus-org.freedesktop.hostname1.service',
+   'systemd/system/example.service',
+   'systemd/user/example.service',
+   'systemd/system-preset/90-systemd.preset',
+   'systemd/user-preset/90-systemd.preset',
+   'systemd/resolv.conf',
+   'tmpfiles.d/systemd.conf',
+   'sysusers.d/systemd.conf',
+   'udev/rules.d/99-systemd.rules',
+   'ssl/private/key.pem',
+   'ssl/certs/ca.pem',
+   'ssl/openssl.cnf',
+  )
+  for root in ('/lib/','/usr/lib/'):
+   for suffix in cases:
+    with self.subTest(path=root+suffix):
+     self.assertFalse(t.allowed_file(root+suffix))
+
+ def test_native_systemd_shared_libraries_retained_under_both_roots(self):
+  for root in ('/lib/','/usr/lib/'):
+   for suffix in ('systemd/libsystemd-shared-249.so', 'x86_64-linux-gnu/libsystemd.so.0'):
+    with self.subTest(path=root+suffix):
+     self.assertTrue(t.allowed_file(root+suffix))
+
+ def test_masked_service_symlink_is_not_selected_or_followed(self):
+  # Selection is a pure review predicate: no host service paths are probed.
+  owned=['/lib/systemd/system/test-masked.service',
+         '/usr/lib/systemd/system/test-masked.service',
+         '/lib/systemd/libsystemd-shared-249.so',
+         '/usr/include/stdio.h']
+  selected=[p for p in owned if t.allowed_file(p)]
+  excluded=[p for p in owned if not t.allowed_file(p)]
+  self.assertEqual(selected,owned[2:]);self.assertEqual(excluded,owned[:2])
+  self.assertFalse(t.allowed_file('/dev/null'))
+  self.assertFalse(t.allowed_file('/dev/zero'))
+
+ def test_symlink_into_dev_null_still_fails_closed(self):
+  with tempfile.TemporaryDirectory() as d:
+   p=Path(d)/'masked.service';p.symlink_to('/dev/null')
+   # Fixtures are allowed in freeze without approved production selection.
+   with self.assertRaisesRegex(Blocked,'UNEXPECTED_TOOLCHAIN_OBJECT'):
+    t.freeze([str(p)],'synthetic 1',approved=False)
+
+ def test_runtime_exclusion_alias_is_bound_in_policy_hash(self):
+  import hashlib
+  self.assertEqual(t.POLICY['runtime_exclusion_aliases'],{'/lib/':'/usr/lib/'})
+  digest=hashlib.sha256(json.dumps(t.POLICY,sort_keys=True).encode()).hexdigest()
+  self.assertEqual(t.POLICY_SHA256,digest)
+  with tempfile.TemporaryDirectory() as d:
+   (Path(d)/'synthetic-tool').write_bytes(b'BUILD_ONLY_FIXTURE')
+   lock=t.freeze([d],'synthetic 1');lock['policy_sha256']='0'*64
+   with self.assertRaisesRegex(Blocked,'UNAPPROVED_TOOLCHAIN_POLICY'):
+    t.verify(lock,'synthetic 1')
+
 if __name__=='__main__':unittest.main()
 
 class HostedChildEnvironment(unittest.TestCase):
