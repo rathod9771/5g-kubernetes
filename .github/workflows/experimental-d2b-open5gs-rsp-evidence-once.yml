@@ -37,6 +37,12 @@ jobs:
           assert all(source.count(s)==1 for s in (check,collect,expansion,stop,compile_phase))
           assert source.index(check)<source.index(collect)<source.index(expansion)<source.index(stop)<source.index(compile_phase)
           assert source.count("rec.phase('open5gs_compilation'")==1
+          supervisor=Path("build_supervisor.py").read_text()
+          assert "validate_quiescent_capture(" in supervisor
+          assert "verify_guard_release_end(" in supervisor
+          guard=Path("guarded_worker.py").read_text()
+          assert "subprocess.Popen(argv," in guard
+          assert "sys.argv[4] != '/usr/bin/bwrap'" in guard
           print("CONFIGURATION_ONLY_STATIC_STOP_VERIFIED")
           PY
       - name: Install public tools on disposable hosted runner
@@ -55,7 +61,7 @@ jobs:
         run: |
           cd "$INPUT"
           sha256sum -c SHA256SUMS
-          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py test_toolchain_bounded.py test_open5gs_graph_gate.py test_open5gs_rsp_review.py test_open5gs_rsp_expansion.py test_cgroup_accounting_review.py
+          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py test_toolchain_bounded.py test_open5gs_graph_gate.py test_open5gs_rsp_review.py test_open5gs_rsp_expansion.py test_cgroup_accounting_review.py test_cgroup_terminal_guard.py
       - name: Acquire exact pinned sources (no native execution)
         timeout-minutes: 10
         run: |
@@ -122,7 +128,16 @@ jobs:
           assert expanded['native_compilation_authorized'] is False
           assert expanded['classification']=='INDEPENDENT_REVIEW_REQUIRED'
           assert expanded['build_ninja_sha256']==report['build_ninja_sha256']
-          assert usage['accounting_mode'] in {'TERMINAL_CGROUP_CAPTURE','LAST_LIVE_ONLY__TERMINAL_MISSING__NO_NATIVE_ADMISSION'}
+          assert usage['accounting_mode']=='POST_WORKER_QUIESCENT_GUARD_HELD'
+          assert usage['terminal_accounting_complete'] is True
+          assert usage['guard_only_at_capture'] is True
+          assert usage['capture_boundary']=='POST_WORKER_PRE_GUARD_EXIT'
+          proof=json.loads((root/'post-worker-guard-accounting.json').read_text())
+          assert proof['proof']['worker_accounting_complete'] is True
+          assert proof['proof']['terminal_cgroup_empty'] is False
+          assert proof['proof']['native_compilation_authorized'] is False
+          assert proof['proof']['worker_exit_code']==78
+          assert supervisor['exit_code']==78
           assert usage['terminal_accounting_complete']==(usage['accounting_mode']=='TERMINAL_CGROUP_CAPTURE')
           assert usage['usage']['oom_kill']==0 and usage['usage']['pids_limit_events']==0
           assert {t:row['object_count'] for t,row in expanded['targets'].items()}=={
@@ -140,6 +155,7 @@ jobs:
           print('Response files complete:',report['response_files_complete'])
           print('Read-only linker expansion: two targets, both unqualified for build')
           print('Cgroup accounting mode:',usage['accounting_mode'])
+          print('Quiescence proof: worker exited; only guard remained; terminal unit status verified')
           PY
       - name: Export reviewed allowlist only
         if: always()
