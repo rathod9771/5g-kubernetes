@@ -51,6 +51,8 @@ jobs:
           worker=Path('ci/experimental/srsran-ngap-stage-d1/build_worker.py').read_text()
           supervisor=Path('ci/experimental/srsran-ngap-stage-d1/build_supervisor.py').read_text()
           assert worker.index("admit_reviewed_open5gs_graph(graph,review,expanded_report)") < worker.index("rec.phase('srsran_compilation'")
+          import sys
+          sys.path.insert(0,str(Path("ci/experimental/srsran-ngap-stage-d1").resolve()))
           from test_sctp_link_regression import reviewed_driver_dependencies
           reviewed_driver_dependencies(Path("ci/experimental/srsran-ngap-stage-d1/CMakeLists.txt").read_text())
           assert "audit_open5gs_graph(graph)" in worker
