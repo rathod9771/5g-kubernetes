@@ -30,11 +30,12 @@ jobs:
           from pathlib import Path
           source=Path("build_worker.py").read_text()
           check="audit_open5gs_graph(graph)"
-          collect="atomic(out/'open5gs-rsp-review.json',collect_rsp_review(ob))"
+          collect="atomic(out/'open5gs-rsp-review.json',review)"
+          expansion="atomic(out/'open5gs-rsp-expanded.json',review_expanded_compdb(expanded,review))"
           stop="raise Blocked('OPEN5GS_RSP_INDEPENDENT_REVIEW_REQUIRED')"
           compile_phase="rec.phase('srsran_compilation'"
-          assert all(source.count(s)==1 for s in (check,collect,stop,compile_phase))
-          assert source.index(check)<source.index(collect)<source.index(stop)<source.index(compile_phase)
+          assert all(source.count(s)==1 for s in (check,collect,expansion,stop,compile_phase))
+          assert source.index(check)<source.index(collect)<source.index(expansion)<source.index(stop)<source.index(compile_phase)
           assert source.count("rec.phase('open5gs_compilation'")==1
           print("CONFIGURATION_ONLY_STATIC_STOP_VERIFIED")
           PY
@@ -54,7 +55,7 @@ jobs:
         run: |
           cd "$INPUT"
           sha256sum -c SHA256SUMS
-          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py test_toolchain_bounded.py test_open5gs_graph_gate.py test_open5gs_rsp_review.py
+          "$RUNNER_TEMP/d1-python/bin/python3" -B -m unittest -v test_harness.py test_build_harness.py test_publication.py test_execution_proposals.py test_workflow_evidence.py test_toolchain_bounded.py test_open5gs_graph_gate.py test_open5gs_rsp_review.py test_open5gs_rsp_expansion.py test_cgroup_accounting_review.py
       - name: Acquire exact pinned sources (no native execution)
         timeout-minutes: 10
         run: |
@@ -75,16 +76,27 @@ jobs:
           if [ "$rc" -ne 1 ]; then
             exit "$rc"
           fi
+          echo 'Expected fail-closed configuration-only stop; validating evidence in a separate step'
+          exit 0
       - name: Preserve bounded diagnostic evidence
         if: always()
         timeout-minutes: 2
         run: |
           python3 -B "$INPUT/workflow_evidence.py" collect
-      - name: Record fail-closed evidence classification
+      - name: Record diagnostic-only classification (not native-build finalization)
         if: always()
         timeout-minutes: 2
         run: |
-          python3 -B "$INPUT/finalize_build_evidence.py" stage-d1-build-results
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('stage-d1-build-results')
+          final=json.loads((root/'supervisor-final.json').read_text())
+          worker=json.loads((root/'worker/worker-status.json').read_text())
+          assert final['status']=='BLOCKED',final.get('status')
+          assert worker=={'status':'BLOCKED','reason':'OPEN5GS_RSP_INDEPENDENT_REVIEW_REQUIRED'}
+          print('EXPECTED_DIAGNOSTIC_ONLY_BLOCK__NOT_NATIVE_BUILD_QUALIFIED')
+          PY
       - name: Validate expected review-only result and absence of native compilation
         if: always()
         timeout-minutes: 2
@@ -96,11 +108,22 @@ jobs:
           worker=root/'worker'
           status=json.loads((worker/'worker-status.json').read_text())
           report=json.loads((worker/'open5gs-rsp-review.json').read_text())
+          expanded=json.loads((worker/'open5gs-rsp-expanded.json').read_text())
+          usage=json.loads((root/'resource-usage.json').read_text())
           supervisor=json.loads((root/'supervisor-final.json').read_text())
           assert status=={'status':'BLOCKED','reason':'OPEN5GS_RSP_INDEPENDENT_REVIEW_REQUIRED'},status
           assert supervisor['status']=='BLOCKED',supervisor.get('status')
           assert report['classification']=='REVIEW_REQUIRED'
           assert report['native_compilation_authorized'] is False
+          assert expanded['native_compilation_authorized'] is False
+          assert expanded['classification']=='INDEPENDENT_REVIEW_REQUIRED'
+          assert expanded['build_ninja_sha256']==report['build_ninja_sha256']
+          assert usage['accounting_mode'] in {'TERMINAL_CGROUP_CAPTURE','LAST_LIVE_ONLY__TERMINAL_MISSING__NO_NATIVE_ADMISSION'}
+          assert usage['terminal_accounting_complete']==(usage['accounting_mode']=='TERMINAL_CGROUP_CAPTURE')
+          assert usage['usage']['oom_kill']==0 and usage['usage']['pids_limit_events']==0
+          assert {t:row['object_count'] for t,row in expanded['targets'].items()}=={
+              'lib/asn1c/ngap/libogsasn1c-ngap.so.2.7.5':1062,
+              'lib/sbi/openapi/libogssbi-openapi.so.2.7.5':1350}
           assert set(report['targets'])=={
               'lib/asn1c/ngap/libogsasn1c-ngap.so.2.7.5',
               'lib/sbi/openapi/libogssbi-openapi.so.2.7.5'}
@@ -111,6 +134,8 @@ jobs:
           print('RSP_EVIDENCE_COLLECTED_NO_COMPILATION')
           print('Ninja bytes:',report['build_ninja_bytes'])
           print('Response files complete:',report['response_files_complete'])
+          print('Read-only linker expansion: two targets, both unqualified for build')
+          print('Cgroup accounting mode:',usage['accounting_mode'])
           PY
       - name: Export reviewed allowlist only
         if: always()
