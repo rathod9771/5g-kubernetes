@@ -12,6 +12,16 @@ POLICY={'schema':2,'root_packages':list(ROOT_PACKAGES),'required_paths':list(ROO
 # Normalize only the merged-/usr runtime exclusion namespace; never broaden the allowlist.
 # This identity is included in the policy digest and bound into toolchain evidence.
 POLICY['runtime_exclusion_aliases']={'/lib/':'/usr/lib/'}
+# Python 3.10 may import sitecustomize.py during builds. The Ubuntu 22.04
+# stdlib link resolves into the package-owned /etc/python3.10 namespace.
+# Approve only this exact, package-listed target and bind its identity to the
+# reviewed policy; do not add /etc as a search root or allow other /etc files.
+PYTHON_SITE_LINK='/usr/lib/python3.10/sitecustomize.py'
+PYTHON_SITE_TARGET='/etc/python3.10/sitecustomize.py'
+PYTHON_SITE_CACHE='/etc/python3.10/__pycache__/'
+POLICY['reviewed_python_sitecustomize']={'link':PYTHON_SITE_LINK,'target':PYTHON_SITE_TARGET,
+ 'bytecode_cache':PYTHON_SITE_CACHE+'sitecustomize.cpython-310[.opt-1|.opt-2].pyc',
+ 'ownership':'BOTH_PATHS_IN_SELECTED_DPKG_PACKAGE_LIST','symlink_target':'EXACT'}
 ACQUISITION_DIAGNOSTICS=('toolchain-selection.json','toolchain-operation.log','toolchain-operation.receipt.json','toolchain-progress.json','toolchain-versions.log','toolchain-versions.receipt.json','toolchain-database.log','toolchain-database.receipt.json','toolchain-paths.log','toolchain-paths.receipt.json')
 POLICY_SHA256=hashlib.sha256(json.dumps(POLICY,sort_keys=True).encode()).hexdigest()
 
@@ -58,8 +68,10 @@ def freeze(roots,package_versions,progress=None,deadline=None,approved=False):
             try:p.resolve(strict=True)
             except (OSError,RuntimeError):raise Blocked('UNRESOLVED_TOOLCHAIN_SYMLINK:'+name) from None
             link=os.readlink(p);files[name]={'symlink':link};target=Path(os.path.normpath(str(p.parent/link))) if not os.path.isabs(link) else Path(link)
+            if approved:validate_python_sitecustomize_symlink(name,target)
             queue.append(target)
         elif stat.S_ISREG(meta.st_mode):
+            if approved and name==PYTHON_SITE_LINK:raise Blocked('PYTHON_SITECUSTOMIZE_LINK_TYPE_DRIFT')
             total+=meta.st_size
             if meta.st_size>MAX_FILE_BYTES or total>MAX_BYTES:raise Blocked('TOOLCHAIN_BYTE_BUDGET')
             files[name]={'sha256':None,'bytes':meta.st_size};snapshots[name]=meta
@@ -135,9 +147,25 @@ def dependency_closure(records,roots=ROOT_PACKAGES):
                 queue.extend(available)
     return sorted(selected)
 
+def validate_python_sitecustomize_package_inputs(package_paths):
+    """Refuse a selected Python redirect without its selected-package target."""
+    present={PYTHON_SITE_LINK,PYTHON_SITE_TARGET} & set(package_paths)
+    if present and present!={PYTHON_SITE_LINK,PYTHON_SITE_TARGET}:
+        raise Blocked('UNOWNED_PYTHON_SITECUSTOMIZE_LINK_OR_TARGET')
+
+def validate_python_sitecustomize_symlink(name,target):
+    """Only the precise Debian/Ubuntu Python stdlib redirect is admissible."""
+    if name==PYTHON_SITE_LINK and str(target)!=PYTHON_SITE_TARGET:
+        raise Blocked('UNREVIEWED_PYTHON_SITECUSTOMIZE_TARGET:'+str(target))
+
 def allowed_file(name):
     p=Path(name)
     if not p.is_absolute() or '..' in p.parts:return False
+    if name==PYTHON_SITE_TARGET:return True
+    # -B suppresses writing bytecode, not reading an existing .pyc. If
+    # present, include *only* sitecustomize's Python 3.10 bytecode variants.
+    if name.startswith(PYTHON_SITE_CACHE):
+        return bool(re.fullmatch(r'sitecustomize\.cpython-310(?:\.opt-[12])?\.pyc',name[len(PYTHON_SITE_CACHE):]))
     # On Ubuntu 22.04, package-owned runtime paths can appear under /lib/ even
     # when the reviewed exclusion list uses the canonical /usr/lib/ prefix.
     # Apply aliases ONLY while checking exclusions, never to approve new inputs.
@@ -206,6 +234,9 @@ def acquire(root):
         db=parse_database(query(['/usr/bin/dpkg-query','-W','-f='+fmt],root,'toolchain-database',d))
         d('package_selection');packages=dependency_closure(db)
         listing=query(['/usr/bin/dpkg-query','-L',*packages],root,'toolchain-paths',d)
+        # The exact Python config target is admitted only when both the alias
+        # and target belong to the selected installed-package closure.
+        validate_python_sitecustomize_package_inputs(name for name in listing.splitlines() if name.startswith('/'))
         d('file_selection',packages=len(packages));paths=set(ROOTS);excluded=[]
         for name in listing.splitlines():
             if not name.startswith('/'):

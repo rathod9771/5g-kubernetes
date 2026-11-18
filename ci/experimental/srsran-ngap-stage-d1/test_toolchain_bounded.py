@@ -276,3 +276,81 @@ class HostedChildEnvironment(unittest.TestCase):
   from build_policy import environment
   env=self.probe(environment({'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted'},'/synthetic/home','/synthetic/tmp'))
   self.assertNotIn('GITHUB_ACTIONS',env);self.assertNotIn('RUNNER_ENVIRONMENT',env)
+
+
+class PythonSiteCustomizeProvenance(unittest.TestCase):
+ def test_exact_target_only_not_general_etc(self):
+  self.assertTrue(t.allowed_file('/usr/lib/python3.10/sitecustomize.py'))
+  self.assertTrue(t.allowed_file('/etc/python3.10/sitecustomize.py'))
+  for name in ('/etc/environment','/etc/ssl/private/key','/etc/python3.11/sitecustomize.py','/etc/python3.10/other.py','/etc/python3.10/sitecustomize.py/evil'):
+   with self.subTest(name=name):self.assertFalse(t.allowed_file(name))
+
+ def test_exact_package_owned_link_and_target_pass(self):
+  package_paths=('/usr/lib/python3.10/sitecustomize.py','/etc/python3.10/sitecustomize.py','/usr/lib/python3.10/os.py')
+  self.assertIsNone(t.validate_python_sitecustomize_package_inputs(package_paths))
+  chosen={p for p in package_paths if t.allowed_file(p)}
+  self.assertEqual(chosen,set(package_paths))
+
+ def test_missing_package_owned_target_or_link_blocks(self):
+  for package_paths in (('/usr/lib/python3.10/sitecustomize.py',),('/etc/python3.10/sitecustomize.py',)):
+   with self.subTest(package_paths=package_paths),self.assertRaisesRegex(Blocked,'UNOWNED_PYTHON_SITECUSTOMIZE'):
+    t.validate_python_sitecustomize_package_inputs(package_paths)
+
+ def test_only_exact_symlink_target_is_approved(self):
+  self.assertIsNone(t.validate_python_sitecustomize_symlink('/usr/lib/python3.10/sitecustomize.py',Path('/etc/python3.10/sitecustomize.py')))
+  for dest in ('/dev/null','/etc/environment','/etc/python3.10/unreviewed.py','/tmp/other.py'):
+   with self.subTest(dest=dest),self.assertRaisesRegex(Blocked,'UNREVIEWED_PYTHON_SITECUSTOMIZE_TARGET'):
+    t.validate_python_sitecustomize_symlink(t.PYTHON_SITE_LINK,Path(dest))
+
+ def test_symlink_target_bytes_are_frozen_and_verified(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);actual=root/'config.py';actual.write_bytes(b'ORIGINAL_SYNTHETIC_PYTHON_CONFIG')
+   alias=root/'alias.py';alias.symlink_to(actual)
+   lock=t.freeze([str(alias)],'synthetic 1')
+   self.assertIn(str(actual),lock['files'])
+   self.assertEqual(lock['files'][str(actual)]['sha256'],t.streaming_hash(actual))
+   actual.write_bytes(b'MUTATED_SYNTHETIC_PYTHON_CONFIG')
+   with self.assertRaisesRegex(Blocked,'TOOLCHAIN_CONTENT_OR_INPUT_SET_DRIFT'):t.verify(lock,'synthetic 1')
+
+ def test_python_target_cached_bytecode_is_exactly_allowlisted(self):
+  root='/etc/python3.10/__pycache__/'
+  for name in ('sitecustomize.cpython-310.pyc','sitecustomize.cpython-310.opt-1.pyc','sitecustomize.cpython-310.opt-2.pyc'):
+   with self.subTest(name=name):self.assertTrue(t.allowed_file(root+name))
+  for name in ('sitecustomize.cpython-311.pyc','sitecustomize.cpython-310.opt-3.pyc',
+               'usercustomize.cpython-310.pyc','sitecustomize.cpython-310.pyc/evil'):
+   with self.subTest(name=name):self.assertFalse(t.allowed_file(root+name))
+
+ def test_unapproved_python_config_surfaces_remain_blocked(self):
+  for name in ('/etc/python3.10/__pycache__/other.pyc','/etc/python3.10/other.py',
+               '/etc/python3.10/sitecustomize.py.bak','/etc/python3.11/sitecustomize.py',
+               '/etc/environment','/dev/null'):
+   with self.subTest(name=name):self.assertFalse(t.allowed_file(name))
+
+ def test_approved_freeze_requires_exact_link_and_hashes_target(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);target=root/'sitecustomize-target.py';target.write_bytes(b'APPROVED_TEST_ONLY')
+   link=root/'sitecustomize-link.py';link.symlink_to(target)
+   allowed={str(link),str(target)}
+   with patch.object(t,'PYTHON_SITE_LINK',str(link)),patch.object(t,'PYTHON_SITE_TARGET',str(target)),patch.object(t,'allowed_file',side_effect=lambda n:n in allowed):
+    lock=t.freeze([str(link)],'synthetic 1',approved=True)
+    self.assertIn(str(target),lock['files'])
+    self.assertEqual(lock['files'][str(target)]['sha256'],t.streaming_hash(target))
+    self.assertTrue(t.verify(lock,'synthetic 1'))
+    alternate=root/'UNAPPROVED_TARGET';alternate.write_bytes(b'REJECT_THIS')
+    link.unlink();link.symlink_to(alternate)
+    with self.assertRaisesRegex(Blocked,'UNREVIEWED_PYTHON_SITECUSTOMIZE_TARGET'):
+     t.verify(lock,'synthetic 1')
+
+ def test_new_python_policy_bound_in_sha256(self):
+  import hashlib
+  rules=t.POLICY['reviewed_python_sitecustomize']
+  self.assertEqual(rules['link'],t.PYTHON_SITE_LINK)
+  self.assertEqual(rules['target'],t.PYTHON_SITE_TARGET)
+  self.assertEqual(rules['ownership'],'BOTH_PATHS_IN_SELECTED_DPKG_PACKAGE_LIST')
+  self.assertEqual(t.POLICY_SHA256,hashlib.sha256(json.dumps(t.POLICY,sort_keys=True).encode()).hexdigest())
+  with tempfile.TemporaryDirectory() as d:
+   (Path(d)/'synthetic').write_bytes(b'OFFLINE')
+   lock=t.freeze([d],'synthetic 1')
+   lock['policy_sha256']='0'*64
+   with self.assertRaisesRegex(Blocked,'UNAPPROVED_TOOLCHAIN_POLICY'):
+    t.verify(lock,'synthetic 1')
