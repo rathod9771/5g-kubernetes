@@ -64,10 +64,14 @@ jobs:
         timeout-minutes: 26
         run: |
           set -uo pipefail
+          # GitHub Actions invokes Bash with -e. Disable it only around the
+          # deliberate nonzero supervisor exit, then restore strict checking.
+          set +e
           sudo -n --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,GITHUB_WORKSPACE,RUNNER_TEMP,ImageOS,ImageVersion \
             /usr/bin/unshare --mount --propagation private -- \
             /usr/bin/timeout -k 15s 24m /usr/bin/python3 -B "$INPUT/build-only.py" --github-build-only
           rc=$?
+          set -e
           echo "Isolated supervisor exit code: $rc (nonzero expected from review stop)"
           if [ "$rc" -eq 0 ]; then
             echo "Unexpected native-build success on configuration-only run" >&2
