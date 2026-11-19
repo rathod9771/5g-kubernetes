@@ -106,7 +106,7 @@ void nr_rrc_mac_config_other_sib(int i) {}
         self.assertIn("git -C \"$OAI_SOURCE\" diff --check",b)
         w=WORKFLOW.read_text()
         for required in (
-            "experiment/hcran-stage5zd-mib-sib1-handoff-20261118",
+            "workflow_dispatch:",
             "hcran_build_pinned_w45_ue_stage5zd.sh",
             "--cycles 3 --verify-gtpu","stage5u/audit_repeatability.py",
             "stage5y/verify_live_amf_ingress.py",

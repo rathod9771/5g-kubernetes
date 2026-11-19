@@ -82,7 +82,7 @@ class Stage5ZBContracts(unittest.TestCase):
             self.assertIs(obj["production_authorized"],False)
     def test_workflow_keeps_real_stage5p_and_stage5y_gates(self):
         w=WORKFLOW.read_text()
-        self.assertIn("experiment/hcran-stage5zb-rrc-radio-boundary-20261118",w)
+        self.assertIn("workflow_dispatch:",w)
         for part in ("--cycles 3 --verify-gtpu",
                      "stage5u/audit_repeatability.py",
                      "stage5y/verify_live_amf_ingress.py",

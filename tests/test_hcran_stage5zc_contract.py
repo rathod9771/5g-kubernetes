@@ -88,7 +88,7 @@ class Stage5ZCContracts(unittest.TestCase):
 
     def test_original_gates_remain_unchanged(self):
         s=WORKFLOW.read_text()
-        self.assertIn("experiment/hcran-stage5zc-sib1-reacquisition-observer-20261118",s)
+        self.assertIn("workflow_dispatch:",s)
         for required in ("--cycles 3 --verify-gtpu",
                          "stage5u/audit_repeatability.py",
                          "stage5y/verify_live_amf_ingress.py",

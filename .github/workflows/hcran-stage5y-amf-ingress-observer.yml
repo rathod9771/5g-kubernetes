@@ -16,20 +16,19 @@ name: H-CRAN Stage 5Y live Open5GS AMF cell-ingress evidence gate - NO DEPLOY
 # Stage5ZG: two extra log-only RRC->MAC SIB message send/dispatch markers.
 # No runtime protocol/retry changes; full Stage5P/5U/5Y gates retained.
 # This never touches HP, Kubernetes, OSM, production keys or subscribers.
+# Stage5ZH: no auto-run on push; expensive live RFsim is EXPLICITLY dispatched
+# only when exact-commit full offline project validation has passed.
 on:
-  push:
-    branches:
-      - experiment/hcran-stage5y-amf-ingress-observer-20261118
-      - experiment/hcran-stage5z-amf-selection-observer-20261118
-      - experiment/hcran-stage5zb-rrc-radio-boundary-20261118
-      - experiment/hcran-stage5zc-sib1-reacquisition-observer-20261118
-      - experiment/hcran-stage5zd-mib-sib1-handoff-20261118
-      - experiment/hcran-stage5ze-bounded-mib-handoff-20261118
-      - experiment/hcran-stage5zf-rrc-si-cache-decision-20261119
-      - experiment/hcran-stage5zg-sib1-message-handoff-20261119
-    paths:
-      - .github/workflows/hcran-stage5y-amf-ingress-observer.yml
   workflow_dispatch:
+    inputs:
+      offline_run_id:
+        description: "Successful Offline Project Validation run ID for this exact branch and commit"
+        required: true
+        type: string
+      confirm_isolated_no_deploy:
+        description: "Enter ISOLATED_RFSIM_NO_DEPLOY"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -40,7 +39,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  offline-gate:
+    name: Require successful full offline validation for exactly this commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout the exact experimental commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify offline run success, same SHA and same branch before expensive RFsim jobs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HCRAN_OFFLINE_RUN_ID: ${{ inputs.offline_run_id }}
+          HCRAN_ISOLATED_CONFIRM: ${{ inputs.confirm_isolated_no_deploy }}
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/experiments/hcran_stage5zh_verify_offline_run.py
+          python3 scripts/experiments/hcran_stage5zh_verify_offline_run.py
+
   isolated-independent-trial:
+    needs: offline-gate
     name: Stage5Y pinned 2UE 3-fault live AMF-cell ingress proof trial ${{ matrix.trial }}/2
     runs-on: ubuntu-24.04
     timeout-minutes: 95

@@ -129,7 +129,7 @@ class Stage5ZGContracts(unittest.TestCase):
         for x in ('--noavx512 --noavx2', 'git -C "$OAI_SOURCE" diff --check'):
             self.assertIn(x,src)
         w=WORKFLOW.read_text()
-        for item in ('experiment/hcran-stage5zg-sib1-message-handoff-20261119',
+        for item in ('workflow_dispatch:',
                     'hcran_build_pinned_w45_ue_stage5t.sh',
                     'hcran_build_pinned_w45_ue_stage5zd.sh',
                     'hcran_build_pinned_w45_ue_stage5zg.sh',

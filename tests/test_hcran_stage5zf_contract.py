@@ -107,7 +107,7 @@ class Stage5ZF(unittest.TestCase):
                   "git -C \"$OAI_SOURCE\" diff --check"):
             self.assertIn(x,b)
         w=WORKFLOW.read_text()
-        for x in ("experiment/hcran-stage5zf-rrc-si-cache-decision-20261119",
+        for x in ("workflow_dispatch:",
                   "hcran_build_pinned_w45_ue_stage5zg.sh",
                   "stage5zf/analyze_rrc_si_cache.py",
                   "--cycles 3 --verify-gtpu",
