@@ -15,9 +15,6 @@ jobs:
   exact-retained-artifact-only:
     runs-on: ubuntu-22.04
     timeout-minutes: 12
-    env:
-      D2B_RETAINED_ZIP: ${{ runner.temp }}/d2b-failed-44470794446.zip
-      D2B_REPLAY_REPORT: ${{ runner.temp }}/d2b-counterfactual-only.json
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -26,7 +23,7 @@ jobs:
       - name: Lock parent, verify source integrity and Python
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = '37f472c29004a7c4f585df40a1b6fb39ac778c4e'
+          test "$(git rev-parse HEAD^)" = 'b7ebd090d68858e9dce58313ddb0a030c96f235d'
           cd ci/experimental/srsran-ngap-stage-d1
           sha256sum -c SHA256SUMS
           /usr/bin/python3 -B -m py_compile retained_native_acceptance_replay.py
@@ -35,6 +32,7 @@ jobs:
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
+          D2B_RETAINED_ZIP: ${{ runner.temp }}/d2b-failed-44470794446.zip
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --location --retry 0 \
@@ -46,6 +44,9 @@ jobs:
           printf '%s  %s\n' '982f06e48d3b5d9d5b95bf87cbb86f4a35d15ef435d2f53d863ac012deb1afa8' "$D2B_RETAINED_ZIP" | sha256sum -c -
       - name: Run actual supervisor and finalizer admission on retained metadata
         timeout-minutes: 6
+        env:
+          D2B_RETAINED_ZIP: ${{ runner.temp }}/d2b-failed-44470794446.zip
+          D2B_REPLAY_REPORT: ${{ runner.temp }}/d2b-counterfactual-only.json
         run: |
           set -euo pipefail
           /usr/bin/python3 -B ci/experimental/srsran-ngap-stage-d1/retained_native_acceptance_replay.py
