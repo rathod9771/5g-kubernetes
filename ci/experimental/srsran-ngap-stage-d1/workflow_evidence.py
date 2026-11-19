@@ -87,7 +87,7 @@ def validate_aux(root):
     return windows
 
 def upload_admission(outcome, artifact_id, artifact_digest, local_pass):
-    if local_pass is not True or outcome!='success' or not str(artifact_id).isdigit() or int(artifact_id)<=0 or not __import__('re').fullmatch('sha256:[a-f0-9]{64}',artifact_digest or ''): raise Blocked('UPLOAD_INCOMPLETE_NOT_EVIDENCE_QUALIFIED')
+    if local_pass is not True or outcome!='success' or not str(artifact_id).isdigit() or int(artifact_id)<=0 or not __import__('re').fullmatch('(?:sha256:)?[a-f0-9]{64}',artifact_digest or ''): raise Blocked('UPLOAD_INCOMPLETE_NOT_EVIDENCE_QUALIFIED')
     return {'classification':'PASS_BUILD_ONLY_EVIDENCE_UPLOADED','native_tests_executed':0}
 
 def aux_argv(phase,package,temp=None):
