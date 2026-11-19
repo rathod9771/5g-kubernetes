@@ -93,6 +93,9 @@ It does not approve staging pod modifications, production, or a live UE test.
 
 ### Gate S1 — target staging read-only inventory (NOT EXECUTED)
 
+For the explicit per-node read-only handoff, sample format, strict source checks,
+and safe operator commands, see [`Stage 5ZJ S1 evidence handoff`](hcran-stage5zj-s1-readonly-handoff.md).
+
 Target must be an explicitly approved namespace/context. The existing
 `scripts/hcran_staging_inventory.py` already performs bounded
 **`kubectl get` ONLY**, checks all three H-CRAN deployments/pods/services,

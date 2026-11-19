@@ -42,6 +42,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_hcran_stage5zi_freeze.py' -v
           python3 -m unittest discover -s tests -p 'test_hcran_staging_inventory.py' -v
+          python3 -m unittest discover -s tests -p 'test_hcran_stage5zj_merge_pressure.py' -v
 
       - name: Install pinned Helm for local-only static source rendering
         uses: azure/setup-helm@v4
