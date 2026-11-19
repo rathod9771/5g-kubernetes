@@ -86,3 +86,75 @@ class InspectionPhaseReceipt(unittest.TestCase):
   source=(Path(__file__).parent/'build_worker.py').read_text()
   self.assertIn("inspection_outputs=[out/'binary-inventory.json',out/'binary-inspection-discovery.json']",source)
   self.assertIn("inspection_outputs.append(out/'binary-inspection-failure.json')",source)
+
+
+class MesonSharedLibrarySelection(unittest.TestCase):
+ def fake_tree(self):
+  tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup)
+  root=Path(tmp.name)
+  paths=[]
+  for soname in ['libprom.so','libogsapp.so.2.7.5','libogsngap.so.2.7.5',
+                 'libogsasn1c-ngap.so.2.7.5','libogssbi-openapi.so.2.7.5']:
+   library=root/soname
+   library.write_bytes(b'\x7fELF'+b'0'*32)
+   sidecar=root/(soname+'.p')/(soname+'.symbols')
+   sidecar.parent.mkdir()
+   sidecar.write_text(' 0x00000000000000 symbol\n')
+   paths.append((library,sidecar))
+  return root,paths
+ def test_actual_meson_so_p_sidecar_layout_is_excluded(self):
+  from binary_inspection_preflight import select_shared_libraries
+  root,pairs=self.fake_tree()
+  libraries,ignored=select_shared_libraries(root)
+  self.assertEqual(set(libraries),{p[0] for p in pairs})
+  self.assertEqual(set(ignored),{p[1] for p in pairs})
+  self.assertTrue(all(p.name.endswith('.symbols') for p in ignored))
+ def test_real_libraries_still_checked_as_elf(self):
+  from binary_inspection_preflight import select_shared_libraries
+  root,pairs=self.fake_tree()
+  libs,ignored=select_shared_libraries(root)
+  binaries=[]
+  for idx in range(5):
+   p=root/('executable'+str(idx));p.write_bytes(b'\x7fELF'+bytes(16));binaries.append(p)
+  rows=preflight(binaries+libs,root,root/'discovery.json',ignored)
+  self.assertTrue(all(row['recognized'] for row in rows))
+  report=json.loads((root/'discovery.json').read_text())
+  self.assertEqual(len(report['ignored_meson_symbol_sidecars']),5)
+  self.assertEqual(report['classification'],'FORMATS_RECOGNIZED')
+ def test_nonelf_so_with_reviewed_name_is_still_rejected(self):
+  from binary_inspection_preflight import select_shared_libraries
+  root,pairs=self.fake_tree()
+  pairs[0][0].write_text('INPUT(/tmp/evil.so)')
+  libs,_=select_shared_libraries(root)
+  binaries=[]
+  for idx in range(5):
+   p=root/('executable'+str(idx));p.write_bytes(b'\x7fELF'+bytes(16));binaries.append(p)
+  with self.assertRaisesRegex(Blocked,'UNRECOGNIZED_FORMAT'):
+   preflight(binaries+libs,root,root/'discovery.json')
+ def test_nonstandard_so_suffix_cannot_disappear_silently(self):
+  from binary_inspection_preflight import select_shared_libraries
+  root,pairs=self.fake_tree()
+  (root/'libsurprise.so.backup').write_text('bad')
+  with self.assertRaisesRegex(Blocked,'UNREVIEWED_SHARED_LIBRARY_CANDIDATE'):
+   select_shared_libraries(root)
+ def test_spoofed_symbols_sidecar_path_rejected(self):
+  from binary_inspection_preflight import select_shared_libraries
+  root,pairs=self.fake_tree()
+  (root/'libsurprise.so.symbols').write_text('not inside reviewed .p')
+  with self.assertRaisesRegex(Blocked,'UNREVIEWED_SHARED_LIBRARY_CANDIDATE'):
+   select_shared_libraries(root)
+ def test_case_matches_previous_15_sidecar_failure(self):
+  from binary_inspection_preflight import select_shared_libraries
+  root=Path(tempfile.mkdtemp());self.addCleanup(__import__('shutil').rmtree,root)
+  sonames=['libprom.so','libogsapp.so.2.7.5','libogsproto.so.2.7.5',
+   'libogsmetrics.so.2.7.5','libogsngap.so.2.7.5','libogsasn1c-ngap.so.2.7.5',
+   'libogsasn1c-util.so.2.7.5','libogsasn1c-common.so.2.7.5',
+   'libogscrypt.so.2.7.5','libogssbi.so.2.7.5',
+   'libogssbi-openapi.so.2.7.5','libogsnas-common.so.2.7.5',
+   'libogsnas-5gs.so.2.7.5','libogssctp.so.2.7.5','libogscore.so.2.7.5']
+  for name in sonames:
+   p=root/name;p.write_bytes(b'\x7fELF'+bytes(16))
+   q=root/(name+'.p')/(name+'.symbols');q.parent.mkdir();q.write_text(' 0x0000 symbol\n')
+  libs,excluded=select_shared_libraries(root)
+  self.assertEqual(len(libs),15)
+  self.assertEqual(len(excluded),15)

@@ -1,11 +1,41 @@
 """Bounded and fail-closed inspection candidate discovery. Never executes binaries."""
 import os
+import re
 import stat
 from pathlib import Path
 from build_policy import Blocked
 from build_receipts import atomic
 
-def preflight(candidates, work, output):
+
+# Exact linker-output basenames. A Meson *.so.symbols sidecar is a TEXT
+# metadata file even when rglob('*.so*') happens to match it.
+_SHARED_NAME = re.compile(r'[A-Za-z0-9_.+-]+\.so(?:\.[0-9]+)*\Z')
+_SYMBOL_SIDECAR = re.compile(r'(?P<soname>[A-Za-z0-9_.+-]+\.so(?:\.[0-9]+)*)\.symbols\Z')
+
+def select_shared_libraries(build_root):
+    """Discover actual shared objects; reject unexpected *.so* file types.
+
+    Known Meson <soname>.p/<soname>.symbols metadata is not a library.
+    All actual *.so[.version] candidates still undergo ELF validation.
+    """
+    root = Path(build_root)
+    libraries = []
+    ignored_sidecars = []
+    for path in root.rglob('*.so*'):
+        if path.is_symlink() or not path.is_file():
+            continue
+        if _SHARED_NAME.fullmatch(path.name):
+            libraries.append(path)
+            continue
+        match = _SYMBOL_SIDECAR.fullmatch(path.name)
+        if match is None or path.parent.name != match.group('soname') + '.p':
+            raise Blocked('UNREVIEWED_SHARED_LIBRARY_CANDIDATE:' + path.name)
+        ignored_sidecars.append(path)
+    if len(libraries) + len(ignored_sidecars) > 512:
+        raise Blocked('SHARED_LIBRARY_DISCOVERY_BUDGET')
+    return libraries, ignored_sidecars
+
+def preflight(candidates, work, output, ignored_sidecars=()):
     if not isinstance(candidates, list) or not 5 <= len(candidates) <= 517:
         raise Blocked('BINARY_INSPECTION_CANDIDATE_COUNT')
     work=Path(work)
@@ -33,7 +63,21 @@ def preflight(candidates, work, output):
         rows.append({'index':idx,'path':name,'size':st.st_size,'header_hex':head.hex(),
                      'format':kind,'expected':expected,'recognized':ok})
         if not ok: bad.append(idx)
+    if len(ignored_sidecars)>512:
+        raise Blocked('MESON_SIDECAR_BUDGET')
+    sidecars=[]
+    for path in ignored_sidecars:
+        file=Path(path)
+        try: relative=file.relative_to(work).as_posix()
+        except ValueError as error: raise Blocked('MESON_SIDECAR_OUTSIDE_WORKSPACE') from error
+        match=_SYMBOL_SIDECAR.fullmatch(file.name)
+        if match is None or file.parent.name!=match.group('soname')+'.p':
+            raise Blocked('MESON_SIDECAR_NOT_REVIEWED')
+        sidecars.append(relative)
+    if len(set(sidecars))!=len(sidecars):
+        raise Blocked('MESON_SIDECAR_DUPLICATE')
     atomic(output,{'classification':'REVIEW_REQUIRED' if bad else 'FORMATS_RECOGNIZED',
-                   'native_build_qualified':False,'rejected_indices':bad,'candidates':rows})
+                   'native_build_qualified':False,'rejected_indices':bad,
+                   'ignored_meson_symbol_sidecars':sidecars,'candidates':rows})
     if bad:raise Blocked('BINARY_INSPECTION_UNRECOGNIZED_FORMAT:'+','.join(map(str,bad)))
     return rows

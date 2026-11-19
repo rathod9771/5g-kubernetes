@@ -6,7 +6,7 @@ from open5gs_graph_gate import audit_open5gs_graph
 from open5gs_rsp_review import collect_rsp_review
 from open5gs_rsp_expansion import review_expanded_compdb
 from native_build_admission import admit_reviewed_open5gs_graph
-from binary_inspection_preflight import preflight
+from binary_inspection_preflight import preflight,select_shared_libraries
 from build_receipts import Recorder,atomic
 from toolchain_lock import run_bounded as verify_toolchain,verify_acquisition
 
@@ -113,10 +113,11 @@ def main():
     rec.phase('linkage_verification',[],w,linkage,outputs=[out/(name+'.deps.txt') for name in ('runtime_driver.cpp','snapshot_observer.cpp','cu_cp_impl.cpp','cu_cp_controller.cpp','amf_connection_manager.cpp')])
     inventory={};inspection_outputs=[out/'binary-inventory.json',out/'binary-inspection-discovery.json']
     def inspect():
-        libs=[x for x in ob.rglob('*.so*') if x.is_file() and not x.is_symlink()]+list(sb.rglob('*.a'))+list(ob.rglob('*.a'))
+        shared_objects,sidecars=select_shared_libraries(ob)
+        libs=shared_objects+list(sb.rglob('*.a'))+list(ob.rglob('*.a'))
         if len(libs)>512:raise Blocked('LIBRARY_BUDGET')
         paths=bins+libs
-        audit=preflight(paths,w,out/'binary-inspection-discovery.json')
+        audit=preflight(paths,w,out/'binary-inspection-discovery.json',sidecars)
         for index,b in enumerate(paths):
             base=str(index)+'-'+b.name
             def probe(tool,argv):
