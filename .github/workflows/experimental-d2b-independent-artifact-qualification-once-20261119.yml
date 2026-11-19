@@ -1,0 +1,188 @@
+name: D2B existing artifact independent qualification (no native build)
+on:
+  push:
+    branches:
+      - experiment/layer3-d2b-pinned-open5gs-graph-20261118
+    paths:
+      - .github/workflows/experimental-d2b-independent-artifact-qualification-once-20261119.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: d2b-independent-artifact-qualification-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  qualify-existing-artifact-only:
+    if: github.repository == 'rathod9771/5g-kubernetes' && github.ref == 'refs/heads/experiment/layer3-d2b-pinned-open5gs-graph-20261118' && github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    env:
+      INPUT: ci/experimental/srsran-ngap-stage-d1
+      SOURCE_SHA: 254f87f96fc5e717a5f3e2ffcace56f509f8f3ac
+      REVIEW_SHA: d3b6bb8143a29d7d086db57785965bb8b4bebc59
+      SOURCE_RUN: '44486362732'
+      ARTIFACT_ID: '14511734253'
+      ARTIFACT_NAME: l3-d2b-final-evidence-qualified-44486362732
+      EXPECTED_ZIP_SHA256: 2a289f1d542fcf0f15ebee6eec07230c2f8aed25f20a177ad966b8b296fd56a4
+    steps:
+      - name: Checkout immutable source identity of original build
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 254f87f96fc5e717a5f3e2ffcace56f509f8f3ac
+          persist-credentials: false
+      - name: Verify retained source policy and exact one-line correction
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          (cd "$INPUT" && sha256sum -c SHA256SUMS)
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p=Path('ci/experimental/srsran-ngap-stage-d1/workflow_evidence.py')
+          original=p.read_bytes()
+          assert hashlib.sha256(original).hexdigest()=='b0872c6752e9412c785d28a71b262e66a806ce94a7c2568407c8841260f76799', 'UNEXPECTED_ORIGINAL_VALIDATOR'
+          old=b"fullmatch('sha256:[a-f0-9]{64}',artifact_digest or '')"
+          new=b"fullmatch('(?:sha256:)?[a-f0-9]{64}',artifact_digest or '')"
+          assert original.count(old)==1, 'UNREVIEWED_VALIDATOR_SOURCE'
+          patched=original.replace(old,new)
+          assert hashlib.sha256(patched).hexdigest()=='e7b66ec64a5208b03440b2c3791fea2aadf373fcd24a9a2898d2f71032262c96', 'CORRECTION_SHA256_MISMATCH'
+          p.write_bytes(patched)
+          print('EXACT_PUBLISHED_ONE_LINE_VALIDATOR_FIX_REPLAYED')
+          PY
+          # The retained evidence's inputs/SHA256SUMS is bound to SOURCE_SHA.
+          # Do not rewrite that original manifest or silently swap to REVIEW_SHA.
+      - name: Download and bind original run and artifact from GitHub API
+        timeout-minutes: 4
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          curl -fsS --retry 0 --max-time 30 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$base/actions/runs/$SOURCE_RUN" -o "$RUNNER_TEMP/d2b-source-run.json"
+          curl -fsS --retry 0 --max-time 30 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$base/actions/runs/$SOURCE_RUN/jobs?per_page=100" -o "$RUNNER_TEMP/d2b-source-jobs.json"
+          curl -fsS --retry 0 --max-time 30 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$base/actions/artifacts/$ARTIFACT_ID" -o "$RUNNER_TEMP/d2b-artifact-metadata.json"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP'])
+          run=json.loads((t/'d2b-source-run.json').read_text())
+          jobs=json.loads((t/'d2b-source-jobs.json').read_text())
+          a=json.loads((t/'d2b-artifact-metadata.json').read_text())
+          assert run['id']==int(os.environ['SOURCE_RUN']) and run['head_sha']==os.environ['SOURCE_SHA']
+          assert run['status']=='completed' and run['conclusion']=='failure' and run['run_attempt']==1
+          assert a['id']==int(os.environ['ARTIFACT_ID']) and a['name']==os.environ['ARTIFACT_NAME']
+          assert a['expired'] is False and a['digest']=='sha256:'+os.environ['EXPECTED_ZIP_SHA256']
+          assert a['size_in_bytes']==7546001 and a['workflow_run']['id']==int(os.environ['SOURCE_RUN'])
+          matching=[j for j in jobs['jobs'] if j['name']=='one-shot-native-build-only']
+          assert len(matching)==1 and matching[0]['conclusion']=='failure'
+          steps={s['name']:s['conclusion'] for s in matching[0]['steps']}
+          for name in (
+              'Complete offline review regressions before native execution',
+              'Isolated native build and bounded ELF discovery (no protocol runtime)',
+              'Require complete native phase, ELF and post-worker accounting evidence',
+              'Export allowlisted text diagnostics only (no binaries)',
+              'Upload bounded evidence for independent review'):
+              assert steps.get(name)=='success',(name,steps.get(name))
+          assert steps.get('Require verified upload before final qualification')=='failure'
+          print('ORIGINAL_FAILED_WORKFLOW_AND_SUCCESSFUL_ARTIFACT_UPLOAD_PROVENANCE_VERIFIED')
+          PY
+          curl -fLSs --retry 0 --max-time 180 --proto-redir =https --max-redirs 4 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' "$base/actions/artifacts/$ARTIFACT_ID/zip" -o "$RUNNER_TEMP/d2b-original-artifact.zip"
+      - name: Strict archive extraction and independent manifest verification
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os,stat,zipfile
+          from pathlib import Path,PurePosixPath
+          temp=Path(os.environ['RUNNER_TEMP'])
+          bundle=Path('stage-d1-reviewed-evidence')
+          archive=temp/'d2b-original-artifact.zip'
+          raw=archive.read_bytes()
+          assert len(raw)==7546001 and hashlib.sha256(raw).hexdigest()==os.environ['EXPECTED_ZIP_SHA256'],'ZIP_DIGEST_MISMATCH'
+          assert not bundle.exists(),'BUNDLE_COLLISION'
+          bundle.mkdir(mode=0o700)
+          with zipfile.ZipFile(archive) as z:
+              infos=z.infolist()
+              names=[i.filename for i in infos]
+              assert len(names)==642 and len(set(names))==642,'ZIP_FILE_COUNT_OR_DUPLICATES'
+              assert sum(i.file_size for i in infos)<=512*1024**2,'ZIP_BUDGET'
+              for info in infos:
+                  n=info.filename
+                  p=PurePosixPath(n)
+                  mode=info.external_attr>>16
+                  assert n and not n.startswith('/') and not info.is_dir() and '\\' not in n and p.parts and all(part not in ('.','..') for part in p.parts),'UNSAFE_ZIP_MEMBER'
+                  assert stat.S_IFMT(mode)==stat.S_IFREG and info.file_size<=64*1024**2,'UNSAFE_OR_OVERSIZED_ZIP_FILE'
+                  out=bundle.joinpath(*p.parts)
+                  out.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
+                  with z.open(info) as f, out.open('xb') as g:
+                      import shutil
+                      shutil.copyfileobj(f,g,1024*1024)
+                  out.chmod(0o600)
+          m=json.loads((bundle/'upload-manifest.json').read_text())
+          hashes=m['sha256']
+          assert m['classification']=='PASS' and m['errors']==[] and len(hashes)==641
+          assert set(names)==set(hashes)|{'upload-manifest.json'},'MANIFEST_INVENTORY_DRIFT'
+          size=0
+          for n,h in hashes.items():
+              f=bundle.joinpath(*PurePosixPath(n).parts)
+              size+=f.stat().st_size
+              assert hashlib.sha256(f.read_bytes()).hexdigest()==h,'MANIFEST_HASH_MISMATCH:'+n
+          assert size==m['bytes']==100130837,'MANIFEST_BYTES'
+          supervisor=json.loads((bundle/'supervisor-final.json').read_text())
+          bindings=supervisor['evidence_sha256']
+          assert len(bindings)==608
+          for n,h in bindings.items():
+              assert hashlib.sha256((bundle/n).read_bytes()).hexdigest()==h,'SUPERVISOR_HASH_MISMATCH:'+n
+          assert supervisor['status']=='PASS_BUILD_ONLY_ZERO_NATIVE_TESTS'
+          assert supervisor['native_tests_executed']==0 and supervisor['runtime_executed'] is False
+          print('PASS: ORIGINAL ZIP 642 FILES; EXPORTED HASHES 641/641; SUPERVISOR BINDINGS 608/608')
+          PY
+      - name: Requalify existing evidence with corrected full policy validator
+        timeout-minutes: 3
+        env:
+          PRIOR_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          test "$PRIOR_JOB_STATUS" = success
+          python3 -B "$INPUT/workflow_evidence.py" upload success "$ARTIFACT_ID" "$EXPECTED_ZIP_SHA256" stage-d1-reviewed-evidence | tee "$RUNNER_TEMP/d2b-qualification-output.json"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          result=json.loads((Path(os.environ['RUNNER_TEMP'])/'d2b-qualification-output.json').read_text())
+          assert result['classification']=='PASS_BUILD_ONLY_EVIDENCE_UPLOADED' and result['native_tests_executed']==0
+          report={
+            'schema':1,
+            'classification':'PASS_BUILD_ONLY_EVIDENCE_INDEPENDENTLY_QUALIFIED',
+            'source_run_id':int(os.environ['SOURCE_RUN']),
+            'source_run_conclusion':'failure',
+            'source_commit':os.environ['SOURCE_SHA'],
+            'reviewed_correction_commit':os.environ['REVIEW_SHA'],
+            'artifact_id':int(os.environ['ARTIFACT_ID']),
+            'artifact_zip_sha256':os.environ['EXPECTED_ZIP_SHA256'],
+            'manifest_file_hashes_verified':641,
+            'supervisor_bindings_verified':608,
+            'validator_result':result,
+            'native_build_reexecuted':False,
+            'native_tests_executed':0,
+            'protocol_runtime_executed':False,
+            'production_deployment_authorized':False
+          }
+          Path('d2b-independent-qualification.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('INDEPENDENT_QUALIFICATION_PASS_BUILD_ONLY__PRODUCTION_NO_GO')
+          PY
+          {
+            echo '### D2B original native build evidence: independently qualified'
+            echo 'Existing artifact 14511734253; SHA-256 verified; 641/641 manifest hashes; 608/608 supervisor hashes.'
+            echo 'Full original evidence revalidated using exact published one-line digest correction.'
+            echo '**Build only. No native rebuild, tests, protocol runtime or deployment. Production NO-GO.**'
+            echo 'Original source workflow remains FAILURE; this is a separate evidence qualification.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish bounded independent qualification receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        timeout-minutes: 2
+        with:
+          name: d2b-independent-qualification-${{ github.run_id }}
+          path: d2b-independent-qualification.json
+          if-no-files-found: error
+          retention-days: 14
