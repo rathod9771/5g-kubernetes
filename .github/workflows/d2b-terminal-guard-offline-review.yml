@@ -72,6 +72,9 @@ jobs:
           assert "verify_native_terminal_guard(root,final,usage)" in finalizer
           assert "'/usr/bin/python3','-B',str(p/'guarded_worker.py')" in supervisor
           assert "validate_quiescent_capture(" in supervisor
+          from pathlib import Path as _Path
+          uploaded=_Path('ci/experimental/srsran-ngap-stage-d1/workflow_evidence.py').read_text()
+          assert "fullmatch('sha256:[a-f0-9]{64}'" in uploaded
           assert "verify_guard_release_end(" in supervisor
           assert "receipts=select_native_phase_receipts(worker)" in supervisor
           assert "verify_retained_phase_outputs(receipts,mount,worker,sources)" in supervisor

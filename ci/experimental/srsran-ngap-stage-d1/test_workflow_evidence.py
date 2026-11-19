@@ -90,7 +90,19 @@ class WorkflowEvidence(unittest.TestCase):
     def test_upload_incomplete(self):
         for outcome,id,h,local in [('failure','1','a'*64,True),('cancelled','1','a'*64,True),('success','','a'*64,True),('success','1','',True),('success','1','a'*64,False)]:
             with self.subTest(outcome=outcome,id=id,h=h,local=local),self.assertRaises(Blocked):we.upload_admission(outcome,id,h,local)
-    def test_upload_success(self):self.assertEqual(we.upload_admission('success','123','a'*64,True)['classification'],'PASS_BUILD_ONLY_EVIDENCE_UPLOADED')
+    def test_upload_success(self):self.assertEqual(we.upload_admission('success','123','sha256:'+'a'*64,True)['classification'],'PASS_BUILD_ONLY_EVIDENCE_UPLOADED')
+    def test_upload_rejects_bare_sha256(self):
+        with self.assertRaisesRegex(Blocked,'UPLOAD_INCOMPLETE'):
+            we.upload_admission('success','123','a'*64,True)
+    def test_upload_rejects_wrong_digest_algorithm(self):
+        with self.assertRaises(Blocked):
+            we.upload_admission('success','123','sha512:'+'a'*64,True)
+    def test_upload_rejects_malformed_prefixed_digest(self):
+        with self.assertRaises(Blocked):
+            we.upload_admission('success','123','sha256:not-a-sha',True)
+    def test_upload_action_pins_digest_output(self):
+        source=(we.P/'workflow_evidence.py').read_text()
+        self.assertIn("fullmatch('sha256:[a-f0-9]{64}'",source)
     def test_false_overall_pass(self):
         (self.root/'ci-evidence-status.json').write_text('{"classification":"PASS_BUILD_ONLY"}')
         (self.root/'auxiliary/wheel_acquisition.receipt.json').unlink();self.rejects()
@@ -140,7 +152,7 @@ class WorkflowEvidence(unittest.TestCase):
         final=json.loads((self.root/'supervisor-final.json').read_text());Publication().rehash(self.root,final)
         with tempfile.TemporaryDirectory() as d:
             target=Path(d)/'bundle';self.assertTrue(we.export_bundle(self.root,target))
-            self.assertEqual(we.qualify_upload(target,'success','1','a'*64)['classification'],'PASS_BUILD_ONLY_EVIDENCE_UPLOADED')
+            self.assertEqual(we.qualify_upload(target,'success','1','sha256:'+'a'*64)['classification'],'PASS_BUILD_ONLY_EVIDENCE_UPLOADED')
     def test_missing_aux_accounting(self):
         self.edit('auxiliary/python_setup.receipt.json',lambda r:r['resource_evidence'].update(self_and_reaped_children={}));self.rejects()
     def test_contradictory_aux_timeout(self):
