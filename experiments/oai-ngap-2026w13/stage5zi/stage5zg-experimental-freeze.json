@@ -1,0 +1,86 @@
+{
+  "schema": "hcran-stage5zg-experiment-freeze-v1",
+  "declared_on": "2026-11-19",
+  "component": "H-CRAN OAI two-DU / two-UE simulated 5G SA recovery",
+  "qualification": "EXPERIMENTAL_QUALIFIED",
+  "freeze": {
+    "source_repository": "rathod9771/5g-kubernetes",
+    "source_commit": "7fa911ece3b510b09351bf19c722007365ba47bd",
+    "snapshot_branch": "experiment/hcran-stage5zg-qualified-freeze-20261119",
+    "upstream_oai_w45_ue_commit": "dfb296ab867050a7bde81b393fa31b757ada2c83",
+    "upstream_oai_w45_nas_blob": "60f009118ef1db9ba29f6f85075ffee0f73d459d",
+    "deployment_status": "NOT_DEPLOYED_ON_TARGET",
+    "image_digest_pin": "NOT_QUALIFIED",
+    "branch_mutability_notice": "Git branch pointers are not immutable tags; full commit SHA and expected Git blob IDs are authoritative"
+  },
+  "passed_live_evidence": {
+    "workflow_run_id": 44457384676,
+    "workflow_commit": "7fa911ece3b510b09351bf19c722007365ba47bd",
+    "workflow_conclusion": "success",
+    "two_independent_trials": true,
+    "ue_process_restart_between_cycles": false,
+    "amf_restart_cycles_per_trial": 3,
+    "genuine_cycles_passed": 6,
+    "genuine_cycles_attempted": 6,
+    "trial_1_cycle_seconds": [
+      76.76,
+      75.16,
+      86.36
+    ],
+    "trial_2_cycle_seconds": [
+      76.83,
+      84.95,
+      75.25
+    ],
+    "trial_1_bounded_trace_events": 1713,
+    "trial_2_bounded_trace_events": 1671,
+    "both_bounded_traces_collection_issues": 0,
+    "stage5u_negative_controls_rejected_per_trial": 9,
+    "stage5y_both_cells_amf_ingress_passed": true,
+    "genuine_pdu_nas_f1u_ngu_icmp_restore_passed": true,
+    "data_source": "GitHub Actions job logs and retained workflow evidence; isolated disposable RFsim only"
+  },
+  "qualified_offline_followup": {
+    "run_id": 44457643438,
+    "commit": "c2cadb476e28e9a06354036d9d205ed21226f19c",
+    "conclusion": "success",
+    "note": "follow-on historical test-contract-only correction, not live runtime qualification for this SHA"
+  },
+  "gated_staging_preparation": {
+    "run_id": 44461469754,
+    "commit": "107069be89166c4b9a58845beb1b75a2250083dc",
+    "conclusion": "success",
+    "tests_passed": 1155,
+    "tests_skipped": 3,
+    "no_automatic_live_runs": true
+  },
+  "pinned_path_blobs": {
+    "scripts/experiments/hcran_build_pinned_w45_ue_stage5zg.sh": "a61c947bdd6f1c413500a9ecaaad99bb227b37e2",
+    "scripts/hcran_build_pinned_stage3_ngap_cu.sh": "e481b56fb33215439fb7f87b92fdb6050468639f",
+    "experiments/oai-ngap-2026w13/stage5zg/patch_rrc_mac_si_handoff_observe.py": "521485a637db47b2dca23b2cbbc10d3903bc6435",
+    "experiments/oai-ngap-2026w13/stage5zf/patch_rrc_si_decision_observe.py": "1b55127fc3e48b0c6334f5dbe5224f8d2d5ca158",
+    "experiments/oai-ngap-2026w13/stage5zd/patch_mib_sib1_handoff_observe.py": "09f3b932e760e940427b41992ea28344a3752eb8",
+    "experiments/oai-ngap-2026w13/stage5s/run_protocol_trace.py": "6741d1e107c11f0fa149f53c0000ed3de78a2fa0",
+    "experiments/oai-ngap-2026w13/stage5s/verify_three_cycle_recovery.py": "fdf4b440e8203aefb40698b007b78f331b35765a",
+    "experiments/oai-ngap-2026w13/stage5u/audit_repeatability.py": "ae4af9aa259a0ee609e2646bbfa50929ab9bb786",
+    "experiments/oai-ngap-2026w13/stage5y/verify_live_amf_ingress.py": "139eaea3a6ba79a4cea73726588f3a3ed3517fa7",
+    "helm/cran-oai/cu/values-hcran.yaml": "16d58727404a84a91e2181999ec3b584690004d5",
+    "helm/cran-oai/du/values-hcran-macro.yaml": "00d87ed76d2fae1f8436ee444042732e4f2a04d2",
+    "helm/cran-oai/du/values-hcran-small.yaml": "2bedeae8c040fee958cc07347b17729cd4576ebb"
+  },
+  "staging": {
+    "branch": "experiment/hcran-stage5zi-controlled-staging-20261119",
+    "phase0_static_source_and_helm": "PENDING_VALIDATION",
+    "phase1_target_readonly_inventory": "NOT_EXECUTED",
+    "phase2_approved_isolated_staging_fi": "NOT_AUTHORIZED",
+    "production_promotion": "NO_GO"
+  },
+  "known_residual_risk": [
+    "Intermittent macro/small UE restart recovery was observed in prior isolated RFsim runs",
+    "The last passing build included log-only instrumentation that may affect timing",
+    "Target Kubernetes security and capacity were not qualified by the passing RFsim runs",
+    "Full production Rel-15/16 interop, rollout/rollback, secrets, security and SLO gates remain incomplete"
+  ],
+  "production_authorized": false,
+  "production_decision": "NO_GO"
+}

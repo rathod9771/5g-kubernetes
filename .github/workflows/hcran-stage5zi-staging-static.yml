@@ -1,0 +1,93 @@
+name: H-CRAN Stage 5ZI frozen experimental baseline - static staging preflight (NO DEPLOY)
+
+# This workflow NEVER contacts the HP Kubernetes API or runs fault injection.
+# Successful result approves static staging preparation only, not deployment.
+on:
+  push:
+    branches:
+      - experiment/hcran-stage5zi-controlled-staging-20261119
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hcran-stage5zi-static-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  static-staging-qualification:
+    name: Verify frozen source and render staging manifests (no cluster)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout complete source history for verified frozen commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate frozen experimental source and actual Git blob IDs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile experiments/oai-ngap-2026w13/stage5zi/verify_frozen_staging_source.py
+          python3 experiments/oai-ngap-2026w13/stage5zi/verify_frozen_staging_source.py \
+            --manifest experiments/oai-ngap-2026w13/stage5zi/stage5zg-experimental-freeze.json \
+            --report "$RUNNER_TEMP/stage5zi-static-freeze-report.json"
+
+      - name: Test frozen manifest and fail-closed read-only H-CRAN inventory gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_hcran_stage5zi_freeze.py' -v
+          python3 -m unittest discover -s tests -p 'test_hcran_staging_inventory.py' -v
+
+      - name: Install pinned Helm for local-only static source rendering
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+
+      - name: Render H-CRAN CU and two DUs offline (never apply)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stage5zi-helm"
+          helm template hcran-oai-cu helm/cran-oai/cu \
+            -f helm/cran-oai/cu/values-hcran.yaml \
+            -f helm/cran-oai/cu/values-hcran-secure-staging.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w13 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5zi-helm/cu.yaml"
+          helm template hcran-oai-macro helm/cran-oai/du \
+            -f helm/cran-oai/du/values-hcran-macro.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5zi-helm/macro.yaml"
+          helm template hcran-oai-small helm/cran-oai/du \
+            -f helm/cran-oai/du/values-hcran-small.yaml \
+            --set-string image.reference=oaisoftwarealliance/oai-gnb:2026.w25 \
+            --set-string image.pullPolicy=IfNotPresent \
+            > "$RUNNER_TEMP/stage5zi-helm/small.yaml"
+          test -s "$RUNNER_TEMP/stage5zi-helm/cu.yaml"
+          test -s "$RUNNER_TEMP/stage5zi-helm/macro.yaml"
+          test -s "$RUNNER_TEMP/stage5zi-helm/small.yaml"
+          {
+            echo 'Stage5ZI static qualification ONLY'
+            echo 'Static renders use historical test tags, NOT immutable staging image digests.'
+            echo 'No target cluster, UE, OSM, subscriber or AMF operation performed.'
+            echo 'Target inventory, security enforcement, node pressure, and rollback: NOT QUALIFIED.'
+            echo 'Production authorization: NO_GO.'
+          } > "$RUNNER_TEMP/stage5zi-static-disposition.txt"
+          cat "$RUNNER_TEMP/stage5zi-static-disposition.txt"
+
+      - name: Retain bounded non-secret source-integrity report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hcran-stage5zi-static-freeze-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/stage5zi-static-freeze-report.json
+            ${{ runner.temp }}/stage5zi-static-disposition.txt
+          if-no-files-found: warn
+          retention-days: 14
