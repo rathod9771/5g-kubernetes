@@ -108,13 +108,16 @@ class Stage5ZF(unittest.TestCase):
             self.assertIn(x,b)
         w=WORKFLOW.read_text()
         for x in ("experiment/hcran-stage5zf-rrc-si-cache-decision-20261119",
-                  "hcran_build_pinned_w45_ue_stage5zf.sh",
+                  "hcran_build_pinned_w45_ue_stage5zg.sh",
                   "stage5zf/analyze_rrc_si_cache.py",
                   "--cycles 3 --verify-gtpu",
                   "stage5u/audit_repeatability.py",
                   "stage5y/verify_live_amf_ingress.py",
                   "hcran_build_pinned_w45_ue_stage5t.sh"):
             self.assertIn(x,w)
+        # Historical Stage5ZF source-pinned builder remains retained even when
+        # the active workflow advances to newer isolated observation stages.
+        self.assertTrue((ROOT/"scripts/experiments/hcran_build_pinned_w45_ue_stage5zf.sh").is_file())
         self.assertNotIn("runs-on: self-hosted",w)
 
 if __name__=="__main__":
