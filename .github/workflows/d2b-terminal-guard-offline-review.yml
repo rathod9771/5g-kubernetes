@@ -56,6 +56,8 @@ jobs:
           from test_sctp_link_regression import reviewed_driver_dependencies
           reviewed_driver_dependencies(Path("ci/experimental/srsran-ngap-stage-d1/CMakeLists.txt").read_text())
           assert "binary-inspection-discovery.json" in worker
+          assert "inspection_outputs.append(out/'binary-inspection-failure.json')" in worker
+          assert "binary_inspection_preflight import preflight" in worker
           assert "BINARY_INSPECTION_TOOL_FAILURE" in worker
           assert "audit_open5gs_graph(graph)" in worker
           assert "review_expanded_compdb(expanded,review)" in worker
