@@ -8,6 +8,7 @@ from build_policy import Blocked,LIMITS,PHASES,digest,environment,verify_complet
 from build_receipts import atomic,stamp
 from cgroup_accounting_review import select_review_accounting
 from cgroup_terminal_guard import validate_guard_status,validate_quiescent_capture,verify_guard_release_end
+from toolchain_lock import ACQUISITION_DIAGNOSTICS
 
 CONTROL_LOG=None
 SCRATCH_MIN_FREE_BYTES=18*1024**3
@@ -87,6 +88,36 @@ def select_native_phase_receipts(worker):
     # The five helper receipts are independently validated by the external
     # toolchain-evidence verifier. Here only native phases are admitted.
     return {phase:json.loads(observed[phase].read_text()) for phase in PHASES}
+
+
+def resolve_retained_phase_output(phase,name,mount,worker):
+    """Resolve a receipt output to its exact preserved byte source.
+
+    Source acquisition's ten helper diagnostics are renamed to acquisition-*
+    by the independently reviewed preservation collector. The original
+    receipt still records their pre-rename names and hashes. Do not use the
+    later toolchain-progress.json, which is deliberately overwritten after
+    acquisition. Other outputs retain the original supervisor resolution.
+    """
+    name=Path(name)
+    if str(name).startswith('/work/'):
+        return Path(mount)/name.relative_to('/work')
+    if name.is_absolute() or '..' in name.parts:
+        raise Blocked('UNEXPECTED_ARTIFACT_REFERENCE')
+    if phase=='dependency_acquisition' and str(name) in ACQUISITION_DIAGNOSTICS:
+        return Path(worker)/('acquisition-'+str(name))
+    return Path(worker)/name
+
+def verify_retained_phase_outputs(receipts,mount,worker):
+    """Verify every original receipt hash after preservation; no rewrites."""
+    total=0
+    for phase,receipt in receipts.items():
+        for name,expected in receipt['outputs'].items():
+            source=resolve_retained_phase_output(phase,name,mount,worker)
+            if not source.is_file() or digest(source)!=expected:
+                raise Blocked('ARTIFACT_CORRUPTION:'+phase+':'+name)
+            total+=1
+    return total
 
 def main():
     if sys.argv[1:]!=['--github-build-only'] or os.getuid()!=0 or os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':raise Blocked('APPROVED_HOSTED_ROOT_SUPERVISOR_ONLY')
@@ -265,11 +296,7 @@ def main():
                 f=worker/Path(entry['log']).name
                 if not f.is_file() or digest(f)!=entry['log_sha256']:raise Blocked('PARTIAL_LOG_CORRUPTION')
             if digest(worker/Path(r['log']).name)!=r['log_sha256']:raise Blocked('PHASE_LOG_CORRUPTION')
-            for name,h in r['outputs'].items():
-                if name.startswith('/work/'):source=mount/Path(name).relative_to('/work')
-                elif not Path(name).is_absolute() and '..' not in Path(name).parts:source=worker/name
-                else:raise Blocked('UNEXPECTED_ARTIFACT_REFERENCE')
-                if not source.is_file() or digest(source)!=h:raise Blocked('ARTIFACT_CORRUPTION')
+        verify_retained_phase_outputs(receipts,mount,worker)
         final['status']='PASS_BUILD_ONLY_ZERO_NATIVE_TESTS'
     except Blocked as e:final.update(status='BLOCKED',reason=str(e))
     except (OSError,subprocess.CalledProcessError) as e:

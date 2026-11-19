@@ -4,10 +4,10 @@ Run 44460838788 had ten PASS native receipts and five toolchain helpers.
 The old supervisor fed all fifteen into verify_complete, yielding a false
 MISSING_PHASE_RECEIPT even though every required phase had passed.
 """
-import json,tempfile,unittest
+import json,tempfile,unittest,hashlib
 from pathlib import Path
 from build_policy import Blocked,PHASES
-from build_supervisor import TOOLCHAIN_HELPER_RECEIPTS,select_native_phase_receipts
+from build_supervisor import TOOLCHAIN_HELPER_RECEIPTS,select_native_phase_receipts,ACQUISITION_DIAGNOSTICS,resolve_retained_phase_output,verify_retained_phase_outputs
 
 class ExactReceiptCensus(unittest.TestCase):
     def fixture(self):
@@ -62,3 +62,58 @@ class ExactReceiptCensus(unittest.TestCase):
         self.assertNotIn("receipts={f.name.removesuffix('.receipt.json'):",source)
 
 if __name__=='__main__':unittest.main()
+
+class AcquisitionSnapshotBinding(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name);self.mount=self.root/'mount';self.worker=self.root/'worker'
+        self.mount.mkdir();self.worker.mkdir()
+        self.data={}
+        for name in ACQUISITION_DIAGNOSTICS:
+            value=('SAVED:'+name).encode()
+            path=self.worker/('acquisition-'+name)
+            path.write_bytes(value)
+            self.data[name]=hashlib.sha256(value).hexdigest()
+        # The later runtime progress is intentionally a different revision.
+        (self.worker/'toolchain-progress.json').write_text('LATEST - NOT ACQUISITION')
+        self.data['toolchain-lock.json']=hashlib.sha256(b'LOCK').hexdigest()
+        (self.worker/'toolchain-lock.json').write_bytes(b'LOCK')
+        self.receipts={'dependency_acquisition':{'outputs':self.data}}
+    def test_all_ten_acquisition_outputs_use_snapshots(self):
+        self.assertEqual(verify_retained_phase_outputs(self.receipts,self.mount,self.worker),11)
+    def test_original_acquisition_progress_not_overwritten(self):
+        snapshot=resolve_retained_phase_output('dependency_acquisition','toolchain-progress.json',self.mount,self.worker)
+        self.assertEqual(snapshot.name,'acquisition-toolchain-progress.json')
+        self.assertNotEqual(snapshot,self.worker/'toolchain-progress.json')
+    def test_later_phases_do_not_remap_toolchain_files(self):
+        later=resolve_retained_phase_output('source_verification','toolchain-progress.json',self.mount,self.worker)
+        self.assertEqual(later,self.worker/'toolchain-progress.json')
+    def test_archive_missing_fails_closed(self):
+        (self.worker/'acquisition-toolchain-paths.log').unlink()
+        with self.assertRaisesRegex(Blocked,'ARTIFACT_CORRUPTION:dependency_acquisition:toolchain-paths.log'):
+            verify_retained_phase_outputs(self.receipts,self.mount,self.worker)
+    def test_archive_corruption_fails_closed(self):
+        (self.worker/'acquisition-toolchain-selection.json').write_text('tampered')
+        with self.assertRaisesRegex(Blocked,'ARTIFACT_CORRUPTION:dependency_acquisition:toolchain-selection.json'):
+            verify_retained_phase_outputs(self.receipts,self.mount,self.worker)
+    def test_unreviewed_output_remains_relative_and_verified(self):
+        self.receipts['dependency_acquisition']['outputs']['unexpected-toolchain.log']='0'*64
+        with self.assertRaisesRegex(Blocked,'ARTIFACT_CORRUPTION'):
+            verify_retained_phase_outputs(self.receipts,self.mount,self.worker)
+    def test_work_paths_preserved(self):
+        expected=b'WORK_BINARY_BYTES'
+        location=self.mount/'srs-build'/'test-file'
+        location.parent.mkdir()
+        location.write_bytes(expected)
+        x={'open5gs_compilation':{'outputs':{'/work/srs-build/test-file':hashlib.sha256(expected).hexdigest()}}}
+        self.assertEqual(verify_retained_phase_outputs(x,self.mount,self.worker),1)
+    def test_escape_rejected(self):
+        with self.assertRaisesRegex(Blocked,'UNEXPECTED_ARTIFACT_REFERENCE'):
+            resolve_retained_phase_output('dependency_acquisition','../toolchain-operation.log',self.mount,self.worker)
+        with self.assertRaisesRegex(Blocked,'UNEXPECTED_ARTIFACT_REFERENCE'):
+            resolve_retained_phase_output('dependency_acquisition','/tmp/external.json',self.mount,self.worker)
+    def test_static_supervisor_calls_exact_replay(self):
+        source=(Path(__file__).parent/'build_supervisor.py').read_text()
+        self.assertIn('verify_retained_phase_outputs(receipts,mount,worker)',source)
+        self.assertIn('from toolchain_lock import ACQUISITION_DIAGNOSTICS',source)
