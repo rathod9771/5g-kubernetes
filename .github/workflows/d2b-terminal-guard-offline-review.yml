@@ -43,7 +43,7 @@ jobs:
             test_execution_proposals.py test_workflow_evidence.py \
             test_toolchain_bounded.py test_open5gs_graph_gate.py \
             test_open5gs_rsp_review.py test_open5gs_rsp_expansion.py \
-            test_cgroup_accounting_review.py test_cgroup_terminal_guard.py test_native_build_admission.py test_sctp_link_regression.py test_binary_inspection_preflight.py
+            test_cgroup_accounting_review.py test_cgroup_terminal_guard.py test_native_build_admission.py test_sctp_link_regression.py test_binary_inspection_preflight.py test_supervisor_receipt_census.py
       - name: Verify no hosted native build was invoked
         run: |
           python3 - <<'PY'
@@ -73,6 +73,8 @@ jobs:
           assert "'/usr/bin/python3','-B',str(p/'guarded_worker.py')" in supervisor
           assert "validate_quiescent_capture(" in supervisor
           assert "verify_guard_release_end(" in supervisor
+          assert "receipts=select_native_phase_receipts(worker)" in supervisor
+          assert "UNREVIEWED_PHASE_RECEIPT:" in supervisor
           print("OFFLINE_PINNED_NATIVE_ADMISSION_REVIEW_ONLY__NO_NATIVE_EXECUTION")
           PY
 

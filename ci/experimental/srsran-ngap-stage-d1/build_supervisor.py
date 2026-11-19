@@ -4,7 +4,7 @@ No native build command starts unless kernel limits and filesystem confinement r
 """
 import json,os,shutil,signal,stat,subprocess,sys,tempfile,time,uuid
 from pathlib import Path
-from build_policy import Blocked,LIMITS,digest,environment,verify_complete
+from build_policy import Blocked,LIMITS,PHASES,digest,environment,verify_complete
 from build_receipts import atomic,stamp
 from cgroup_accounting_review import select_review_accounting
 from cgroup_terminal_guard import validate_guard_status,validate_quiescent_capture,verify_guard_release_end
@@ -55,6 +55,39 @@ def observe_exit(properties,timed):
     if code==1:return {'exit_code':status,'signal':None,'timeout':timed}
     if code in (2,3):return {'exit_code':None,'signal':status,'timeout':timed}
     return {'exit_code':None,'signal':None,'timeout':timed}
+
+# Toolchain query receipts are legitimate *auxiliary* records, not D2B build
+# phases. They must never be sent into verify_complete(), which accepts exactly
+# the ten required PHASES. Unknown or missing records still fail closed.
+TOOLCHAIN_HELPER_RECEIPTS=frozenset({
+    'toolchain-verification',
+    'acquisition-toolchain-operation',
+    'acquisition-toolchain-versions',
+    'acquisition-toolchain-database',
+    'acquisition-toolchain-paths',
+})
+
+def select_native_phase_receipts(worker):
+    worker=Path(worker)
+    observed={}
+    for file in worker.glob('*.receipt.json'):
+        if file.is_symlink() or not file.is_file() or file.stat().st_nlink!=1:
+            raise Blocked('UNSAFE_PHASE_RECEIPT_FILE')
+        phase=file.name.removesuffix('.receipt.json')
+        if phase in observed:raise Blocked('DUPLICATE_PHASE_RECEIPT:'+phase)
+        observed[phase]=file
+    native=set(PHASES)
+    permitted=native|TOOLCHAIN_HELPER_RECEIPTS
+    if unexpected:=set(observed)-permitted:
+        raise Blocked('UNREVIEWED_PHASE_RECEIPT:'+','.join(sorted(unexpected)))
+    if missing:=native-set(observed):
+        raise Blocked('MISSING_NATIVE_PHASE_RECEIPT:'+','.join(sorted(missing)))
+    if missing:=TOOLCHAIN_HELPER_RECEIPTS-set(observed):
+        raise Blocked('MISSING_TOOLCHAIN_HELPER_RECEIPT:'+','.join(sorted(missing)))
+    # The five helper receipts are independently validated by the external
+    # toolchain-evidence verifier. Here only native phases are admitted.
+    return {phase:json.loads(observed[phase].read_text()) for phase in PHASES}
+
 def main():
     if sys.argv[1:]!=['--github-build-only'] or os.getuid()!=0 or os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted':raise Blocked('APPROVED_HOSTED_ROOT_SUPERVISOR_ONLY')
     uid=int(os.environ['SUDO_UID']);gid=int(os.environ['SUDO_GID']);repo=Path(os.environ['GITHUB_WORKSPACE']).resolve();temp=Path(os.environ['RUNNER_TEMP']).resolve();p=Path(__file__).resolve().parent
@@ -221,7 +254,7 @@ def main():
         if last.get('Result')!='success':
             final['status']='FAIL';raise RuntimeError('SYSTEMD_UNIT_NOT_SUCCESS')
         final.update(supervisor_completed=True,ended_at=stamp(),elapsed_seconds=time.monotonic()-start)
-        receipts={f.name.removesuffix('.receipt.json'):json.loads(f.read_text()) for f in worker.glob('*.receipt.json')}
+        receipts=select_native_phase_receipts(worker)
         verify_complete(receipts,json.loads((worker/'toolchain.json').read_text()),json.loads((worker/'binary-inventory.json').read_text()),final,usage)
         for name,item in json.loads((worker/'binary-inventory.json').read_text()).items():
             if Path(name).is_absolute() or '..' in Path(name).parts:raise Blocked('UNSAFE_BINARY_REFERENCE')
