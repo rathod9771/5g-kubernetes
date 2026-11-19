@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts/hcran_stage5zj_merge_pressure.py"
+SCRIPT = ROOT / "scripts/experiments/hcran_stage5zj_merge_pressure.py"
 SPEC = importlib.util.spec_from_file_location("stage5zj_pressure", SCRIPT)
 mod = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mod)
@@ -22,6 +22,10 @@ def specimen(name="staging-node", **changes):
 
 
 class Stage5ZJPressure(unittest.TestCase):
+    def test_research_helper_path_is_release_impact_safe(self):
+        self.assertTrue(SCRIPT.is_file())
+        self.assertTrue(SCRIPT.relative_to(ROOT).as_posix().startswith("scripts/experiments/"))
+
     def write(self, directory, name, data):
         p = pathlib.Path(directory) / name
         p.write_text(json.dumps(data))

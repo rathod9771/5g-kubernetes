@@ -60,7 +60,7 @@ creates the namespace or deploys workloads.
    every distinct hosting node. For one node, one pair suffices:
 
    ```bash
-   python3 scripts/hcran_stage5zj_merge_pressure.py \
+   python3 scripts/experiments/hcran_stage5zj_merge_pressure.py \
      --input ./stage5zj-pressure-node-a.json \
      --expect-node '<exact-node-a>' \
      --output ./stage5zj-pressure-all-nodes.json
@@ -69,7 +69,7 @@ creates the namespace or deploys workloads.
    Two-node example (replace both placeholders with actual approved names):
 
    ```bash
-   python3 scripts/hcran_stage5zj_merge_pressure.py \
+   python3 scripts/experiments/hcran_stage5zj_merge_pressure.py \
      --input ./stage5zj-pressure-node-a.json \
      --input ./stage5zj-pressure-node-b.json \
      --expect-node '<exact-node-a>' \
