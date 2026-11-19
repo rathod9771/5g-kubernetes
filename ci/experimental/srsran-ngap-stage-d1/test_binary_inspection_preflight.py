@@ -65,3 +65,24 @@ class PartialInspection(unittest.TestCase):
   with self.assertRaises(Blocked):we.partial_inspection_manifest(root)
 
 if __name__=='__main__':unittest.main()
+
+class InspectionPhaseReceipt(unittest.TestCase):
+ def test_optional_failure_receipt_not_required_on_success(self):
+  from build_receipts import Recorder
+  from build_policy import environment
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp)
+   inventory=root/'binary-inventory.json'
+   discovery=root/'binary-inspection-discovery.json'
+   missing=root/'binary-inspection-failure.json'
+   def done():
+    inventory.write_text('SYNTHETIC_INVENTORY')
+    discovery.write_text('SYNTHETIC_DISCOVERY')
+   r=Recorder(root,{'PATH':'/usr/bin:/bin'})
+   receipt=r.phase('binary_inspection',[],root,done,outputs=[inventory,discovery])
+   self.assertNotIn(str(missing),r.receipts['binary_inspection']['outputs'])
+   self.assertEqual(r.receipts['binary_inspection']['classification'],'PASS')
+ def test_worker_records_actual_failure_but_does_not_require_absent_failure_receipt(self):
+  source=(Path(__file__).parent/'build_worker.py').read_text()
+  self.assertIn("inspection_outputs=[out/'binary-inventory.json',out/'binary-inspection-discovery.json']",source)
+  self.assertIn("inspection_outputs.append(out/'binary-inspection-failure.json')",source)

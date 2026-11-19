@@ -111,7 +111,7 @@ def main():
             if 'deps not found' in data or str(s/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h') not in data or 'stage-c3-' in data:raise Blocked('INVALID_HEADER_DEPENDENCY')
             (out/(Path(x['file']).name+'.deps.txt')).write_text(data)
     rec.phase('linkage_verification',[],w,linkage,outputs=[out/(name+'.deps.txt') for name in ('runtime_driver.cpp','snapshot_observer.cpp','cu_cp_impl.cpp','cu_cp_controller.cpp','amf_connection_manager.cpp')])
-    inventory={};inspection_outputs=[out/'binary-inventory.json',out/'binary-inspection-discovery.json',out/'binary-inspection-failure.json']
+    inventory={};inspection_outputs=[out/'binary-inventory.json',out/'binary-inspection-discovery.json']
     def inspect():
         libs=[x for x in ob.rglob('*.so*') if x.is_file() and not x.is_symlink()]+list(sb.rglob('*.a'))+list(ob.rglob('*.a'))
         if len(libs)>512:raise Blocked('LIBRARY_BUDGET')
@@ -127,6 +127,7 @@ def main():
                             'path':audit[index]['path'],'format':audit[index]['format'],
                             'tool':tool,'returncode':error.returncode,
                             'binary_sha256':digest(b)})
+                    inspection_outputs.append(out/'binary-inspection-failure.json')
                     raise Blocked('BINARY_INSPECTION_TOOL_FAILURE:'+tool+':'+str(index)) from error
             re=probe('readelf',['/usr/bin/readelf','-d','-h',str(b)])
             od=probe('objdump',['/usr/bin/objdump','-p',str(b)])
