@@ -159,7 +159,7 @@ def collect(temp,root):
     return not errors
 
 ROOT_FILES={'supervisor-final.json','supervisor-start.json','supervisor-control.jsonl','unit-startup.log','resource-usage.json','post-worker-guard-accounting.json','partial-accounting.json','preservation.json','ci-evidence-status.json'}
-WORKER_FILES={'toolchain.json','binary-inventory.json','enforcement.json','source-archives.json','toolchain-lock.json','verified-source-archives.json','applied-patches.json','os-release.txt','packages.txt','srsran-commands.txt','open5gs-commands.txt','open5gs-rsp-review.json','open5gs-rsp-expanded.json','d2b-native-admission.json','srs-compile-commands.json','ogs-compile-commands.json','CMakeCache.txt','meson-log.txt','worker-completion.json','worker-status.json'}|{n+'.deps.txt' for n in ('runtime_driver.cpp','snapshot_observer.cpp','cu_cp_impl.cpp','cu_cp_controller.cpp','amf_connection_manager.cpp')}
+WORKER_FILES={'toolchain.json','binary-inventory.json','binary-inspection-discovery.json','binary-inspection-failure.json','enforcement.json','source-archives.json','toolchain-lock.json','verified-source-archives.json','applied-patches.json','os-release.txt','packages.txt','srsran-commands.txt','open5gs-commands.txt','open5gs-rsp-review.json','open5gs-rsp-expanded.json','d2b-native-admission.json','srs-compile-commands.json','ogs-compile-commands.json','CMakeCache.txt','meson-log.txt','worker-completion.json','worker-status.json'}|{n+'.deps.txt' for n in ('runtime_driver.cpp','snapshot_observer.cpp','cu_cp_impl.cpp','cu_cp_controller.cpp','amf_connection_manager.cpp')}
 INSPECTION_EXTENSIONS=('readelf','objdump','symbols')
 INSPECTION_MAX_BINARIES=517  # Five executables plus the existing 512-library budget.
 INSPECTION_TOTAL_LIMIT=256*1024**2  # Existing native evidence aggregate limit.
@@ -194,6 +194,35 @@ def inspection_manifest(root):
             result[path]=h
     actual={str(f.relative_to(root)) for f in (root/'worker').iterdir() if f.suffix in {'.readelf','.objdump','.symbols'}}
     if actual!=set(result):raise Blocked('UNEXPECTED_INSPECTION_OUTPUT')
+    return result
+
+def partial_inspection_manifest(root):
+    """Allow signed partial text logs as diagnostics, never as ELF qualification."""
+    import re,stat
+    root=Path(root);worker=root/'worker'
+    phase=json.loads(checked(root,'worker/binary_inspection.receipt.json').read_text())
+    final=json.loads(checked(root,'supervisor-final.json').read_text())
+    if phase.get('classification') not in ('INCOMPLETE','BLOCKED') or final.get('status') not in ('INCOMPLETE','BLOCKED'):
+        raise Blocked('PARTIAL_INSPECTION_REQUIRES_INCOMPLETE_BUILD')
+    pattern=re.compile(r'([0-9]{1,3})-[A-Za-z0-9_.+-]{1,128}\.(readelf|objdump|symbols)\Z')
+    result={};size=0
+    for f in worker.iterdir():
+        if f.suffix not in {'.readelf','.objdump','.symbols'}:continue
+        m=pattern.fullmatch(f.name)
+        if not m or int(m.group(1))>=INSPECTION_MAX_BINARIES:
+            raise Blocked('PARTIAL_INSPECTION_UNREVIEWED_PATH')
+        rel='worker/'+f.name
+        x=checked(root,rel);st=x.lstat()
+        if not stat.S_ISREG(st.st_mode) or st.st_uid!=os.geteuid() or st.st_nlink!=1 or st.st_mode&0o022:
+            raise Blocked('PARTIAL_INSPECTION_UNSAFE_FILE')
+        size+=st.st_size
+        if size>INSPECTION_TOTAL_LIMIT:raise Blocked('PARTIAL_INSPECTION_OVERSIZED')
+        h=digest(x)
+        if phase.get('outputs',{}).get('/work/evidence/'+f.name)!=h or final.get('evidence_sha256',{}).get(rel)!=h:
+            raise Blocked('PARTIAL_INSPECTION_UNBOUND_FILE')
+        result[rel]=h
+    if len(result)>INSPECTION_MAX_BINARIES*len(INSPECTION_EXTENSIONS):
+        raise Blocked('PARTIAL_INSPECTION_COUNT')
     return result
 
 def validate_toolchain_diagnostics(root):
@@ -232,6 +261,9 @@ def export_bundle(root,bundle):
     if (root/'worker/binary-inventory.json').exists():
         try:names|=set(inspection_manifest(root))
         except (Blocked,ValueError,TypeError,KeyError) as e:errors.append('INVALID_INSPECTION_MANIFEST:'+str(e))
+    elif (root/'worker').is_dir() and any(f.suffix in {'.readelf','.objdump','.symbols'} for f in (root/'worker').iterdir()):
+        try:names|=set(partial_inspection_manifest(root))
+        except (Blocked,ValueError,TypeError,KeyError) as e:errors.append('INVALID_PARTIAL_INSPECTION:'+str(e))
     for name in sorted(names):
         source=root/name
         if not source.exists() and not source.is_symlink():continue

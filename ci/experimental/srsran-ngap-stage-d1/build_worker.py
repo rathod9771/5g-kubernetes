@@ -6,6 +6,7 @@ from open5gs_graph_gate import audit_open5gs_graph
 from open5gs_rsp_review import collect_rsp_review
 from open5gs_rsp_expansion import review_expanded_compdb
 from native_build_admission import admit_reviewed_open5gs_graph
+from binary_inspection_preflight import preflight
 from build_receipts import Recorder,atomic
 from toolchain_lock import run_bounded as verify_toolchain,verify_acquisition
 
@@ -110,13 +111,26 @@ def main():
             if 'deps not found' in data or str(s/'lib/cu_cp/cu_cp_controller/ngap_application_snapshot.h') not in data or 'stage-c3-' in data:raise Blocked('INVALID_HEADER_DEPENDENCY')
             (out/(Path(x['file']).name+'.deps.txt')).write_text(data)
     rec.phase('linkage_verification',[],w,linkage,outputs=[out/(name+'.deps.txt') for name in ('runtime_driver.cpp','snapshot_observer.cpp','cu_cp_impl.cpp','cu_cp_controller.cpp','amf_connection_manager.cpp')])
-    inventory={};inspection_outputs=[out/'binary-inventory.json']
+    inventory={};inspection_outputs=[out/'binary-inventory.json',out/'binary-inspection-discovery.json',out/'binary-inspection-failure.json']
     def inspect():
         libs=[x for x in ob.rglob('*.so*') if x.is_file() and not x.is_symlink()]+list(sb.rglob('*.a'))+list(ob.rglob('*.a'))
         if len(libs)>512:raise Blocked('LIBRARY_BUDGET')
-        for index,b in enumerate(bins+libs):
+        paths=bins+libs
+        audit=preflight(paths,w,out/'binary-inspection-discovery.json')
+        for index,b in enumerate(paths):
             base=str(index)+'-'+b.name
-            re=run_output(['/usr/bin/readelf','-d','-h',str(b)],env);od=run_output(['/usr/bin/objdump','-p',str(b)],env);sy=run_output(['/usr/bin/nm','-C',str(b)],env)
+            def probe(tool,argv):
+                try:return run_output(argv,env)
+                except subprocess.CalledProcessError as error:
+                    atomic(out/'binary-inspection-failure.json',
+                           {'classification':'REVIEW_REQUIRED','index':index,
+                            'path':audit[index]['path'],'format':audit[index]['format'],
+                            'tool':tool,'returncode':error.returncode,
+                            'binary_sha256':digest(b)})
+                    raise Blocked('BINARY_INSPECTION_TOOL_FAILURE:'+tool+':'+str(index)) from error
+            re=probe('readelf',['/usr/bin/readelf','-d','-h',str(b)])
+            od=probe('objdump',['/usr/bin/objdump','-p',str(b)])
+            sy=probe('nm',['/usr/bin/nm','-C',str(b)])
             if 'l3_ngap_snapshot_test_clock_now' in sy:raise Blocked('CLOCK_SYMBOL_LEAKAGE')
             artifacts={}
             for ext,text in [('readelf',re),('objdump',od),('symbols',sy)]:
