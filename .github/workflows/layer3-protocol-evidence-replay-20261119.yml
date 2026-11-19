@@ -1,0 +1,70 @@
+name: Layer 3 historical protocol evidence replay (no build or deployment)
+on:
+  push:
+    branches:
+      - experiment/layer3-protocol-evidence-replay-20261119
+    paths:
+      - .github/workflows/layer3-protocol-evidence-replay-20261119.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: layer3-protocol-replay-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  replay-existing-oai-protocol-evidence:
+    if: github.repository == 'rathod9771/5g-kubernetes' && github.ref == 'refs/heads/experiment/layer3-protocol-evidence-replay-20261119'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout experimental protocol replay (no release modifications)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Preflight read-only scope and Python-only validation
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          python3 -B -m py_compile scripts/assurance/protocol_runtime_evidence_gate.py
+          python3 -B scripts/assurance/protocol_runtime_evidence_gate.py --self-test
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("scripts/assurance/protocol_runtime_evidence_gate.py").read_text()
+          assert "kubectl" not in p and "docker run" not in p and "subprocess." not in p
+          assert "PRODUCTION_NO_GO" in p and "GH_TOKEN" in p
+          print("READ_ONLY_NO_NATIVE_NO_DEPLOY_SCOPE_PASS")
+          PY
+      - name: Replay real NGAP F1AP NAS PDU and AMF-fault logs
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -B scripts/assurance/protocol_runtime_evidence_gate.py layer3-protocol-evidence-replay.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('layer3-protocol-evidence-replay.json').read_text())
+          assert len(r['checks'])==3 and r['production_approval']=='NO_GO'
+          assert r['checks'][0]['classification']=='PASS_HISTORICAL_PROTOCOL_SMOKE'
+          assert r['checks'][1]['classification']=='FAIL_UNASSISTED_UE_SERVICE_RECOVERY'
+          assert r['checks'][2]['classification']=='PASS_HISTORICAL_SUPERVISED_SYNTHETIC_UE_RECOVERY'
+          assert r['live_cluster_tested_now'] is False
+          assert r['live_fault_injected_now'] is False
+          print('THREE_HISTORICAL_REAL_PROTOCOL_CASES_REVALIDATED__NO_RUNTIME_NOW')
+          PY
+          {
+            echo '### Layer 3 protocol-evidence replay — historical runs only'
+            echo 'Rechecked real Stage 4O baseline, Stage 4P unassisted recovery failure, and Stage 4U supervised synthetic-UE recovery.'
+            echo 'This only validates archived GitHub Actions job logs. No native build, protocol runtime, new injection, protected cluster access, or production action.'
+            echo '**Production remains NO-GO**; independent observer, RRC/PDU negative cases, live telemetry and recovery approval remain pending.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload sanitized classification receipt only
+        if: success()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: layer3-protocol-evidence-replay-${{ github.run_id }}
+          path: layer3-protocol-evidence-replay.json
+          if-no-files-found: error
+          retention-days: 14
