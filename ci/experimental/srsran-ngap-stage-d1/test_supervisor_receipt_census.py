@@ -7,7 +7,7 @@ MISSING_PHASE_RECEIPT even though every required phase had passed.
 import json,tempfile,unittest,hashlib
 from pathlib import Path
 from build_policy import Blocked,PHASES
-from build_supervisor import TOOLCHAIN_HELPER_RECEIPTS,select_native_phase_receipts,ACQUISITION_DIAGNOSTICS,resolve_retained_phase_output,verify_retained_phase_outputs
+from build_supervisor import TOOLCHAIN_HELPER_RECEIPTS,PRE_COLLECTION_HELPER_RECEIPTS,COLLECTED_ACQUISITION_HELPER_RECEIPTS,select_native_phase_receipts,ACQUISITION_DIAGNOSTICS,resolve_retained_phase_output,verify_retained_phase_outputs
 
 class ExactReceiptCensus(unittest.TestCase):
     def fixture(self):
@@ -33,10 +33,21 @@ class ExactReceiptCensus(unittest.TestCase):
         (worker/'binary_inspection.receipt.json').unlink()
         with self.assertRaisesRegex(Blocked,'MISSING_NATIVE_PHASE_RECEIPT:binary_inspection'):
             select_native_phase_receipts(worker)
-    def test_missing_helper_receipt_rejected(self):
+    def test_missing_precollection_verification_receipt_rejected(self):
+        worker=self.fixture()
+        (worker/'toolchain-verification.receipt.json').unlink()
+        with self.assertRaisesRegex(Blocked,'MISSING_TOOLCHAIN_HELPER_RECEIPT'):
+            select_native_phase_receipts(worker)
+    def test_precollection_eleven_receipts_are_exactly_expected(self):
+        worker=self.fixture()
+        for name in COLLECTED_ACQUISITION_HELPER_RECEIPTS:
+            (worker/(name+'.receipt.json')).unlink()
+        self.assertEqual(len(list(worker.glob('*.receipt.json'))),11)
+        self.assertEqual(set(select_native_phase_receipts(worker)),set(PHASES))
+    def test_partially_collected_acquisition_receipts_fail_closed(self):
         worker=self.fixture()
         (worker/'acquisition-toolchain-database.receipt.json').unlink()
-        with self.assertRaisesRegex(Blocked,'MISSING_TOOLCHAIN_HELPER_RECEIPT'):
+        with self.assertRaisesRegex(Blocked,'PARTIAL_ACQUISITION_HELPER_RECEIPTS'):
             select_native_phase_receipts(worker)
     def test_unreviewed_receipt_rejected(self):
         worker=self.fixture()
@@ -115,5 +126,51 @@ class AcquisitionSnapshotBinding(unittest.TestCase):
             resolve_retained_phase_output('dependency_acquisition','/tmp/external.json',self.mount,self.worker)
     def test_static_supervisor_calls_exact_replay(self):
         source=(Path(__file__).parent/'build_supervisor.py').read_text()
-        self.assertIn('verify_retained_phase_outputs(receipts,mount,worker)',source)
+        self.assertIn('verify_retained_phase_outputs(receipts,mount,worker,sources)',source)
         self.assertIn('from toolchain_lock import ACQUISITION_DIAGNOSTICS',source)
+
+class LiveAcquisitionBoundary(unittest.TestCase):
+    """Reproduce the live pre-collection state absent from previous tests."""
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name)
+        self.mount=self.root/'mount';self.mount.mkdir()
+        self.worker=self.root/'worker';self.worker.mkdir()
+        self.sources=self.root/'l3-d2a-acquired';self.sources.mkdir()
+        self.outputs={}
+        for name in ACQUISITION_DIAGNOSTICS:
+            raw=('PINNED_ACQUIRED:'+name).encode()
+            (self.sources/name).write_bytes(raw)
+            self.outputs[name]=hashlib.sha256(raw).hexdigest()
+        (self.worker/'toolchain-progress.json').write_text('later version - SHA differs')
+        (self.worker/'toolchain-lock.json').write_text('unchanged lock')
+        self.outputs['toolchain-lock.json']=hashlib.sha256(b'unchanged lock').hexdigest()
+        self.receipts={'dependency_acquisition':{'outputs':self.outputs}}
+    def test_live_supervisor_checks_original_acquired_bytes_not_future_copy(self):
+        self.assertFalse(any(self.worker.glob('acquisition-*')))
+        self.assertEqual(verify_retained_phase_outputs(self.receipts,self.mount,self.worker,self.sources),11)
+        self.assertNotEqual(hashlib.sha256((self.worker/'toolchain-progress.json').read_bytes()).hexdigest(),
+                            self.outputs['toolchain-progress.json'])
+    def test_missing_source_snapshot_blocks_even_when_later_progress_exists(self):
+        (self.sources/'toolchain-progress.json').unlink()
+        with self.assertRaisesRegex(Blocked,'ARTIFACT_CORRUPTION:dependency_acquisition:toolchain-progress.json'):
+            verify_retained_phase_outputs(self.receipts,self.mount,self.worker,self.sources)
+    def test_changed_source_receipt_blocks(self):
+        (self.sources/'toolchain-operation.receipt.json').write_text('altered')
+        with self.assertRaisesRegex(Blocked,'ARTIFACT_CORRUPTION:dependency_acquisition:toolchain-operation.receipt.json'):
+            verify_retained_phase_outputs(self.receipts,self.mount,self.worker,self.sources)
+    def test_future_collector_alias_cannot_mask_broken_live_source(self):
+        name='toolchain-versions.log'
+        (self.worker/('acquisition-'+name)).write_bytes(('PINNED_ACQUIRED:'+name).encode())
+        (self.sources/name).write_text('corrupted in live acquisition root')
+        with self.assertRaisesRegex(Blocked,'ARTIFACT_CORRUPTION:dependency_acquisition:toolchain-versions.log'):
+            verify_retained_phase_outputs(self.receipts,self.mount,self.worker,self.sources)
+    def test_postcollection_offline_alias_remains_valid(self):
+        for name in ACQUISITION_DIAGNOSTICS:
+            (self.worker/('acquisition-'+name)).write_bytes((self.sources/name).read_bytes())
+        self.assertEqual(verify_retained_phase_outputs(self.receipts,self.mount,self.worker),11)
+    def test_path_traversal_still_denied_with_live_sources(self):
+        with self.assertRaisesRegex(Blocked,'UNEXPECTED_ARTIFACT_REFERENCE'):
+            resolve_retained_phase_output('dependency_acquisition','../toolchain-progress.json',
+                                          self.mount,self.worker,self.sources)

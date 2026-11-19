@@ -57,16 +57,20 @@ def observe_exit(properties,timed):
     if code in (2,3):return {'exit_code':None,'signal':status,'timeout':timed}
     return {'exit_code':None,'signal':None,'timeout':timed}
 
-# Toolchain query receipts are legitimate *auxiliary* records, not D2B build
-# phases. They must never be sent into verify_complete(), which accepts exactly
-# the ten required PHASES. Unknown or missing records still fail closed.
-TOOLCHAIN_HELPER_RECEIPTS=frozenset({
-    'toolchain-verification',
+# In the running supervisor only toolchain-verification is in /work/evidence.
+# The four source-acquisition helper receipts still reside in /sources and
+# are copied as "acquisition-*" by workflow_evidence.collect AFTER supervisor
+# verification. Do not demand the future collector state from this process.
+# Unknown receipts, missing build phases and partially copied helper groups
+# remain fail-closed.
+PRE_COLLECTION_HELPER_RECEIPTS=frozenset({'toolchain-verification'})
+COLLECTED_ACQUISITION_HELPER_RECEIPTS=frozenset({
     'acquisition-toolchain-operation',
     'acquisition-toolchain-versions',
     'acquisition-toolchain-database',
     'acquisition-toolchain-paths',
 })
+TOOLCHAIN_HELPER_RECEIPTS=PRE_COLLECTION_HELPER_RECEIPTS|COLLECTED_ACQUISITION_HELPER_RECEIPTS
 
 def select_native_phase_receipts(worker):
     worker=Path(worker)
@@ -83,21 +87,26 @@ def select_native_phase_receipts(worker):
         raise Blocked('UNREVIEWED_PHASE_RECEIPT:'+','.join(sorted(unexpected)))
     if missing:=native-set(observed):
         raise Blocked('MISSING_NATIVE_PHASE_RECEIPT:'+','.join(sorted(missing)))
-    if missing:=TOOLCHAIN_HELPER_RECEIPTS-set(observed):
+    if missing:=PRE_COLLECTION_HELPER_RECEIPTS-set(observed):
         raise Blocked('MISSING_TOOLCHAIN_HELPER_RECEIPT:'+','.join(sorted(missing)))
-    # The five helper receipts are independently validated by the external
-    # toolchain-evidence verifier. Here only native phases are admitted.
+    collected=set(observed)&COLLECTED_ACQUISITION_HELPER_RECEIPTS
+    if collected and collected!=COLLECTED_ACQUISITION_HELPER_RECEIPTS:
+        raise Blocked('PARTIAL_ACQUISITION_HELPER_RECEIPTS')
+    # Remaining acquisition helper receipts are mandatory after collection,
+    # where the independent toolchain-evidence verifier checks their hashes.
+    # Here only native phases are admitted.
     return {phase:json.loads(observed[phase].read_text()) for phase in PHASES}
 
 
-def resolve_retained_phase_output(phase,name,mount,worker):
-    """Resolve a receipt output to its exact preserved byte source.
+def resolve_retained_phase_output(phase,name,mount,worker,sources=None):
+    """Bind acquisition outputs at the actual verification stage.
 
-    Source acquisition's ten helper diagnostics are renamed to acquisition-*
-    by the independently reviewed preservation collector. The original
-    receipt still records their pre-rename names and hashes. Do not use the
-    later toolchain-progress.json, which is deliberately overwritten after
-    acquisition. Other outputs retain the original supervisor resolution.
+    While supervisor is running, original acquisition files reside in
+    RUNNER_TEMP/l3-d2a-acquired (sources). The workflow copies their byte-
+    identical aliases into worker/acquisition-* only AFTER supervisor exits.
+    sources=None is for offline review of the post-collection artifact only.
+    Never compare the original acquisition toolchain-progress.json hash with
+    the later /work/evidence/toolchain-progress.json revision.
     """
     name=Path(name)
     if str(name).startswith('/work/'):
@@ -105,15 +114,16 @@ def resolve_retained_phase_output(phase,name,mount,worker):
     if name.is_absolute() or '..' in name.parts:
         raise Blocked('UNEXPECTED_ARTIFACT_REFERENCE')
     if phase=='dependency_acquisition' and str(name) in ACQUISITION_DIAGNOSTICS:
-        return Path(worker)/('acquisition-'+str(name))
+        return (Path(sources)/name if sources is not None
+                else Path(worker)/('acquisition-'+str(name)))
     return Path(worker)/name
 
-def verify_retained_phase_outputs(receipts,mount,worker):
-    """Verify every original receipt hash after preservation; no rewrites."""
+def verify_retained_phase_outputs(receipts,mount,worker,sources=None):
+    """Verify each original phase receipt at the correct collection boundary."""
     total=0
     for phase,receipt in receipts.items():
         for name,expected in receipt['outputs'].items():
-            source=resolve_retained_phase_output(phase,name,mount,worker)
+            source=resolve_retained_phase_output(phase,name,mount,worker,sources)
             if not source.is_file() or digest(source)!=expected:
                 raise Blocked('ARTIFACT_CORRUPTION:'+phase+':'+name)
             total+=1
@@ -296,7 +306,7 @@ def main():
                 f=worker/Path(entry['log']).name
                 if not f.is_file() or digest(f)!=entry['log_sha256']:raise Blocked('PARTIAL_LOG_CORRUPTION')
             if digest(worker/Path(r['log']).name)!=r['log_sha256']:raise Blocked('PHASE_LOG_CORRUPTION')
-        verify_retained_phase_outputs(receipts,mount,worker)
+        verify_retained_phase_outputs(receipts,mount,worker,sources)
         final['status']='PASS_BUILD_ONLY_ZERO_NATIVE_TESTS'
     except Blocked as e:final.update(status='BLOCKED',reason=str(e))
     except (OSError,subprocess.CalledProcessError) as e:
