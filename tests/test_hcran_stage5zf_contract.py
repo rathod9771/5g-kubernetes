@@ -93,7 +93,7 @@ class Stage5ZF(unittest.TestCase):
             self.assertEqual(d["production_decision"],"NO_GO")
             self.assertFalse(d["production_authorized"])
             self.assertEqual(d["cycles"][0]["cells"]["macro"]["diagnostic_hypothesis"],
-                "SI_VALID_NO_SIB1_SCHEDULE_WITH_MAC_BWP0_ABSENT_CANDIDATE")
+                "NON_TEMPORAL_SI_CACHE_AND_MISSING_BWP_COOCCURRENCE_INCONCLUSIVE")
             broken={**json.loads((root/"stage5r-protocol-timeline.json").read_text()),
                     "collection_limit_reached":True}
             (root/"stage5r-protocol-timeline.json").write_text(json.dumps(broken))

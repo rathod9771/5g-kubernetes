@@ -23,7 +23,7 @@ def build(root):
         "production_decision":"NO_GO",
         "limitations":[
             "Power-of-two MIB decisions are sampled, not exhaustive",
-            "Co-occurrence of RRC SI validity and missing MAC BWP0 is not causal proof",
+            "Co-occurrence across a cycle is not simultaneous state evidence or causal proof",
             "Log absence cannot prove undelivered MIB, SIB1 or F1AP packets",
             "Real Stage5P/5Y acceptance remains independent and fail closed",
         ],
@@ -75,7 +75,7 @@ def build(root):
                     label="FRESH_PDU_OBSERVED"
                 elif cache and missing and not any(
                       e.get("event")=="ue_sib1_scheduled" for e in later):
-                    label="SI_VALID_NO_SIB1_SCHEDULE_WITH_MAC_BWP0_ABSENT_CANDIDATE"
+                    label="NON_TEMPORAL_SI_CACHE_AND_MISSING_BWP_COOCCURRENCE_INCONCLUSIVE"
                 elif any(e.get("event")=="ue_ra_deferred_until_sib1" for e in later):
                     label="RA_DEFERRED_WITHOUT_CONCLUSIVE_RRC_SI_CACHE_CAUSE"
                 else:

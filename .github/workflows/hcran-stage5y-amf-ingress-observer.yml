@@ -13,6 +13,8 @@ name: H-CRAN Stage 5Y live Open5GS AMF cell-ingress evidence gate - NO DEPLOY
 # Core Stage5P/5U/5Y acceptance remains unchanged. NO DEPLOY.
 # Stage5ZF: source-pinned, bounded RRC SIB1 cached-validity vs MAC BWP0 observation.
 # Frozen UE recovery, Stage5P/5U/5Y gates and no-deploy restriction unchanged.
+# Stage5ZG: two extra log-only RRC->MAC SIB message send/dispatch markers.
+# No runtime protocol/retry changes; full Stage5P/5U/5Y gates retained.
 # This never touches HP, Kubernetes, OSM, production keys or subscribers.
 on:
   push:
@@ -24,6 +26,7 @@ on:
       - experiment/hcran-stage5zd-mib-sib1-handoff-20261118
       - experiment/hcran-stage5ze-bounded-mib-handoff-20261118
       - experiment/hcran-stage5zf-rrc-si-cache-decision-20261119
+      - experiment/hcran-stage5zg-sib1-message-handoff-20261119
     paths:
       - .github/workflows/hcran-stage5y-amf-ingress-observer.yml
   workflow_dispatch:
@@ -51,7 +54,7 @@ jobs:
       MONGO_IMG: mongo:6.0
       CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
       DU_IMG: oaisoftwarealliance/oai-gnb:2026.w45
-      UE_IMG: hcran-stage5zf-si-cache:run-${{ github.run_number }}
+      UE_IMG: hcran-stage5zg-sib-handoff:run-${{ github.run_number }}
     steps:
       - name: Checkout Stage5P qualification source (current experimental commit)
         uses: actions/checkout@v4
@@ -132,7 +135,8 @@ jobs:
         run: |
           set -euo pipefail
           bash -n qualification/scripts/hcran_build_pinned_w45_ue_stage5t.sh
-          bash -n qualification/scripts/experiments/hcran_build_pinned_w45_ue_stage5zf.sh
+          bash -n qualification/scripts/experiments/hcran_build_pinned_w45_ue_stage5zd.sh
+          bash -n qualification/scripts/experiments/hcran_build_pinned_w45_ue_stage5zg.sh
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5q/patch_mac_bwp0_liveness.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5t/patch_pre_sib1_ra_ordering.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5zd/patch_mib_sib1_handoff_observe.py
@@ -141,19 +145,22 @@ jobs:
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5zf/patch_rrc_si_decision_observe.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/rrc_si_decision_stage5zf.py
           python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5zf/analyze_rrc_si_cache.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5zg/patch_rrc_mac_si_handoff_observe.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5s/rrc_mac_handoff_stage5zg.py
+          python3 -m py_compile qualification/experiments/oai-ngap-2026w13/stage5zg/analyze_rrc_mac_sib_handoff.py
 
       - name: Rebuild pinned OAI W45 Stage5T research UE plus Stage5ZD log-only MIB/SIB1 handoff probe
         shell: bash
         env:
-          OAI_SOURCE: ${{ runner.temp }}/stage5zf-pinned-source
-          OUTPUT: ${{ runner.temp }}/stage5zf-build-proof
-          IMAGE: hcran-stage5zf-si-cache:run-${{ github.run_number }}
+          OAI_SOURCE: ${{ runner.temp }}/stage5zg-pinned-source
+          OUTPUT: ${{ runner.temp }}/stage5zg-build-proof
+          IMAGE: hcran-stage5zg-sib-handoff:run-${{ github.run_number }}
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/qualification"
           export GITHUB_WORKSPACE="$PWD"
-          bash scripts/experiments/hcran_build_pinned_w45_ue_stage5zf.sh
-          grep -q 'Stage5ZF' "$OUTPUT/test-only-UE-stage5zf-rrc-si-decision.patch"
+          bash scripts/experiments/hcran_build_pinned_w45_ue_stage5zg.sh
+          grep -q 'Stage5ZG' "$OUTPUT/test-only-UE-stage5zg-rrc-mac-sib-handoff.patch"
           docker image inspect "$IMAGE" --format '{{.Id}}'
 
       - name: Verify source-rebuilt CU and isolated core/DU container images
@@ -270,6 +277,14 @@ jobs:
           python3 qualification/experiments/oai-ngap-2026w13/stage5zf/analyze_rrc_si_cache.py \
             "$RUNNER_TEMP/stage5p-evidence"
 
+      - name: Stage5ZG diagnostic-only RRC SIB request send-to-MAC dispatch boundary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 qualification/experiments/oai-ngap-2026w13/stage5zg/analyze_rrc_mac_sib_handoff.py \
+            "$RUNNER_TEMP/stage5p-evidence"
+
       - name: Stage5Y independently require both live AMF cell ingress categories per genuine recovery cycle
         # A genuine Stage5P recovery failure must not be replaced by an
         # observation report. Stage5X always() runs first, then this
@@ -304,7 +319,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hcran-stage5zd-stage5t-ue-source-proof-${{ github.run_number }}-${{ matrix.trial }}
-          path: ${{ runner.temp }}/stage5zf-build-proof/
+          path: ${{ runner.temp }}/stage5zg-build-proof/
           if-no-files-found: warn
           retention-days: 7
           compression-level: 2

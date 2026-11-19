@@ -30,6 +30,7 @@ from rrc_radio_boundary_stage5zb import classify as classify_radio_boundary
 from sib1_reacquisition_stage5zc import classify as classify_sib1_reacquisition
 from mib_sib1_handoff_stage5zd import classify as classify_mib_handoff
 from rrc_si_decision_stage5zf import classify as classify_si_decision
+from rrc_mac_handoff_stage5zg import classify as classify_rrc_mac_sib_handoff
 
 MAX_EVENTS = 1800
 MAX_ROLE_CATEGORY_EVENTS = 100
@@ -195,6 +196,9 @@ class DiagnosticCollector:
                 # Stage5ZF: pinned RRC's SI validity and SIB1 scheduling decision.
                 for category, metadata in classify_si_decision(role, line):
                     self.add(role, category, metadata)
+                # Stage5ZG: source-pinned RRC -> MAC SIB message dispatch-only markers.
+                for category, metadata in classify_rrc_mac_sib_handoff(role, line):
+                    self.add(role, category, metadata)
                 if cu_selection is not None:
                     # Only allowlisted categories and synthetic cell labels.
                     # Log adjacency is not UE identity or NGAP delivery proof.
@@ -312,6 +316,7 @@ class DiagnosticCollector:
                 "stage5zc_sib1_reacquisition_categories": True,
                 "stage5zd_mib_sib1_handoff_categories": True,
                 "stage5zf_rrc_si_schedule_decision_categories": True,
+                "stage5zg_rrc_mac_sib_message_categories": True,
                 "collection_limit_reached": self.limit_reached,
                 "wire_header_sampling": {
                     "per_category_display_cap": MAX_ROLE_CATEGORY_EVENTS,
