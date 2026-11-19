@@ -1,0 +1,68 @@
+name: D2B retained evidence full finalizer replay — OFFLINE ONLY
+on:
+  push:
+    branches:
+      - experiment/layer3-d2b-pinned-open5gs-graph-20261118
+    paths:
+      - .github/workflows/experimental-d2b-retained-finalizer-replay-once.yml
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: d2b-retained-finalizer-replay-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  exact-retained-artifact-only:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    env:
+      D2B_RETAINED_ZIP: ${{ runner.temp }}/d2b-failed-44470794446.zip
+      D2B_REPLAY_REPORT: ${{ runner.temp }}/d2b-counterfactual-only.json
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Lock parent, verify source integrity and Python
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = '37f472c29004a7c4f585df40a1b6fb39ac778c4e'
+          cd ci/experimental/srsran-ngap-stage-d1
+          sha256sum -c SHA256SUMS
+          /usr/bin/python3 -B -m py_compile retained_native_acceptance_replay.py
+          /usr/bin/python3 -c 'import sys;assert sys.version_info[:2]==(3,10)'
+      - name: Retrieve exactly one failed-run evidence ZIP (NO native build)
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 0 \
+            --max-time 120 --max-redirs 5 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/rathod9771/5g-kubernetes/actions/artifacts/14505068315/zip" \
+            -o "$D2B_RETAINED_ZIP"
+          printf '%s  %s\n' '982f06e48d3b5d9d5b95bf87cbb86f4a35d15ef435d2f53d863ac012deb1afa8' "$D2B_RETAINED_ZIP" | sha256sum -c -
+      - name: Run actual supervisor and finalizer admission on retained metadata
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 -B ci/experimental/srsran-ngap-stage-d1/retained_native_acceptance_replay.py
+          /usr/bin/python3 - <<'PY'
+          import json,os
+          with open(os.environ['D2B_REPLAY_REPORT']) as f:x=json.load(f)
+          assert x['classification']=='COUNTERFACTUAL_ACCEPTANCE_ONLY'
+          assert x['original_run_status']=='FAILED'
+          assert x['native_qualified'] is False
+          assert x['native_compilation_invoked'] is False
+          assert x['original_evidence_modified'] is False
+          PY
+      - name: Upload labeled counterfactual report (never binaries)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: d2b-counterfactual-only-${{ github.run_id }}
+          path: ${{ runner.temp }}/d2b-counterfactual-only.json
+          if-no-files-found: warn
+          retention-days: 14
