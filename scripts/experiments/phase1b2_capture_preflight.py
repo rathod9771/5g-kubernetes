@@ -32,8 +32,8 @@ def classify_error(log):
         return "OBSERVER_DIAGNOSTIC_UNAVAILABLE"
     patterns = (
         ("NO_SUCH_INTERFACE", r"no such (?:device|interface)|interface .* not found|could not find interface"),
-        ("CAPTURE_OUTPUT_DENIED", r"(?:file|output|write|pcap).{0,100}(?:permission denied|operation not permitted)|(?:permission denied|operation not permitted).{0,100}(?:file|output|write|pcap)"),
-        ("CAPTURE_INTERFACE_DENIED", r"(?:interface|device|capture).{0,100}(?:permission denied|operation not permitted)|(?:permission denied|operation not permitted).{0,100}(?:interface|device|capture)"),
+        ("CAPTURE_OUTPUT_DENIED", r"(?:\bfile\b|\boutput\b|\bwrite\b|\bwriting\b|\.pcap(?:ng)?\b).{0,100}(?:permission denied|operation not permitted)|(?:permission denied|operation not permitted).{0,100}(?:\bfile\b|\boutput\b|\bwrite\b|\bwriting\b|\.pcap(?:ng)?\b)"),
+        ("CAPTURE_INTERFACE_DENIED", r"(?:\binterface\b|\bdevice\b|\bcapture\b).{0,100}(?:permission denied|operation not permitted)|(?:permission denied|operation not permitted).{0,100}(?:\binterface\b|\bdevice\b|\bcapture\b)"),
         ("PERMISSION_DENIED", r"permission denied|operation not permitted|you don't have permission|not allowed to capture|sudo: .*password"),
         ("CAPTURE_ARGUMENT_REJECTED", r"invalid (?:capture|argument|option)|unknown option|unrecognized option|error parsing|invalid .*filesize"),
         ("DUMPCAP_LAUNCH_FAILED", r"couldn't run .*dumpcap|could not run .*dumpcap|dumpcap.*not found"),

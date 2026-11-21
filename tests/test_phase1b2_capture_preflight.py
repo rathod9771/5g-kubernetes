@@ -73,6 +73,16 @@ class BoundedErrorCategoryContracts(unittest.TestCase):
         self.assertEqual(testee.classify_error(
             "tshark: Invalid capture filter option filesize:4096"), "CAPTURE_ARGUMENT_REJECTED")
 
+    def test_dumpcap_literal_is_not_a_capture_file(self):
+        self.assertEqual(testee.classify_error(
+            "dumpcap: Permission denied"), "PERMISSION_DENIED")
+        self.assertEqual(testee.classify_error(
+            "dumpcap: Could not open file /tmp/test.pcapng: Permission denied"),
+            "CAPTURE_OUTPUT_DENIED")
+        self.assertEqual(testee.classify_error(
+            "dumpcap: Cannot capture on interface br-p1b2srs: Permission denied"),
+            "CAPTURE_INTERFACE_DENIED")
+
     def test_missing_dumpcap(self):
         self.assertEqual(testee.classify_error(
             "tshark: Couldn't run dumpcap in child process"), "DUMPCAP_LAUNCH_FAILED")

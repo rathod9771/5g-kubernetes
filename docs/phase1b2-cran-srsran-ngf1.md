@@ -49,6 +49,11 @@ The next experiment uses **`dumpcap` as the privileged *capture-only* process** 
 
 ## Capturing through a caller-owned file descriptor (second diagnostic correction)
 
-The short observer [run #44893245512](https://github.com/rathod9771/5g-kubernetes/actions/runs/44893245512) reproduced `CAPTURE_OUTPUT_DENIED` using `sudo -n dumpcap -w <private-output-file>`. The bridge was present but dumpcap returned exit 1 before the RAN workloads could start. This narrows the defect to *writing the capture path* rather than missing srsRAN binaries.
+The short observer [run #44893245512](https://github.com/rathod9771/5g-kubernetes/actions/runs/44893245512) reported an *initially misclassified* `CAPTURE_OUTPUT_DENIED` using `sudo -n dumpcap -w <private-output-file>`. The bridge was present but dumpcap returned exit 1 before the RAN workloads could start. The classifier incorrectly matched the substring `pcap` inside the tool name `dumpcap`; the directly supported finding is only `PERMISSION_DENIED` while the bridge was present. Capture output access remains a hypothesis, not a proven root cause.
 
 The next small patch makes the **unprivileged GitHub runner open the output PCAP itself** and passes that already-open file descriptor as `dumpcap`'s stdout with `-w -`. Wireshark's current dumpcap manual supports `-w -` for capture to stdout. The packet filter, fixed-duration autostop and capture-file size condition remain enforced. The dedicated capture binary no longer needs direct write access to a runner-private directory. TShark only reads the resulting file after capture. The exact same mechanism is exercised by the cheap bridge preflight and the later live NGAP/F1AP trial. Until probe and exact-source offline validation pass, source-build retry remains **NO-GO**.
+
+
+## Diagnostic classification regression (corrective note)
+
+The diagnostic categorizer was corrected to match **word-bounded** output-file and interface terms, not substrings inside `dumpcap`. The additional negative unit test enforces `dumpcap: Permission denied → PERMISSION_DENIED`; only a message explicitly mentioning a file path/write/output is `CAPTURE_OUTPUT_DENIED`. Thus the stdout-capture adjustment is an isolated test of a plausible cause, not a statement that the original root cause was established. A further failed capture probe remains BLOCKED even if source-build unit tests pass.
