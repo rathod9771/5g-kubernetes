@@ -35,6 +35,9 @@ def main():
             "common": {"ss0_index": 0, "coreset0_index": 13},
         },
         "prach": {"prach_config_index": 1},
+        # srsUE fallback DCI requires 64-QAM (see official srsRAN srsUE ZMQ example).
+        "pdsch": {"mcs_table": "qam64"},
+        "pusch": {"mcs_table": "qam64"},
     })
     ensure(cell["common_scs"] == 15 and cell["band"] == 3, "SRSUE_FDD_ONLY")
     ensure(cu["cu_cp"]["amf"]["supported_tracking_areas"][0]["plmn_list"][0]["plmn"] == "20893",
