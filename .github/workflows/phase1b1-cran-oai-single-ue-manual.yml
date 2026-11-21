@@ -1,0 +1,206 @@
+name: Phase 1B1 C-RAN OAI one real NR UE NAS PDU GTP-U (MANUAL; NO HP)
+
+# Push executes offline contract checks only.
+# Live source-build + test is explicitly dispatched, exact source SHA offline
+# project validation SUCCESS required. No HP, Kubernetes, OSM or real SIMs.
+on:
+  push:
+    branches:
+      - experiment/phase1b1-cran-oai-single-ue-20261121
+    paths:
+      - .github/workflows/phase1b1-cran-oai-single-ue-manual.yml
+      - scripts/experiments/phase1b1_cran_oai_single_ue.py
+      - scripts/experiments/phase1b1_verify_offline_run.py
+      - scripts/experiments/phase1b1_verify_one_ue.py
+      - tests/test_phase1b1_cran_oai_single_ue.py
+      - docs/phase1b1-cran-oai-single-ue.md
+  workflow_dispatch:
+    inputs:
+      offline_run_id:
+        description: 'Successful exact SHA and branch full Offline Project Validation run ID'
+        required: true
+        type: string
+      confirm_isolated_no_deploy:
+        description: 'Enter ISOLATED_CRAN_ONE_UE_NO_DEPLOY'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: phase1b1-cran-oai-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contract-tests:
+    if: github.event_name == 'push'
+    name: Offline fail-closed evidence and source-isolation tests ONLY
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate syntax and negative evidence cases
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/experiments/phase1b1_cran_oai_single_ue.py
+          python3 -m py_compile scripts/experiments/phase1b1_verify_one_ue.py
+          python3 -m py_compile scripts/experiments/phase1b1_verify_offline_run.py
+          python3 -m unittest discover -s tests -p 'test_phase1b1_cran_oai_single_ue.py' -v
+      - run: echo 'NO live NR UE, Open5GS, Docker containers or HP network touched on push.'
+
+  exact-offline-gate:
+    if: github.event_name == 'workflow_dispatch'
+    name: Require approved explicit isolated dispatch and same SHA full CI PASS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: GET and verify trusted exact-run GitHub Actions metadata
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PHASE1B1_OFFLINE_RUN_ID: ${{ inputs.offline_run_id }}
+          PHASE1B1_ISOLATED_CONFIRM: ${{ inputs.confirm_isolated_no_deploy }}
+        run: |
+          set -euo pipefail
+          python3 scripts/experiments/phase1b1_verify_offline_run.py
+
+  real-one-ue:
+    if: github.event_name == 'workflow_dispatch'
+    needs: exact-offline-gate
+    name: Authentic one-UE NAS/PDU/F1-U/NG-U/ICMP (C-RAN OAI, NO FAULT)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w45
+      UE_IMG: phase1b1-cran-oai-ue:source-pinned-stage5zg
+      CORE_IMG: gradiant/open5gs:2.7.6
+      MONGO_IMG: mongo:6.0
+    steps:
+      - name: Checkout exact experimental test source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: qualification
+      - name: Read-only checkout of tested frozen synthetic 5GC/UE/PCAP harness
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 4080110a74bf6ba58804797c5b7216458e2f0a93
+          path: baseline
+      - name: Prepare disposable RFsim kernel prerequisites and bounded tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/phase1b1-render" "$RUNNER_TEMP/phase1b1-evidence" "$RUNNER_TEMP/phase1b1-build-proof"
+          python3 -m venv "$RUNNER_TEMP/phase1b1-venv"
+          "$RUNNER_TEMP/phase1b1-venv/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.2 pymongo==4.10.1
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tcpdump
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -c /dev/net/tun || sudo modprobe tun
+          test -d /proc/net/sctp
+          test -c /dev/net/tun
+          python3 -m unittest discover -s qualification/tests -p 'test_phase1b1_cran_oai_single_ue.py' -v
+          printf '%s\n' "source_sha=${{ github.sha }}" \
+            "synthetic_baseline=4080110a74bf6ba58804797c5b7216458e2f0a93" \
+            "frozen_stage5zg=7fa911ece3b510b09351bf19c722007365ba47bd" \
+            > "$RUNNER_TEMP/phase1b1-evidence/source-pins.txt"
+      - name: Install Helm only for local C-RAN profile render
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Render one-DU C-RAN OAI with known-compatible RFsim radio parameters
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm template cran-oai-cu qualification/helm/cran-oai/cu \
+            --set-string image.reference=example.invalid/phase1b1:offline \
+            --set-string image.pullPolicy=IfNotPresent \
+            --set radio.gnbId=3585 --set radio.cellId=58736641 \
+            --set experimentalTransport=true \
+            > "$RUNNER_TEMP/phase1b1-render/cu.yaml"
+          helm template cran-oai-du qualification/helm/cran-oai/du \
+            --set-string image.reference=example.invalid/phase1b1:offline \
+            --set-string image.pullPolicy=IfNotPresent \
+            --set radio.gnbId=3585 --set radio.cellId=58736641 \
+            --set radio.duId=100 --set radio.pci=101 --set radio.ssbPower=-20 \
+            --set experimentalTransport=true \
+            > "$RUNNER_TEMP/phase1b1-render/du.yaml"
+      - name: Source-rebuild pinned OAI W13 patched CU (no expired artifacts)
+        shell: bash
+        env:
+          OAI_SOURCE: ${{ runner.temp }}/phase1b1-source-cu
+          OUTPUT: ${{ runner.temp }}/phase1b1-build-proof/cu
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/qualification"
+          export GITHUB_WORKSPACE="$PWD"
+          export IMAGE="$CU_IMG"
+          bash scripts/hcran_build_pinned_stage3_ngap_cu.sh
+      - name: Source-rebuild pinned OAI W45 research NR UE, no unverified srsUE
+        shell: bash
+        env:
+          OAI_SOURCE: ${{ runner.temp }}/phase1b1-source-ue
+          OUTPUT: ${{ runner.temp }}/phase1b1-build-proof/ue
+          IMAGE: phase1b1-cran-oai-ue:source-pinned-stage5zg
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/qualification"
+          export GITHUB_WORKSPACE="$PWD"
+          bash scripts/experiments/hcran_build_pinned_w45_ue_stage5zg.sh
+          docker image inspect "$IMAGE" --format '{{.Id}}'
+      - name: Pull isolated Open5GS/Mongo and OAI DU; retain image identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          for img in "$CORE_IMG" "$MONGO_IMG" "$DU_IMG"; do docker pull "$img"; done
+          for img in "$CU_IMG" "$MONGO_IMG" "$CORE_IMG" "$DU_IMG" "$UE_IMG"; do
+            docker image inspect "$img" --format '{{.Id}}' >> "$RUNNER_TEMP/phase1b1-evidence/image-ids.txt"
+          done
+          printf '%s\n' 'Images are pinned by source/research tags with collected IDs; NOT digest-qualified production release.' \
+            > "$RUNNER_TEMP/phase1b1-evidence/provenance-limit.txt"
+      - name: Execute actual NAS/PDU/UE-TUN/ICMP and F1-U/NG-U packet test
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/phase1b1-venv/bin/python" -u \
+            qualification/scripts/experiments/phase1b1_cran_oai_single_ue.py \
+            --baseline "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13" \
+            --rendered "$RUNNER_TEMP/phase1b1-render" \
+            --output "$RUNNER_TEMP/phase1b1-evidence" \
+            --cu-image "$CU_IMG" --du-image "$DU_IMG" --ue-image "$UE_IMG" \
+            --verify-gtpu
+          "$RUNNER_TEMP/phase1b1-venv/bin/python" \
+            qualification/scripts/experiments/phase1b1_verify_one_ue.py \
+            --baseline "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13" \
+            --evidence "$RUNNER_TEMP/phase1b1-evidence" \
+            --receipt "$RUNNER_TEMP/phase1b1-evidence/sanitized-one-ue-receipt.json"
+      - name: Remove temporary test-only subscriber material before upload
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/phase1b1-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+          test ! -e "$RUNNER_TEMP/phase1b1-evidence/PRIVATE-REMOVE-BEFORE-UPLOAD"
+      - name: Upload only anonymized protocol receipt and provenance (never raw PCAP, UE or core configs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1b1-cran-oai-one-ue-sanitized-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/phase1b1-evidence/sanitized-one-ue-receipt.json
+            ${{ runner.temp }}/phase1b1-evidence/source-pins.txt
+            ${{ runner.temp }}/phase1b1-evidence/image-ids.txt
+            ${{ runner.temp }}/phase1b1-evidence/provenance-limit.txt
+          if-no-files-found: warn
+          retention-days: 7
