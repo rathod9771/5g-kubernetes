@@ -40,7 +40,8 @@ def main():
     ensure(cu["cu_cp"]["amf"]["supported_tracking_areas"][0]["plmn_list"][0]["plmn"] == "20893",
            "PLMN_MISMATCH")
     gnb = {
-        "cu_cp": cu["cu_cp"],
+        # Monolithic gNB accepts AMF configuration, not split srscu F1AP bind configuration.
+        "cu_cp": {"amf": cu["cu_cp"]["amf"]},
         "ru_sdr": {
             "device_driver": "zmq",
             "device_args": "tx_port=tcp://172.30.250.10:2000,rx_port=tcp://172.30.250.40:2001,base_srate=23.04e6",
