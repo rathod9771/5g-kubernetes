@@ -131,7 +131,7 @@ def preflight(out):
         if rc != 0:
             receipt["error_category"] = classify_error(read_diag(stderr))
             raise PreflightError("Packet observer completed nonzero")
-         if not pcap.is_file() or pcap.is_symlink() or not 64 <= pcap.stat().st_size <= 5*1024*1024:
+        if not pcap.is_file() or pcap.is_symlink() or not 64 <= pcap.stat().st_size <= 5*1024*1024:
             receipt["error_category"] = "PCAP_MISSING_OR_INVALID"
             raise PreflightError("Packet capture output missing, unsafe, or outside bound")
         # No packet content is needed; a readable PCAP proves the observer
