@@ -5,6 +5,7 @@ on:
       - experiment/layer3-srsran-open5gs-protocol-matrix-20261121
     paths:
       - .github/workflows/experimental-srsran-gnb-zmq-candidates-once-20261121.yml
+      - ci/experimental/srsran-open5gs-ue-zmq/gnb-candidates.sh
 permissions:
   contents: read
 jobs:
