@@ -118,5 +118,17 @@ stop_capture
 sudo chmod 0644 "$WORK/rrc-ngap.pcap"
 docker cp l3-gnb:/tmp/gnb.log "$WORK/gnb.log" >/dev/null 2>&1 || :
 docker cp l3-ue:/tmp/srsue.log "$WORK/ue.log" >/dev/null 2>&1 || :
+echo "BOUNDED_SYNTHETIC_UE_RADIO_DIAGNOSTICS"
+for component in ue gnb; do
+  echo "----- CI_SYNTHETIC_${component}_STATUS -----"
+  docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "l3-$component" || true
+  if [ -r "$WORK/$component.log" ]; then
+    grep -Ei 'ZMQ|RF|radio|cell|sync|RRC|PBCH|SIB|NAS|PSS|SSS|PDU|Random Access|RACH|RLC|search|timeout|error|fail|connected' "$WORK/$component.log" | \
+    sed -E 's/[0-9]{15}/[REDACTED-SYNTHETIC-ID]/g; s/[0-9A-Fa-f]{32}/[REDACTED-KEY]/g' | \
+    tail -n 35 || true
+  else
+    echo "APP_LOG_UNAVAILABLE"
+  fi
+done
 python3 "$SCRIPTS/report_ue_rrc.py" "$WORK/rrc-ngap.pcap" "$WORK/ue.log" "$WORK/gnb.log" "$OUT"
 echo "SRSUE_RRC_AND_NGAP_INITIAL_UE_SMOKE_PASS__REGISTRATION_PDU_NOT_TESTED__NO_PRODUCTION_APPROVAL"
