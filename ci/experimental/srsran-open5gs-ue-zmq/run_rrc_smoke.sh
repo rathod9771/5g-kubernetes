@@ -113,6 +113,34 @@ docker run -d --name l3-ue --network l3-ue-rrc-net --ip 172.30.250.40 \
  --cap-add NET_ADMIN --device=/dev/net/tun -v "$WORK/config:/l3:ro" \
  --entrypoint /bin/sh "$UE" -c 'exec srsue /l3/ue.conf' >/dev/null
 sleep 65
+echo "GITHUB_RUNNER_AVAILABLE_CPUS=$(nproc)"
+echo "CFS_CPU_MAX=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo unknown)"
+echo "RADIO_CONTAINER_CPU_AND_NETWORK_SNAPSHOT"
+timeout 15 docker stats --no-stream --format 'name={{.Name}} cpu={{.CPUPerc}} net={{.NetIO}}' l3-gnb l3-ue || true
+echo "ZMQ_VIRTUAL_TCP_SOCKET_STATES"
+python3 - <<'PY'
+import subprocess
+for container in ('l3-gnb','l3-ue'):
+    z=subprocess.run(['docker','exec',container,'cat','/proc/net/tcp'],
+                     capture_output=True,text=True,timeout=8)
+    if z.returncode:
+        print(container,'TCP_TABLE_UNAVAILABLE')
+        continue
+    # Only endpoints for ZMQ 2000/2001. Never emit unrelated application endpoints.
+    rows=[]
+    for line in z.stdout.splitlines()[1:]:
+        cols=line.split()
+        if len(cols)<4: continue
+        local=cols[1].split(':')[-1]
+        remote=cols[2].split(':')[-1]
+        if not {local,remote}.intersection({'07D0','07D1'}): continue
+        rows.append((int(local,16),int(remote,16),cols[3]))
+    established=sum(s=='01' for _,_,s in rows)
+    listening=sum(s=='0A' for _,_,s in rows)
+    print(f'{container} zmq_tcp_established={established} listening={listening} states={sorted(set(s for _,_,s in rows))}')
+PY
+echo "BRIDGE_TCP_BYTE_COUNTS"
+timeout 12 sudo tcpdump -n -r "$WORK/rrc-ngap.pcap" -c 2 2>/dev/null | head -n 2 || true
 docker inspect -f '{{.State.Running}}' l3-gnb | grep -qx true
 stop_capture
 sudo chmod 0644 "$WORK/rrc-ngap.pcap"
