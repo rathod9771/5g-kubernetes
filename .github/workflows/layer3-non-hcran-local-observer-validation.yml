@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feature/layer3-protocol-local-safe-promote-20261121
+      - fix/layer3-open5gs-release-pod-discovery-20261121
       - main
     paths:
       - scripts/layer3/**
