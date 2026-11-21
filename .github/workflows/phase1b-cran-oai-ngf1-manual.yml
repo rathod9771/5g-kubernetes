@@ -1,0 +1,174 @@
+name: Phase 1B0 C-RAN OAI NGAP/F1AP live smoke (MANUAL; NO HP)
+
+# Ordinary pushes run only bounded, offline contract tests.
+# A live Docker trial requires explicit workflow_dispatch + exact-commit
+# successful full offline validation. It does NOT qualify NAS/PDU/F1-U/NG-U.
+on:
+  push:
+    branches:
+      - experiment/phase1b-cran-oai-runtime-20261121
+    paths:
+      - .github/workflows/phase1b-cran-oai-ngf1-manual.yml
+      - scripts/experiments/phase1b_cran_oai_ngf1.py
+      - scripts/experiments/phase1b_verify_offline_run.py
+      - scripts/experiments/phase1b_verify_ngf1.py
+      - tests/test_phase1b_cran_oai_runtime.py
+      - docs/phase1b-cran-oai-ngf1.md
+  workflow_dispatch:
+    inputs:
+      offline_run_id:
+        description: "SUCCESSFUL full Offline Project Validation run ID from this exact branch AND SHA"
+        required: true
+        type: string
+      confirm_isolated_no_deploy:
+        description: "Enter ISOLATED_CRAN_NGF1_NO_DEPLOY"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: phase1b-cran-oai-ngf1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline-contracts:
+    if: github.event_name == 'push'
+    name: Exercise negative and isolation tests ONLY (never start Docker)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned YAML parser and test fail-closed contracts
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          python3 -m py_compile scripts/experiments/phase1b_cran_oai_ngf1.py scripts/experiments/phase1b_verify_ngf1.py scripts/experiments/phase1b_verify_offline_run.py
+          python3 -m unittest discover -s tests -p 'test_phase1b_cran_oai_runtime.py' -v
+      - name: State no live procedures were run
+        run: |
+          echo 'This was ONLY Phase1B0 offline protocol-contract testing; NO live NGAP, F1AP, UE or HP.'
+
+  offline-gate:
+    if: github.event_name == 'workflow_dispatch'
+    name: Explicit approval and exact SHA successful offline CI required
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify full Offline Project Validation on same SHA and same branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PHASE1B_OFFLINE_RUN_ID: ${{ inputs.offline_run_id }}
+          PHASE1B_ISOLATED_CONFIRM: ${{ inputs.confirm_isolated_no_deploy }}
+        run: |
+          set -euo pipefail
+          python3 scripts/experiments/phase1b_verify_offline_run.py
+
+  isolated-ngap-f1ap:
+    if: github.event_name == 'workflow_dispatch'
+    needs: offline-gate
+    name: Source-pinned CU + one DU + AMF NG Setup and F1 Setup (NO UE)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CU_IMG: oai-ngap-2026w13-v2:stage3-portable-4
+      DU_IMG: oaisoftwarealliance/oai-gnb:2026.w25
+      CORE_IMG: gradiant/open5gs:2.7.6
+    steps:
+      - name: Checkout exact Phase 1B0 source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: qualification
+      - name: Read-only checkout of frozen Stage3 synthetic AMF/NRF configuration
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 4080110a74bf6ba58804797c5b7216458e2f0a93
+          path: baseline
+      - name: Confirm disposable runner and kernel SCTP availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/phase1b-render" "$RUNNER_TEMP/phase1b-evidence" "$RUNNER_TEMP/phase1b-source"
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -d /proc/net/sctp
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          python3 -m unittest discover -s qualification/tests -p 'test_phase1b_cran_oai_runtime.py' -v
+          printf '%s\n' "source_sha=${{ github.sha }}" "frozen_stage3_baseline=4080110a74bf6ba58804797c5b7216458e2f0a93" > "$RUNNER_TEMP/phase1b-evidence/source-pins.txt"
+      - name: Pin Helm tool and render ONLY C-RAN profile, never kubectl
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Create concrete single-DU F1 source configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm template cran-oai-cu qualification/helm/cran-oai/cu \
+            --set-string image.reference=example.invalid/phase1b:offline \
+            --set-string image.pullPolicy=IfNotPresent \
+            --set radio.gnbId=3584 --set radio.cellId=12345678 \
+            > "$RUNNER_TEMP/phase1b-render/cu.yaml"
+          helm template cran-oai-du qualification/helm/cran-oai/du \
+            --set-string image.reference=example.invalid/phase1b:offline \
+            --set-string image.pullPolicy=IfNotPresent \
+            --set radio.gnbId=3584 --set radio.cellId=12345678 \
+            --set radio.duId=101 --set radio.pci=0 --set radio.ssbPower=-25 \
+            > "$RUNNER_TEMP/phase1b-render/du.yaml"
+      - name: Rebuild EXACT source-pinned OAI NGAP CU (not old expired archive)
+        shell: bash
+        env:
+          OAI_SOURCE: ${{ runner.temp }}/phase1b-source/oai-upstream-w13
+          OUTPUT: ${{ runner.temp }}/phase1b-source/proof
+        run: |
+          set -euo pipefail
+          bash -n qualification/scripts/hcran_build_pinned_stage3_ngap_cu.sh
+          cd "$GITHUB_WORKSPACE/qualification"
+          export GITHUB_WORKSPACE="$PWD"
+          export IMAGE="$CU_IMG"
+          bash scripts/hcran_build_pinned_stage3_ngap_cu.sh
+      - name: Retrieve disposable Open5GS and OAI DU images; record actual IDs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in "$DU_IMG" "$CORE_IMG"; do docker pull "$image"; done
+          for image in "$CU_IMG" "$DU_IMG" "$CORE_IMG"; do
+            docker image inspect "$image" --format '{{.Id}}' >> "$RUNNER_TEMP/phase1b-evidence/actual-image-ids.txt"
+          done
+          echo 'Historical test tags, source pins and local image IDs captured; not digest-pinned staging images.' \
+            > "$RUNNER_TEMP/phase1b-evidence/image-pin-limit.txt"
+      - name: ACTUAL NGAP and F1AP one-DU test (no UE, PDU or AMF fault)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u qualification/scripts/experiments/phase1b_cran_oai_ngf1.py \
+            --rendered "$RUNNER_TEMP/phase1b-render" \
+            --stage3 "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13/stage3" \
+            --out "$RUNNER_TEMP/phase1b-evidence" \
+            --cu-image "$CU_IMG" --du-image "$DU_IMG"
+          python3 qualification/scripts/experiments/phase1b_verify_ngf1.py \
+            --events "$RUNNER_TEMP/phase1b-evidence/results.json" \
+            --receipt "$RUNNER_TEMP/phase1b-evidence/sanitized-phase1b0-receipt.json"
+      - name: Retain sanitized receipt and reproducible provenance ONLY
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1b-cran-oai-ngf1-sanitized-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/phase1b-evidence/sanitized-phase1b0-receipt.json
+            ${{ runner.temp }}/phase1b-evidence/source-pins.txt
+            ${{ runner.temp }}/phase1b-evidence/actual-image-ids.txt
+            ${{ runner.temp }}/phase1b-evidence/image-pin-limit.txt
+          if-no-files-found: warn
+          retention-days: 7
