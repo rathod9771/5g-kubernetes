@@ -172,6 +172,15 @@ class ImpactTests(unittest.TestCase):
         self.assertEqual(result['paths']['scripts/telecom/subcharts.py']['class'], 'researcher-cicd')
         self.assertEqual(result['paths']['helm/ueransim/values.yaml']['class'], 'helm-not-in-registry')
 
+    def test_phase1b2_dockerfile_is_research_only_and_other_ci_unknown(self):
+        result = self.impact(['ci/phase1b2/Dockerfile'])
+        self.assertEqual(result['status'], 'determined')
+        self.assertEqual(result['paths']['ci/phase1b2/Dockerfile']['class'], 'non-package')
+        self.assertEqual((result['ran_scenarios'], result['core_components']), ([], []))
+        # Do not broadly exempt future unreviewed CI Dockerfiles.
+        result = self.impact(['ci/phase1b3/unreviewed.Dockerfile'])
+        self.assertEqual(result['status'], 'full-rebuild')
+
     def test_unknown_paths_force_a_full_rebuild(self):
         for path in ('newdir/tool.py', 'scripts/new_generator.py', 'config/new-policy.json'):
             with self.subTest(path=path):
