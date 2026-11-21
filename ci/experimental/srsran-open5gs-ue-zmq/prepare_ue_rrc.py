@@ -32,7 +32,7 @@ def main():
         "common_scs": 15, "plmn": "20893", "tac": 1, "pci": 1,
         "pdcch": {
             "dedicated": {"ss2_type": "common", "dci_format_0_1_and_1_1": False},
-            "common": {"ss0_index": 0, "coreset0_index": 12},
+            "common": {"ss0_index": 0, "coreset0_index": 6},
         },
         "prach": {"prach_config_index": 1},
         # srsUE fallback DCI requires 64-QAM (see official srsRAN srsUE ZMQ example).
