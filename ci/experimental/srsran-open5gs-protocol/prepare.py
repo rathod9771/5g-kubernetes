@@ -77,6 +77,11 @@ def main():
         check(du_text.count("CU_IP") == 1 and du_text.count("POD_IP") >= 1, "DU_ADDRESS_TEMPLATE_MISMATCH")
         du = yaml.safe_load(du_text.replace("CU_IP", CU_ADDR).replace("POD_IP", DU_ADDRS[i]))
         du["log"]["all_level"] = "info"
+        # Hardware-free F1 signalling: the public binary omits libsrsran_radio_zmq.so.
+        # Use documented built-in dummy RU instead of compiling or changing Helm charts.
+        check("ru_sdr" in du, "EXPECTED_TRACKED_SRSRAN_ZMQ_RADIO_CONFIG")
+        du.pop("ru_sdr")
+        du["ru_dummy"] = {"dl_processing_delay": 1, "time_scaling": 1}
         dump(dest / ("du" + str(i + 1) + ".yml"), du)
         du_configs.append({
             "address": DU_ADDRS[i],
@@ -129,6 +134,7 @@ def main():
         "du_configs": du_configs,
         "plmn": "20893", "tac": 1, "sst": 1, "sd": "010203",
         "no_ue": True,
+        "radio_mode": "srsRAN_built_in_ru_dummy_for_F1_signalling_only",
         "no_oai": True,
         "no_local_cluster": True,
         "scope": "NG_SETUP_AND_F1_SETUP_ONLY"
