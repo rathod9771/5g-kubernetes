@@ -1,0 +1,99 @@
+name: Phase 1 multi-RAN protocol INTERFACE audit (STATIC; NO DEPLOY)
+
+# This workflow renders existing registered CU/DU Helm profiles only.
+# Static NGAP/F1AP port/config checks are NOT 3GPP protocol conformance,
+# UE registration, PDU, NG-U/F1-U traffic, or recovery tests.
+# No Kubernetes credentials, HP SSH, deployment or live Docker network used.
+on:
+  push:
+    branches:
+      - experiment/phase1-multiran-protocol-matrix-20261121
+    paths:
+      - .github/workflows/phase1-multiran-protocol-static.yml
+      - scripts/experiments/phase1_protocol_matrix.py
+      - tests/test_phase1_protocol_matrix.py
+      - docs/phase1-multiran-protocol-ci.md
+      - config/scenarios.json
+      - helm/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase1-multiran-protocol-static-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    name: Protocol evidence classification and negative tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned offline manifest parser and verify negative cases
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          python3 -m unittest discover -s tests -p 'test_phase1_protocol_matrix.py' -v
+      - name: State accurate evidence boundary
+        run: |
+          echo 'These tests check static interface declarations and fail-closed status labeling.'
+          echo 'No real 3GPP message exchange, UE/PDU/data-plane recovery or HP Kubernetes test ran.'
+
+  registered-ran:
+    needs: contracts
+    name: Static NG/F1 config ${{ matrix.scenario }} - runtime NOT TESTED
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        scenario:
+          - cran-oai
+          - cran-srsran
+          - oran-oai
+          - oran-srsran
+          - cloudran-oai
+          - cloudran-srsran
+          - hcran-oai
+          - hcran-srsran
+          - vcran-oai
+          - vcran-srsran
+          - fran-oai
+          - fran-srsran
+          - fran
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install exact parser version
+        run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+      - name: Install pinned Helm for local rendering only
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Render current registered split-RAN profile without deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/experiments/phase1_protocol_matrix.py \
+            --scenario '${{ matrix.scenario }}' \
+            --report "${RUNNER_TEMP}/phase1-${{ matrix.scenario }}.json"
+      - name: Retain bounded nonsecret status only, not rendered configs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1-static-${{ matrix.scenario }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase1-${{ matrix.scenario }}.json
+          if-no-files-found: warn
+          retention-days: 14
