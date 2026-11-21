@@ -17,6 +17,14 @@ Only a successful manually dispatched runtime job with receipt `NGAP_F1AP_WIRE_P
 
 A separate NR virtual-radio compatibility study is still needed: srsRAN Project uses ZMQ IQ transport, which is not OAI RFsim. A legacy srsUE version cannot be assumed to support this 5G SA band/numerology/configuration until tested.
 
+## Packet-observer startup incident and safe diagnostic
+
+First manually dispatched experiment [#44890511873](https://github.com/rathod9771/5g-kubernetes/actions/runs/44890511873) **failed, at `START_CAPTURE`**, because the TShark observer exited within three seconds **before any AMF, CU or DU began**. Both `srscu` and `srsdu` had already built successfully from pinned source. This is *not* evidence of an srsRAN NGAP/F1AP protocol failure. The exact TShark stderr was private to the disposable runner and was not uploaded, so the root cause could not be proven from that run.
+
+The correction adds `phase1b2_capture_preflight.py`: an **8-second capture-startup check** on a temporary Docker `--internal` bridge (same interface name, SCTP filter, capture flags and short duration), with no subscribers, 5GC, CU, DU, UE or traffic. It checks Linux bridge existence, process survival and a readable PCAP, then removes that one disposable bridge. All raw logs and PCAPs stay runner-local. Only `observer-preflight-receipt.json` is retained, with fixed failure categories rather than raw stdout/stderr. Successful preflight means `CAPTURE_READY_NO_PROTOCOL_TESTED`, *never* `NGAP_F1AP_WIRE_PASS`.
+
+There are **two gates**: a cheap push-triggered `observer-preflight` job, and the exact same preflight at the beginning of any manually approved runtime job **before the 100-minute srsRAN Docker compile**. If the observer fails, the build never runs. A failed preflight should be diagnosed through its categorical receipt; do not retry the prior expensive build blindly or broaden capture permissions beyond the isolated GitHub runner. A fresh full offline success for the new exact HEAD is required before another manual runtime dispatch.
+
 ## Manual dispatch
 
 After exact-HEAD full Offline Project Validation and focused contracts are SUCCESS:

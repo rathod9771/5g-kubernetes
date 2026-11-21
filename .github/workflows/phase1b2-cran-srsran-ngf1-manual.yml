@@ -9,6 +9,7 @@ on:
       - ci/phase1b2/**
       - scripts/experiments/phase1b2_*
       - tests/test_phase1b2_srsran_ngf1.py
+      - tests/test_phase1b2_capture_preflight.py
       - docs/phase1b2-cran-srsran-ngf1.md
   workflow_dispatch:
     inputs:
@@ -72,6 +73,40 @@ jobs:
           print("Static C-RAN config valid. Actual runtime NOT TESTED.")
           PY
 
+  observer-preflight:
+    if: github.event_name == 'push'
+    name: Disposable SCTP observer startup probe (NO RAN build or protocol)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install only observer prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          mkdir -p "$RUNNER_TEMP/phase1b2-observer"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tshark
+          test -d /proc/net/sctp || sudo modprobe sctp
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+      - name: Prove capture startup on disposable isolated Docker bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u scripts/experiments/phase1b2_capture_preflight.py \
+            --out "$RUNNER_TEMP/phase1b2-observer"
+      - name: Upload ONLY bounded startup category (never logs or PCAP)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1b2-observer-startup-${{ github.run_id }}
+          path: ${{ runner.temp }}/phase1b2-observer/observer-preflight-receipt.json
+          if-no-files-found: warn
+          retention-days: 7
+
   offline-gate:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -120,6 +155,12 @@ jobs:
           tshark --version > "$RUNNER_TEMP/phase1b2-evidence/tshark-version.txt"
           printf '%s\n' "source_sha=${{ github.sha }}" "stage3_base=4080110a74bf6ba58804797c5b7216458e2f0a93" > "$RUNNER_TEMP/phase1b2-evidence/source-pins.txt"
           python3 -m unittest discover -s qualification/tests -p test_phase1b2_srsran_ngf1.py -v
+      - name: Fail-fast observer startup (BEFORE srsRAN compilation)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u qualification/scripts/experiments/phase1b2_capture_preflight.py \
+            --out "$RUNNER_TEMP/phase1b2-evidence/observer-preflight"
       - name: Native pinned source Docker build (only srscu and srsdu, no UHD or DPDK)
         timeout-minutes: 100
         run: bash qualification/scripts/experiments/phase1b2_build_srsran.sh
@@ -154,6 +195,7 @@ jobs:
           name: phase1b2-srsran-wire-evidence-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/phase1b2-evidence/receipt.json
+            ${{ runner.temp }}/phase1b2-evidence/observer-preflight/observer-preflight-receipt.json
             ${{ runner.temp }}/phase1b2-evidence/source-pins.txt
             ${{ runner.temp }}/phase1b2-evidence/tshark-version.txt
             ${{ runner.temp }}/phase1b2-evidence/core-image-id.txt
