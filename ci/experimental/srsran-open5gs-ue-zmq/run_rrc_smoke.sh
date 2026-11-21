@@ -15,12 +15,23 @@ CORE='gradiant/open5gs:2.7.5'
 WORK="$(mktemp -d "$RUNNER_TEMP/srsran-srsue.XXXXXXXX")"
 OUT="$ROOT/srsue-rrc-verdict.json"
 CAP_PID=""
+stop_capture() {
+  if [ -z "$CAP_PID" ]; then return; fi
+  # Only the newly created capture process group is signalled.
+  sudo kill -INT -- "-$CAP_PID" 2>/dev/null || true
+  for attempt in 1 2 3; do
+    kill -0 "$CAP_PID" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "$CAP_PID" 2>/dev/null; then
+    sudo kill -TERM -- "-$CAP_PID" 2>/dev/null || true
+  fi
+  wait "$CAP_PID" 2>/dev/null || true
+  CAP_PID=""
+}
 done_cleanup() {
   rc="$1"
-  if [ -n "$CAP_PID" ]; then
-    sudo kill -INT "$CAP_PID" 2>/dev/null || true
-    wait "$CAP_PID" 2>/dev/null || true
-  fi
+  stop_capture
   if [ "$rc" != 0 ]; then
     echo "REAL_SRSUE_RRC_SMOKE_NOT_VERIFIED code=$rc"
     for c in l3-ue l3-gnb l3-amf l3-nrf; do
@@ -83,11 +94,13 @@ docker run -d --name l3-amf --network l3-ue-rrc-net --ip 172.30.250.20 \
  -c 'exec open5gs-amfd -c /l3/amf.yaml' >/dev/null
 sleep 4
 for c in l3-nrf l3-amf; do docker inspect -f '{{.State.Running}}' "$c" | grep -qx true; done
-sudo timeout -s INT 140 tcpdump -n -i br-l3-ue -s 2048 -c 2048 -U \
+setsid sudo -n timeout -s INT 140 tcpdump -n -i br-l3-ue -s 2048 -c 2048 -U \
   -w "$WORK/rrc-ngap.pcap" 'sctp and port 38412' &
 CAP_PID="$!"
 sleep 2
 kill -0 "$CAP_PID"
+CAP_PGID="$(ps -o pgid= -p "$CAP_PID" | tr -d ' ')"
+test "$CAP_PGID" = "$CAP_PID" || { echo "CAPTURE_PROCESS_GROUP_NOT_ISOLATED"; exit 1; }
 echo "START_REAL_SRSRAN_GNB_WITH_ZMQ"
 docker run -d --name l3-gnb --network l3-ue-rrc-net --ip 172.30.250.10 \
  --cap-add SYS_NICE --ulimit rtprio=95 -v "$WORK/config:/l3:ro" \
@@ -101,9 +114,7 @@ docker run -d --name l3-ue --network l3-ue-rrc-net --ip 172.30.250.40 \
  --entrypoint /bin/sh "$UE" -c 'exec srsue /l3/ue.conf' >/dev/null
 sleep 65
 docker inspect -f '{{.State.Running}}' l3-gnb | grep -qx true
-sudo kill -INT "$CAP_PID" 2>/dev/null || true
-wait "$CAP_PID" || true
-CAP_PID=""
+stop_capture
 sudo chmod 0644 "$WORK/rrc-ngap.pcap"
 docker cp l3-gnb:/tmp/gnb.log "$WORK/gnb.log" >/dev/null 2>&1 || :
 docker cp l3-ue:/tmp/srsue.log "$WORK/ue.log" >/dev/null 2>&1 || :
