@@ -111,7 +111,8 @@ echo "START_REAL_SRSUE_5G_SA_VIRTUAL_RF"
 test -e /dev/net/tun
 docker run -d --name l3-ue --network l3-ue-rrc-net --ip 172.30.250.40 \
  --cap-add NET_ADMIN --device=/dev/net/tun -v "$WORK/config:/l3:ro" \
- --entrypoint /bin/sh "$UE" -c 'exec srsue /l3/ue.conf' >/dev/null
+ --log-opt max-size=4m --log-opt max-file=1 \
+ --entrypoint /bin/sh "$UE" -c 'exec srsue /l3/ue.conf --log.filename=stdout --log.all_hex_limit=0 --log.phy_level=debug --log.rrc_level=debug --log.stack_level=debug' >/dev/null
 sleep 65
 echo "GITHUB_RUNNER_AVAILABLE_CPUS=$(nproc)"
 echo "CFS_CPU_MAX=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo unknown)"
@@ -139,13 +140,16 @@ for container in ('l3-gnb','l3-ue'):
     listening=sum(s=='0A' for _,_,s in rows)
     print(f'{container} zmq_tcp_established={established} listening={listening} states={sorted(set(s for _,_,s in rows))}')
 PY
-echo "BRIDGE_TCP_BYTE_COUNTS"
-timeout 12 sudo tcpdump -n -r "$WORK/rrc-ngap.pcap" -c 2 2>/dev/null | head -n 2 || true
+echo "ZMQ_TCP_TRANSPORT_COUNTERS"
+for component in l3-gnb l3-ue; do
+  echo "ZMQ_COUNTERS $component"
+  timeout 8 docker exec "$component" sh -c 'if command -v ss >/dev/null 2>&1; then ss -tin "( sport = :2000 or dport = :2000 or sport = :2001 or dport = :2001 )"; else echo SS_NOT_INSTALLED; fi' || true
+done
 docker inspect -f '{{.State.Running}}' l3-gnb | grep -qx true
 stop_capture
 sudo chmod 0644 "$WORK/rrc-ngap.pcap"
 docker cp l3-gnb:/tmp/gnb.log "$WORK/gnb.log" >/dev/null 2>&1 || :
-docker cp l3-ue:/tmp/srsue.log "$WORK/ue.log" >/dev/null 2>&1 || :
+docker logs --tail 5000 l3-ue > "$WORK/ue.log" 2>&1 || :
 echo "BOUNDED_SYNTHETIC_UE_RADIO_DIAGNOSTICS"
 echo "----- CI_SYNTHETIC_UE_STDOUT_ALLOWLIST -----"
 docker logs --tail 80 l3-ue 2>&1 | \
@@ -155,7 +159,7 @@ for component in ue gnb; do
   echo "----- CI_SYNTHETIC_${component}_STATUS -----"
   docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "l3-$component" || true
   if [ -r "$WORK/$component.log" ]; then
-    grep -Ei 'ZMQ|RF|radio|cell|sync|RRC|PBCH|SIB|NAS|PSS|SSS|PDU|Random Access|RACH|RLC|search|timeout|error|fail|connected' "$WORK/$component.log" | \
+    grep -Ei 'ZMQ|RF|radio|Cell Selection|Cell search|cell selection|sync|RRC|PBCH|SIB|NAS5G|PSS|SSS|PDU|Random Access|RACH|RLC|search|timeout|error|fail|connected|Triggering NAS|Switching on|waiting for' "$WORK/$component.log" | \
     sed -E 's/[0-9]{15}/[REDACTED-SYNTHETIC-ID]/g; s/[0-9A-Fa-f]{32}/[REDACTED-KEY]/g' | \
     tail -n 35 || true
   else
