@@ -136,7 +136,7 @@ class RunnerSourceContracts(unittest.TestCase):
         self.assertEqual(set(runner.NAMES), {"amf", "nrf", "cu", "du"})
         self.assertEqual(runner.NGAP.pattern, r"Received NGSetupResponse from AMF")
         self.assertTrue(runner.F1REQ.search("Received F1 Setup Request from gNB_DU 101"))
-        self.assertTrue(runner.F1RESP.search("DU 101: sending F1 Setup Response"))
+        self.assertTrue(runner.F1RESP.search("DU 101 successfully sending F1 Setup Response"))
         self.assertIn("cran-oai-cu-config", (BASE / "phase1b_cran_oai_ngf1.py").read_text())
         self.assertIn("cran-oai-du-config", (BASE / "phase1b_cran_oai_ngf1.py").read_text())
         self.assertNotIn("hcran-oai", (BASE / "phase1b_cran_oai_ngf1.py").read_text())
