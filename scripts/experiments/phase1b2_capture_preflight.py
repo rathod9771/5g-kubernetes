@@ -50,7 +50,7 @@ def capture_command(interface, output, seconds=8):
         raise PreflightError("Unapproved bridge or capture time")
     return ["sudo", "-n", "dumpcap", "-i", interface, "-f", "sctp",
             "-a", "duration:" + str(seconds), "-a", "filesize:4096",
-            "-w", str(output)]
+            "-w", "-"]
 
 
 def read_diag(path):
@@ -110,9 +110,11 @@ def preflight(out):
         if not receipt["bridge_present"]:
             receipt["error_category"] = "NO_SUCH_INTERFACE"
             raise PreflightError("Expected Linux bridge not present after Docker network create")
-        with stderr.open("w") as log:
+        # Parent runner owns the file; dumpcap writes binary packets to its
+        # inherited stdout descriptor, never opening a private filesystem path.
+        with pcap.open("wb") as capture_stream, stderr.open("w") as log:
             process = subprocess.Popen(capture_command(wire.BRIDGE, pcap),
-                                       stdout=subprocess.DEVNULL, stderr=log)
+                                       stdout=capture_stream, stderr=log)
             time.sleep(2)
             premature = process.poll()
             if premature is not None:
@@ -129,8 +131,7 @@ def preflight(out):
         if rc != 0:
             receipt["error_category"] = classify_error(read_diag(stderr))
             raise PreflightError("Packet observer completed nonzero")
-        wire.cmd("sudo", "-n", "chown", str(os.getuid()) + ":" + str(os.getgid()), str(pcap))
-        if not pcap.is_file() or pcap.is_symlink() or not 64 <= pcap.stat().st_size <= 5*1024*1024:
+         if not pcap.is_file() or pcap.is_symlink() or not 64 <= pcap.stat().st_size <= 5*1024*1024:
             receipt["error_category"] = "PCAP_MISSING_OR_INVALID"
             raise PreflightError("Packet capture output missing, unsafe, or outside bound")
         # No packet content is needed; a readable PCAP proves the observer

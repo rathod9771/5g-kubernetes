@@ -45,3 +45,10 @@ No duplicate manual executions. All independent study source/evidence stays sepa
 The low-cost GitHub-hosted observer probe [#44893007084](https://github.com/rathod9771/5g-kubernetes/actions/runs/44893007084) **reproduced** the pre-workload exit with `error_category=PERMISSION_DENIED`, `bridge_present=true`, `observer_returncode=1`. This does not yet distinguish capture-device permission from capture-output-file permission.
 
 The next experiment uses **`dumpcap` as the privileged *capture-only* process** instead of launching the full TShark analyzer as root. It retains unprivileged `tshark -r` strictly for decoding the saved PCAP. The identical `dumpcap` command is checked on a disposable bridge before any srsRAN source build; a failed probe blocks the expensive runtime. Both processes use the runner's short-lived local filesystem, no live UE or 5G network on push, and no upload of raw captures. A second `PERMISSION_DENIED` is a **BLOCKED** result requiring further investigation, not a reason to bypass the observer.
+
+
+## Capturing through a caller-owned file descriptor (second diagnostic correction)
+
+The short observer [run #44893245512](https://github.com/rathod9771/5g-kubernetes/actions/runs/44893245512) reproduced `CAPTURE_OUTPUT_DENIED` using `sudo -n dumpcap -w <private-output-file>`. The bridge was present but dumpcap returned exit 1 before the RAN workloads could start. This narrows the defect to *writing the capture path* rather than missing srsRAN binaries.
+
+The next small patch makes the **unprivileged GitHub runner open the output PCAP itself** and passes that already-open file descriptor as `dumpcap`'s stdout with `-w -`. Wireshark's current dumpcap manual supports `-w -` for capture to stdout. The packet filter, fixed-duration autostop and capture-file size condition remain enforced. The dedicated capture binary no longer needs direct write access to a runner-private directory. TShark only reads the resulting file after capture. The exact same mechanism is exercised by the cheap bridge preflight and the later live NGAP/F1AP trial. Until probe and exact-source offline validation pass, source-build retry remains **NO-GO**.

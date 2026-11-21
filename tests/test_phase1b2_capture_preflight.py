@@ -30,7 +30,17 @@ class CaptureCommandContracts(unittest.TestCase):
         self.assertEqual(cmd[:5], ["sudo", "-n", "dumpcap", "-i", testee.wire.BRIDGE])
         self.assertEqual(cmd[5:7], ["-f", "sctp"])
         self.assertEqual(cmd[7:11], ["-a", "duration:8", "-a", "filesize:4096"])
-        self.assertEqual(cmd[-2:], ["-w", "/tmp/test-only.pcapng"])
+        self.assertEqual(cmd[-2:], ["-w", "-"])
+
+    def test_capture_output_owned_by_unprivileged_parent(self):
+        source = (SCRIPTS / "phase1b2_capture_preflight.py").read_text()
+        runtime = (SCRIPTS / "phase1b2_srsran_ngf1.py").read_text()
+        self.assertIn('pcap.open("wb") as capture_stream', source)
+        self.assertIn('capture.open("wb") as capture_stream', runtime)
+        self.assertIn('stdout=capture_stream', source)
+        self.assertIn('stdout=capture_stream', runtime)
+        self.assertIn('"-w","-"', runtime)
+        self.assertNotIn('stdout=subprocess.DEVNULL,stderr=log', runtime)
 
     def test_wrong_interface_and_excess_duration_rejected(self):
         for interface, seconds in (("any", 8), ("eth0", 8),

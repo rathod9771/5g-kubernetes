@@ -158,11 +158,14 @@ class Trial:
         self.network=True
         self.stage="START_CAPTURE"
         capture=private/"setup.pcapng"
-        with (private/"capture.log").open("w") as log:
+        # Unprivileged runner opens the private PCAP. dumpcap is permitted
+        # to write only to inherited stdout, avoiding its prior EACCES on
+        # private output paths while preserving a bounded 4MiB autostop.
+        with capture.open("wb") as capture_stream, (private/"capture.log").open("w") as log:
             self.capture=subprocess.Popen(
                 ["sudo","-n","dumpcap","-i",BRIDGE,"-f","sctp",
-                 "-a","duration:100","-a","filesize:4096","-w",str(capture)],
-                stdout=subprocess.DEVNULL,stderr=log)
+                 "-a","duration:100","-a","filesize:4096","-w","-"],
+                stdout=capture_stream,stderr=log)
             time.sleep(3)
             if self.capture.poll() is not None:
                 raise EvidenceError("Packet observer exited before workload startup")
@@ -185,7 +188,6 @@ class Trial:
             if self.capture.poll()!=0:
                 raise EvidenceError("Capture incomplete or observer failed")
         self.live()
-        cmd("sudo","-n","chown",f"{os.getuid()}:{os.getgid()}",capture)
         self.stage="DECODE"
         result=decode(capture)
         self.stage="LIVE_ASSOCIATIONS"
