@@ -101,18 +101,29 @@ sleep 2
 kill -0 "$CAP_PID"
 CAP_PGID="$(ps -o pgid= -p "$CAP_PID" | tr -d ' ')"
 test "$CAP_PGID" = "$CAP_PID" || { echo "CAPTURE_PROCESS_GROUP_NOT_ISOLATED"; exit 1; }
-echo "START_REAL_SRSRAN_GNB_WITH_ZMQ"
-docker run -d --name l3-gnb --network l3-ue-rrc-net --ip 172.30.250.10 \
- --cap-add SYS_NICE --ulimit rtprio=95 -v "$WORK/config:/l3:ro" \
- --entrypoint /bin/sh "$GNB" -c 'exec gnb -c /l3/gnb.yml' >/dev/null
-sleep 9
-docker inspect -f '{{.State.Running}}' l3-gnb | grep -qx true
 echo "START_REAL_SRSUE_5G_SA_VIRTUAL_RF"
 test -e /dev/net/tun
 docker run -d --name l3-ue --network l3-ue-rrc-net --ip 172.30.250.40 \
  --cap-add NET_ADMIN --device=/dev/net/tun -v "$WORK/config:/l3:ro" \
  --log-opt max-size=4m --log-opt max-file=1 \
  --entrypoint /bin/sh "$UE" -c 'exec srsue /l3/ue.conf --log.filename=stdout --log.all_hex_limit=0 --log.phy_level=debug --log.rrc_level=debug --log.stack_level=debug' >/dev/null
+echo "WAIT_FOR_DISPOSABLE_UE_ZMQ_LISTENER_2001"
+listener_ready=false
+for attempt in $(seq 1 15); do
+  if docker exec l3-ue awk '$4=="0A" && $2 ~ /:07D1$/ {found=1} END{exit !found}' /proc/net/tcp; then
+    listener_ready=true
+    break
+  fi
+  sleep 1
+done
+test "$listener_ready" = true || { echo "UE_ZMQ_LISTENER_NOT_READY"; exit 1; }
+echo "UE_ZMQ_LISTENER_READY_BEFORE_GNB_START"
+echo "START_REAL_SRSRAN_GNB_WITH_ZMQ"
+docker run -d --name l3-gnb --network l3-ue-rrc-net --ip 172.30.250.10 \
+ --cap-add SYS_NICE --ulimit rtprio=95 -v "$WORK/config:/l3:ro" \
+ --entrypoint /bin/sh "$GNB" -c 'exec gnb -c /l3/gnb.yml' >/dev/null
+sleep 9
+docker inspect -f '{{.State.Running}}' l3-gnb | grep -qx true
 sleep 65
 echo "GITHUB_RUNNER_AVAILABLE_CPUS=$(nproc)"
 echo "CFS_CPU_MAX=$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo unknown)"
@@ -151,6 +162,8 @@ sudo chmod 0644 "$WORK/rrc-ngap.pcap"
 docker cp l3-gnb:/tmp/gnb.log "$WORK/gnb.log" >/dev/null 2>&1 || :
 docker logs --tail 5000 l3-ue > "$WORK/ue.log" 2>&1 || :
 echo "BOUNDED_SYNTHETIC_UE_RADIO_DIAGNOSTICS"
+echo "----- CI_SYNTHETIC_GNB_STDOUT_ALLOWLIST -----"
+docker logs --tail 40 l3-gnb 2>&1 | grep -Ei 'gnb|radio|zmq|cell|ready|start|error|failed|SCTP|N2|F1|AMF|warning|waiting' | sed -E 's/[0-9]{15}/[REDACTED-SYNTHETIC-ID]/g; s/[0-9A-Fa-f]{32}/[REDACTED-KEY]/g' | tail -25 || true
 echo "----- CI_SYNTHETIC_UE_STDOUT_ALLOWLIST -----"
 docker logs --tail 80 l3-ue 2>&1 | \
  grep -Ei 'srsUE|Starting|Attaching|RF|ZMQ|cell|sync|RRC|PBCH|SIB|NAS|PSS|SSS|RACH|registration|error|fail|not found|configured|waiting|scan|Searching' | \
