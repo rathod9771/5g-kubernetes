@@ -5,6 +5,9 @@ on:
       - experiment/layer3-srsran-open5gs-protocol-matrix-20261121
     paths:
       - .github/workflows/experimental-srsran-srsue-rrc-smoke-20261121.yml
+      - ci/experimental/srsran-open5gs-ue-zmq/prepare_ue_rrc.py
+      - ci/experimental/srsran-open5gs-ue-zmq/run_rrc_smoke.sh
+      - ci/experimental/srsran-open5gs-ue-zmq/report_ue_rrc.py
 permissions:
   contents: read
 jobs:
