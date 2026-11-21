@@ -10,7 +10,7 @@ test -z "${KUBECONFIG:-}" && test -z "${OSM_HOSTNAME:-}"
 ROOT="$(pwd)"
 SCRIPTS="$ROOT/ci/experimental/srsran-open5gs-ue-zmq"
 GNB='openmcx/openmcx-srsran-gnb:25.10-mcx'
-UE='ghcr.io/herlesupreeth/docker_srslte:master'
+UE='openmcx/openmcx-srsue:25.10'
 CORE='gradiant/open5gs:2.7.5'
 WORK="$(mktemp -d "$RUNNER_TEMP/srsran-srsue.XXXXXXXX")"
 OUT="$ROOT/srsue-rrc-verdict.json"
@@ -119,6 +119,10 @@ sudo chmod 0644 "$WORK/rrc-ngap.pcap"
 docker cp l3-gnb:/tmp/gnb.log "$WORK/gnb.log" >/dev/null 2>&1 || :
 docker cp l3-ue:/tmp/srsue.log "$WORK/ue.log" >/dev/null 2>&1 || :
 echo "BOUNDED_SYNTHETIC_UE_RADIO_DIAGNOSTICS"
+echo "----- CI_SYNTHETIC_UE_STDOUT_ALLOWLIST -----"
+docker logs --tail 80 l3-ue 2>&1 | \
+ grep -Ei 'srsUE|Starting|Attaching|RF|ZMQ|cell|sync|RRC|PBCH|SIB|NAS|PSS|SSS|RACH|registration|error|fail|not found|configured|waiting|scan|Searching' | \
+ sed -E 's/[0-9]{15}/[REDACTED-SYNTHETIC-ID]/g; s/[0-9A-Fa-f]{32}/[REDACTED-KEY]/g' | tail -n 35 || true
 for component in ue gnb; do
   echo "----- CI_SYNTHETIC_${component}_STATUS -----"
   docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "l3-$component" || true
