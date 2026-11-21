@@ -1,0 +1,46 @@
+name: srsRAN 5G SA ZMQ gNB and srsUE image qualification (no native build)
+on:
+  push:
+    branches:
+      - experiment/layer3-srsran-open5gs-protocol-matrix-20261121
+    paths:
+      - .github/workflows/experimental-srsran-srsue-zmq-preflight-20261121.yml
+permissions:
+  contents: read
+concurrency:
+  group: srsue-zmq-image-check-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  prebuilt-zmq-capabilities:
+    if: github.repository == 'rathod9771/5g-kubernetes'
+    name: "${{ matrix.component }} prebuilt 5G-SA ZMQ binary check"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        component: [gnb, srsue]
+    steps:
+      - name: Checkout isolated experimental branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Static syntax and no-build policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n ci/experimental/srsran-open5gs-ue-zmq/preflight.sh
+          ! grep -qE '(docker build|git clone|kubectl |helm install|helm upgrade|modprobe)' ci/experimental/srsran-open5gs-ue-zmq/preflight.sh
+      - name: Inspect published gNB/srsUE binary and ZMQ plugin (no compilation)
+        shell: bash
+        timeout-minutes: 12
+        run: bash ci/experimental/srsran-open5gs-ue-zmq/preflight.sh "${{ matrix.component }}"
+      - name: Upload bounded public-image qualification receipt only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prebuilt-zmq-${{ matrix.component }}-${{ github.run_id }}
+          path: evidence/${{ matrix.component }}.json
+          if-no-files-found: warn
+          retention-days: 14

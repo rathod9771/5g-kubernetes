@@ -1,0 +1,39 @@
+name: Layer 3 non-HCRAN local observer reproducibility
+on:
+  push:
+    branches:
+      - feature/layer3-protocol-local-safe-promote-20261121
+      - main
+    paths:
+      - scripts/layer3/**
+      - tests/test_layer3_local_protocol_observer.py
+      - .github/workflows/layer3-non-hcran-local-observer-validation.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-local-observer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Check Python/Bash syntax without cluster access
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/layer3/local_protocol_observer.py scripts/layer3/install_local_protocol_observer.py
+          python3 -m unittest discover -s tests -p 'test_layer3_local_protocol_observer.py' -v
+      - name: Reproduce installer in temporary current-user prefix
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/layer3-observer"
+          python3 scripts/layer3/install_local_protocol_observer.py --check --prefix "$install_dir"
+          python3 scripts/layer3/install_local_protocol_observer.py --install --prefix "$install_dir"
+          python3 scripts/layer3/install_local_protocol_observer.py --check --prefix "$install_dir" | grep -q '"existing_install_matches": true'
+          "$install_dir/layer3-protocol-observer" --help
+          python3 scripts/layer3/install_local_protocol_observer.py --uninstall --prefix "$install_dir"
+          test ! -e "$install_dir/layer3-protocol-observer"

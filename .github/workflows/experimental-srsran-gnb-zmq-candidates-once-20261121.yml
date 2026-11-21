@@ -1,0 +1,36 @@
+name: Find prebuilt ZMQ-capable srsRAN gNB (no build)
+on:
+  push:
+    branches:
+      - experiment/layer3-srsran-open5gs-protocol-matrix-20261121
+    paths:
+      - .github/workflows/experimental-srsran-gnb-zmq-candidates-once-20261121.yml
+      - ci/experimental/srsran-open5gs-ue-zmq/gnb-candidates.sh
+permissions:
+  contents: read
+jobs:
+  evaluate-candidates:
+    if: github.repository == 'rathod9771/5g-kubernetes'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 14
+    steps:
+      - name: Checkout experimental preflight
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify no-build candidate checker syntax
+        run: |
+          set -euo pipefail
+          bash -n ci/experimental/srsran-open5gs-ue-zmq/gnb-candidates.sh
+          ! grep -qE '(docker build|git clone|kubectl |helm install|helm upgrade|modprobe)' ci/experimental/srsran-open5gs-ue-zmq/gnb-candidates.sh
+      - name: Inspect two published gNB images for ZMQ capability (no deployment)
+        timeout-minutes: 12
+        run: bash ci/experimental/srsran-open5gs-ue-zmq/gnb-candidates.sh
+      - name: Upload no-protocol-claim receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: srsran-gnb-zmq-candidates-${{ github.run_id }}
+          path: evidence/gnb-candidates.json
+          if-no-files-found: warn
+          retention-days: 14
