@@ -29,8 +29,9 @@ for image in ghcr.io/herlesupreeth/docker_srsran:master openmcx/openmcx-srsran-g
     command -v gnb
     command -v srscu || true
     command -v srsdu || true
-    find /usr/local /usr/lib /opt -type f \\( -iname "*radio*zmq*" -o -iname "*rf*zmq*" -o -iname "*srsran*zmq*" \\) -print 2>/dev/null | head -n 25
-    test -n "$(find /usr/local /usr/lib /opt -type f \\( -iname "*radio*zmq*" -o -iname "*rf*zmq*" -o -iname "*srsran*zmq*" \\) -print -quit 2>/dev/null)"
+    find /usr/local /usr/lib /opt -type f -iname "*zmq*" -print 2>/dev/null | head -n 30
+    p="$(find /usr/local /usr/lib /opt -type f -iname "*zmq*" -print 2>/dev/null | grep -E "(radio_zmq|rf_zmq|srsran.*zmq)" | head -n 1)"
+    test -n "$p"
   '; then
     export IMAGE="$image" DIGEST="$digest"
     python3 - <<'PY'
