@@ -1,0 +1,38 @@
+name: Real srsUE virtual radio RRC and NGAP InitialUEMessage (no builds)
+on:
+  push:
+    branches:
+      - experiment/layer3-srsran-open5gs-protocol-matrix-20261121
+    paths:
+      - .github/workflows/experimental-srsran-srsue-rrc-smoke-20261121.yml
+permissions:
+  contents: read
+jobs:
+  srsran-open5gs-virtual-radio:
+    if: github.repository == 'rathod9771/5g-kubernetes'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 18
+    steps:
+      - name: Checkout isolated experiment (no modifications to real cluster)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify Python/Bash syntax and no-compilation policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile ci/experimental/srsran-open5gs-ue-zmq/prepare_ue_rrc.py ci/experimental/srsran-open5gs-ue-zmq/report_ue_rrc.py
+          bash -n ci/experimental/srsran-open5gs-ue-zmq/run_rrc_smoke.sh
+          ! grep -qE '(docker build|git clone|kubectl |helm install|helm upgrade|modprobe)' ci/experimental/srsran-open5gs-ue-zmq/run_rrc_smoke.sh
+      - name: Real srsRAN gNB ZMQ + srsUE + Open5GS AMF/NRF smoke
+        timeout-minutes: 16
+        shell: bash
+        run: bash ci/experimental/srsran-open5gs-ue-zmq/run_rrc_smoke.sh
+      - name: Upload sanitized measured-protocol-verdict only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: srsue-real-rrc-protocol-verdict-${{ github.run_id }}
+          path: srsue-rrc-verdict.json
+          if-no-files-found: warn
+          retention-days: 14
