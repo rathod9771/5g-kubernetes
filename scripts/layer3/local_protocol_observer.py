@@ -18,7 +18,7 @@ import time
 
 EXCLUDED = re.compile(r"(?i)(?:h[-_]?cran|hybrid[-_]?cran)")
 RAN = re.compile(r"(?i)(?:srsran|srscu|srsdu|oai[-_]?(?:gnb|cu|du)|(?:^|[-_])(?:cran|vcran|fran|oran|cloud[-_]?ran)[-_]?(?:oai|srsran))")
-CORE = re.compile(r"(?i)open5gs[-_](?:amf|smf|upf|nrf|ausf|udm|udr|pcf)")
+CORE = re.compile(r"(?i)(?:^|[^a-z0-9])open5gs[-_](?:[a-z0-9]+[-_])?(?:amf|smf|upf|nrf|ausf|udm|udr|pcf)(?=[-_]|[^a-z0-9]|$)")
 MESSAGES = {
     "ngap_ng_setup_request": r"(?i)NG[-_ ]?Setup[-_ ]?Request",
     "ngap_ng_setup_response": r"(?i)NG[-_ ]?Setup[-_ ]?Response",
