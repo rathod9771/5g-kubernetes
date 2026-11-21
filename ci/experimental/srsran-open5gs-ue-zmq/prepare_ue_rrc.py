@@ -28,11 +28,11 @@ def main():
     du = yaml.safe_load((out / "du1.yml").read_text())
     cell = du["cell_cfg"]
     cell.update({
-        "dl_arfcn": 368500, "band": 3, "channel_bandwidth_MHz": 20,
+        "dl_arfcn": 368500, "band": 3, "channel_bandwidth_MHz": 10,
         "common_scs": 15, "plmn": "20893", "tac": 1, "pci": 1,
         "pdcch": {
             "dedicated": {"ss2_type": "common", "dci_format_0_1_and_1_1": False},
-            "common": {"ss0_index": 0, "coreset0_index": 13},
+            "common": {"ss0_index": 0, "coreset0_index": 12},
         },
         "prach": {"prach_config_index": 1},
         # srsUE fallback DCI requires 64-QAM (see official srsRAN srsUE ZMQ example).
@@ -47,8 +47,8 @@ def main():
         "cu_cp": {"amf": cu["cu_cp"]["amf"]},
         "ru_sdr": {
             "device_driver": "zmq",
-            "device_args": "tx_port=tcp://172.30.250.10:2000,rx_port=tcp://172.30.250.40:2001,base_srate=23.04e6",
-            "srate": 23.04, "tx_gain": 75, "rx_gain": 75,
+            "device_args": "tx_port=tcp://172.30.250.10:2000,rx_port=tcp://172.30.250.40:2001,base_srate=11.52e6,id=gnb",
+            "srate": 11.52, "tx_gain": 0, "rx_gain": 0,
         },
         "cell_cfg": cell,
         "log": {"filename": "/tmp/gnb.log", "all_level": "info"},
@@ -60,12 +60,13 @@ def main():
     subscriber = "208930000000001"
     ue_conf = f"""[rf]
 freq_offset = 0
-tx_gain = 50
-rx_gain = 40
-srate = 23.04e6
+tx_gain = 0
+rx_gain = 0
+srate = 11.52e6
 nof_antennas = 1
+time_adv_nsamples = 300
 device_name = zmq
-device_args = tx_port=tcp://172.30.250.40:2001,rx_port=tcp://172.30.250.10:2000,id=ue,base_srate=23.04e6
+device_args = tx_port=tcp://172.30.250.40:2001,rx_port=tcp://172.30.250.10:2000,id=ue,base_srate=11.52e6
 [rat.eutra]
 nof_carriers = 0
 [rat.nr]
@@ -73,8 +74,8 @@ bands = 3
 nof_carriers = 1
 dl_nr_arfcn = 368500
 ssb_nr_arfcn = 368410
-max_nof_prb = 106
-nof_prb = 106
+max_nof_prb = 52
+nof_prb = 52
 [usim]
 mode = soft
 algo = milenage
@@ -105,7 +106,7 @@ file_max_size = -1
         "schema": 1,
         "scope": "ISOLATED_MONOLITHIC_SRSRAN_RRC_NGAP_INITIAL_UE_SMOKE",
         "profile_base": "srsran-cran", "virtual_radio": "zmq",
-        "band": 3, "scs_khz": 15, "bandwidth_mhz": 20,
+        "band": 3, "scs_khz": 15, "bandwidth_mhz": 10,
         "gnb": "172.30.250.10", "amf": "172.30.250.20",
         "ue_radio_endpoint": "172.30.250.40",
         "full_5gc": False,
