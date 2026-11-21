@@ -160,7 +160,7 @@ class Trial:
         capture=private/"setup.pcapng"
         with (private/"capture.log").open("w") as log:
             self.capture=subprocess.Popen(
-                ["sudo","-n","tshark","-n","-i",BRIDGE,"-f","sctp",
+                ["sudo","-n","dumpcap","-i",BRIDGE,"-f","sctp",
                  "-a","duration:100","-a","filesize:4096","-w",str(capture)],
                 stdout=subprocess.DEVNULL,stderr=log)
             time.sleep(3)

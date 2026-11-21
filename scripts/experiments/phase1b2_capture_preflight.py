@@ -32,6 +32,8 @@ def classify_error(log):
         return "OBSERVER_DIAGNOSTIC_UNAVAILABLE"
     patterns = (
         ("NO_SUCH_INTERFACE", r"no such (?:device|interface)|interface .* not found|could not find interface"),
+        ("CAPTURE_OUTPUT_DENIED", r"(?:file|output|write|pcap).{0,100}(?:permission denied|operation not permitted)|(?:permission denied|operation not permitted).{0,100}(?:file|output|write|pcap)"),
+        ("CAPTURE_INTERFACE_DENIED", r"(?:interface|device|capture).{0,100}(?:permission denied|operation not permitted)|(?:permission denied|operation not permitted).{0,100}(?:interface|device|capture)"),
         ("PERMISSION_DENIED", r"permission denied|operation not permitted|you don't have permission|not allowed to capture|sudo: .*password"),
         ("CAPTURE_ARGUMENT_REJECTED", r"invalid (?:capture|argument|option)|unknown option|unrecognized option|error parsing|invalid .*filesize"),
         ("DUMPCAP_LAUNCH_FAILED", r"couldn't run .*dumpcap|could not run .*dumpcap|dumpcap.*not found"),
@@ -46,7 +48,7 @@ def capture_command(interface, output, seconds=8):
     """Keep options identical to actual trial; only duration is shorter."""
     if interface != wire.BRIDGE or not 4 <= seconds <= 120:
         raise PreflightError("Unapproved bridge or capture time")
-    return ["sudo", "-n", "tshark", "-n", "-i", interface, "-f", "sctp",
+    return ["sudo", "-n", "dumpcap", "-i", interface, "-f", "sctp",
             "-a", "duration:" + str(seconds), "-a", "filesize:4096",
             "-w", str(output)]
 
@@ -94,7 +96,7 @@ def preflight(out):
     created = False
     process = None
     try:
-        if not shutil.which("docker") or not shutil.which("tshark") or not shutil.which("sudo"):
+        if not shutil.which("docker") or not shutil.which("tshark") or not shutil.which("dumpcap") or not shutil.which("sudo"):
             receipt["error_category"] = "REQUIRED_TOOL_MISSING"
             raise PreflightError("Required observer tool absent")
         if not Path("/proc/net/sctp").exists():

@@ -38,3 +38,10 @@ gh workflow run phase1b2-cran-srsran-ngf1-manual.yml \
 ```
 
 No duplicate manual executions. All independent study source/evidence stays separate from main and HP. Tracking: issue #16. 
+
+
+## Capture-engine correction after bounded probe
+
+The low-cost GitHub-hosted observer probe [#44893007084](https://github.com/rathod9771/5g-kubernetes/actions/runs/44893007084) **reproduced** the pre-workload exit with `error_category=PERMISSION_DENIED`, `bridge_present=true`, `observer_returncode=1`. This does not yet distinguish capture-device permission from capture-output-file permission.
+
+The next experiment uses **`dumpcap` as the privileged *capture-only* process** instead of launching the full TShark analyzer as root. It retains unprivileged `tshark -r` strictly for decoding the saved PCAP. The identical `dumpcap` command is checked on a disposable bridge before any srsRAN source build; a failed probe blocks the expensive runtime. Both processes use the runner's short-lived local filesystem, no live UE or 5G network on push, and no upload of raw captures. A second `PERMISSION_DENIED` is a **BLOCKED** result requiring further investigation, not a reason to bypass the observer.

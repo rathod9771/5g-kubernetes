@@ -27,9 +27,9 @@ testee = load("phase1b2_capture_preflight")
 class CaptureCommandContracts(unittest.TestCase):
     def test_preflight_uses_exact_original_sctp_tshark_options(self):
         cmd = testee.capture_command(testee.wire.BRIDGE, Path("/tmp/test-only.pcapng"))
-        self.assertEqual(cmd[:6], ["sudo", "-n", "tshark", "-n", "-i", testee.wire.BRIDGE])
-        self.assertEqual(cmd[6:8], ["-f", "sctp"])
-        self.assertEqual(cmd[8:12], ["-a", "duration:8", "-a", "filesize:4096"])
+        self.assertEqual(cmd[:5], ["sudo", "-n", "dumpcap", "-i", testee.wire.BRIDGE])
+        self.assertEqual(cmd[5:7], ["-f", "sctp"])
+        self.assertEqual(cmd[7:11], ["-a", "duration:8", "-a", "filesize:4096"])
         self.assertEqual(cmd[-2:], ["-w", "/tmp/test-only.pcapng"])
 
     def test_wrong_interface_and_excess_duration_rejected(self):
