@@ -43,6 +43,37 @@ class TestLocalObserver(unittest.TestCase):
         selected = observer.select([pod(n) for n in cases], 35)
         self.assertEqual([x["pod"] for x in selected], sorted(cases))
 
+    def test_open5gs_release_qualified_hp_pod_names(self):
+        """The real HP cluster uses open5gs-<release-id>-<nf>-<hash>."""
+        ns = "c63ff4ec-6bd4-46bc-90a2-d45fb0809c2c"
+        names = [
+            "open5gs-0004215456-amf-85f6df5688-7pt9k",
+            "open5gs-0004215456-ausf-f55b9fdf5-8j2xg",
+            "open5gs-0004215456-nrf-7d88c88664-wtgbp",
+            "open5gs-0004215456-smf-5c4b4cc4dd-tf6cv",
+            "open5gs-0004215456-udm-777d45cd8c-dh7tt",
+            "open5gs-0004215456-udr-67897987c9-2g69s",
+            "open5gs-0004215456-upf-bdc7f958c-j7mjz",
+            "open5gs-0004215456-pcf-744488d567-rq7sj",
+        ]
+        selected = observer.select([pod(n, namespace=ns, containers=("open5gs",),
+                                        labels={"app.kubernetes.io/instance": "open5gs-0004215456"})
+                                    for n in names], 35)
+        self.assertEqual([x["pod"] for x in selected], sorted(names))
+        self.assertTrue(all(x["group"] == "open5gs" for x in selected))
+
+    def test_release_qualified_open5gs_with_hcran_label_stays_excluded(self):
+        pod_data = pod("open5gs-0004215456-amf-85f6df5688-7pt9k",
+                       labels={"scenario": "hcran"})
+        self.assertEqual(observer.select([pod_data], 35), [])
+
+    def test_does_not_confuse_other_release_pods_with_open5gs_nfs(self):
+        self.assertEqual(observer.select([
+            pod("open5gs-0004215456-webui-5ff7d9cf5c-v7lj8"),
+            pod("open5gs-0004215456-populate-6bf8d6dc6c-5hdv8"),
+            pod("open5gs-mongo-custom-0"), pod("random-amf-0"),
+        ], 35), [])
+
     def test_excludes_unrelated_pods_and_ue(self):
         self.assertEqual(observer.select(
             [pod("grafana"), pod("etcd"), pod("oai-nr-ue"), pod("cran-srsran-ue")], 35), [])
