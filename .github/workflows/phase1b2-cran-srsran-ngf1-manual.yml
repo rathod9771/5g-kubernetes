@@ -1,0 +1,166 @@
+name: Phase 1B2 C-RAN srsRAN NGAP F1AP wire smoke (MANUAL; NO UE)
+
+on:
+  push:
+    branches:
+      - experiment/phase1b2-cran-srsran-ngf1-20261121
+    paths:
+      - .github/workflows/phase1b2-cran-srsran-ngf1-manual.yml
+      - ci/phase1b2/**
+      - scripts/experiments/phase1b2_*
+      - tests/test_phase1b2_srsran_ngf1.py
+      - docs/phase1b2-cran-srsran-ngf1.md
+  workflow_dispatch:
+    inputs:
+      offline_run_id:
+        description: 'Successful full offline run for this exact branch and SHA'
+        required: true
+        type: string
+      confirm_isolated_no_deploy:
+        description: 'Enter ISOLATED_SRSCU_SRSDU_NGF1_NO_DEPLOY'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: phase1b2-srsran-ngf1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline contracts only
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          bash -n scripts/experiments/phase1b2_build_srsran.sh
+          python3 -m py_compile scripts/experiments/phase1b2_*.py
+          python3 -m unittest discover -s tests -p test_phase1b2_srsran_ngf1.py -v
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Verify actual C-RAN Helm config, offline only
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/render"
+          helm template cran-srsran-cu helm/cran-srsran/cu \
+            --set-string image.reference=example.invalid/phase1b2:offline --set radio.gnbId=3585 \
+            --set experimentalTransport=false > "$RUNNER_TEMP/render/cu.yaml"
+          helm template cran-srsran-du helm/cran-srsran/du \
+            --set-string image.reference=example.invalid/phase1b2:offline \
+            --set radio.gnbId=3585,radio.duId=100,radio.pci=101,radio.sectorId=1,radio.channel_bandwidth_MHz=20,radio.txGain=75 \
+            --set experimentalTransport=false > "$RUNNER_TEMP/render/du.yaml"
+          python3 - "$RUNNER_TEMP/render" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,"scripts/experiments")
+          from phase1b2_srsran_ngf1 import render_config
+          for role in ("cu","du"):
+              render_config(Path(sys.argv[1])/(role+".yaml"),role)
+          print("Static C-RAN config valid. Actual runtime NOT TESTED.")
+          PY
+
+  offline-gate:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require exact branch and SHA full offline success
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PHASE1B2_OFFLINE_RUN_ID: ${{ inputs.offline_run_id }}
+          PHASE1B2_ISOLATED_CONFIRM: ${{ inputs.confirm_isolated_no_deploy }}
+        run: python3 scripts/experiments/phase1b2_verify_offline_run.py
+
+  build-and-wire:
+    if: github.event_name == 'workflow_dispatch'
+    needs: offline-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    env:
+      SRS_IMAGE: phase1b2-srsran:25.04.0-11c9bbabb6-signaling
+      CORE_IMAGE: gradiant/open5gs:2.7.6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: qualification
+      - name: Frozen disposable AMF/NRF input
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 4080110a74bf6ba58804797c5b7216458e2f0a93
+          path: baseline
+      - name: Install packet decoder and pinned parser on disposable runner only
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          mkdir -p "$RUNNER_TEMP/phase1b2-render" "$RUNNER_TEMP/phase1b2-evidence"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tshark
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -d /proc/net/sctp
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          tshark --version > "$RUNNER_TEMP/phase1b2-evidence/tshark-version.txt"
+          printf '%s\n' "source_sha=${{ github.sha }}" "stage3_base=4080110a74bf6ba58804797c5b7216458e2f0a93" > "$RUNNER_TEMP/phase1b2-evidence/source-pins.txt"
+          python3 -m unittest discover -s qualification/tests -p test_phase1b2_srsran_ngf1.py -v
+      - name: Native pinned source Docker build (only srscu and srsdu, no UHD or DPDK)
+        timeout-minutes: 100
+        run: bash qualification/scripts/experiments/phase1b2_build_srsran.sh
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Render signaling-only C-RAN profile with no optional user-plane overlay
+        run: |
+          set -euo pipefail
+          helm template cran-srsran-cu qualification/helm/cran-srsran/cu \
+            --set-string image.reference=example.invalid/phase1b2:offline --set radio.gnbId=3585 \
+            --set experimentalTransport=false > "$RUNNER_TEMP/phase1b2-render/cu.yaml"
+          helm template cran-srsran-du qualification/helm/cran-srsran/du \
+            --set-string image.reference=example.invalid/phase1b2:offline \
+            --set radio.gnbId=3585,radio.duId=100,radio.pci=101,radio.sectorId=1,radio.channel_bandwidth_MHz=20,radio.txGain=75 \
+            --set experimentalTransport=false > "$RUNNER_TEMP/phase1b2-render/du.yaml"
+          docker pull "$CORE_IMAGE"
+          docker image inspect "$CORE_IMAGE" --format '{{.Id}} {{json .RepoDigests}}' > "$RUNNER_TEMP/phase1b2-evidence/core-image-id.txt"
+      - name: Capture and decode real NG Setup and F1 Setup messages
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          python3 -u qualification/scripts/experiments/phase1b2_srsran_ngf1.py \
+            --rendered "$RUNNER_TEMP/phase1b2-render" \
+            --stage3 "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13/stage3" \
+            --out "$RUNNER_TEMP/phase1b2-evidence" \
+            --srs-image "$SRS_IMAGE" --core-image "$CORE_IMAGE"
+      - name: Retain bounded receipts and build identities only (raw traces remain runner-local)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1b2-srsran-wire-evidence-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/phase1b2-evidence/receipt.json
+            ${{ runner.temp }}/phase1b2-evidence/source-pins.txt
+            ${{ runner.temp }}/phase1b2-evidence/tshark-version.txt
+            ${{ runner.temp }}/phase1b2-evidence/core-image-id.txt
+            ${{ runner.temp }}/phase1b2-build/source-pin.txt
+            ${{ runner.temp }}/phase1b2-build/base-digest.txt
+            ${{ runner.temp }}/phase1b2-build/image-id.txt
+            ${{ runner.temp }}/phase1b2-build/binary-proof.txt
+            ${{ runner.temp }}/phase1b2-build/package-and-runtime-proof.txt
+          if-no-files-found: warn
+          retention-days: 14
