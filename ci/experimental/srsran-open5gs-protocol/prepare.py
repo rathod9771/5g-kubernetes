@@ -66,6 +66,14 @@ def main():
     cu_txt = yaml.safe_dump(cu)
     check(cu_txt.count("AMF_IP") == 1 and cu_txt.count("POD_IP") >= 2, "CU_ADDRESS_TEMPLATE_MISMATCH")
     cu = yaml.safe_load(cu_txt.replace("AMF_IP", AMF_ADDR).replace("POD_IP", CU_ADDR))
+    # F-RAN and H-CRAN charts enable an experimental CU F1-U socket on UDP 2152.
+    # This conflicts with the prebuilt image's default NG-U 2152 listener.
+    # CI tests only NGAP and F1-C SETUP: omit the additive F1-U socket in the
+    # disposable config. Source charts and deployed HP configs remain unchanged.
+    if profile in ("fran", "hcran"):
+        check("cu_up" in cu and "f1u" in cu["cu_up"], "EXPECTED_EXPERIMENTAL_F1U_SOCKET")
+        check(cu["cu_up"]["f1u"]["bind_port"] == 2152, "UNEXPECTED_EXPERIMENTAL_F1U_BIND_PORT")
+        del cu["cu_up"]
     cu["log"]["all_level"] = "info"
     dump(dest / "cu.yml", cu)
     du_configs = []
@@ -137,7 +145,8 @@ def main():
         "radio_mode": "srsRAN_built_in_ru_dummy_for_F1_signalling_only",
         "no_oai": True,
         "no_local_cluster": True,
-        "scope": "NG_SETUP_AND_F1_SETUP_ONLY"
+        "scope": "NG_SETUP_AND_F1_SETUP_ONLY",
+        "ci_only_user_plane_override": profile in ("fran", "hcran")
     }
     (dest / "plan.json").write_text(json.dumps(report, indent=2) + "\n")
     print("PREPARED_ISOLATED_" + profile.upper() + "_CONFIG_FROM_TRACKED_SRSRAN_CHARTS")
