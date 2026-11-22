@@ -97,8 +97,8 @@ def render_config(path, role):
             raise EvidenceError(f"Expected one {kind} {name}")
         return matches[0]
     dep = one("Deployment", full)
-    if dep["metadata"]["labels"]["ran-type"] != "cran" or dep["spec"]["template"]["metadata"]["labels"]["ran-type"] != "cran":
-        raise EvidenceError("Not the intended C-RAN profile")
+    if dep["metadata"]["labels"]["ran-type"] != "hcran" or dep["spec"]["template"]["metadata"]["labels"]["ran-type"] != "hcran":
+        raise EvidenceError("Not the intended H-CRAN profile")
     raw = one("ConfigMap", full+"-config")["data"][chart_role+".yml"]
     raw = raw.replace("POD_IP",IP[role]).replace("AMF_IP",IP["amf"]).replace("CU_IP",IP["cu"])
     if any(v in raw for v in ("POD_IP","AMF_IP","CU_IP")):
