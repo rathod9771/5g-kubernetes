@@ -42,6 +42,9 @@ NON_PACKAGE_FILES = frozenset((
     'scripts/build-private-installer.sh', 'scripts/build-ran-batch.sh', 'scripts/build-ran-nsds.sh',
     'scripts/rename-ran-packages.sh',
     'scripts/hcran_build_pinned_w45_ue_t3517_tunrenewal_raguard.sh', # opt-in RFsim research only
+    # Exact two reviewed read-only Layer-3 research observers; never OSM package inputs.
+    'scripts/layer3/install_local_protocol_observer.py',
+    'scripts/layer3/local_protocol_observer.py',
     'scripts/ci_oai_ngap_readiness.py',  # read-only historical H-CRAN CI inventory; never an OSM package input
 ))
 SHA = re.compile(r'[0-9a-f]{40}')

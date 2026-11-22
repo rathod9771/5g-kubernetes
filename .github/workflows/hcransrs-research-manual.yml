@@ -1,0 +1,212 @@
+name: H-CRAN srsRAN Rel-15/16-oriented dual DU NGAP/F1AP research (MANUAL; NO UE / RF PEERS)
+
+on:
+  push:
+    branches:
+      - experiment/hcran-srsran-3gpp-20261122
+    paths:
+      - .github/workflows/hcransrs-research-manual.yml
+      - scripts/experiments/hcransrs_*
+      - tests/test_hcransrs_research.py
+      - docs/hcransrs-research-3gpp.md
+  workflow_dispatch:
+    inputs:
+      offline_run_id:
+        description: 'Successful full offline run for this exact branch and SHA'
+        required: true
+        type: string
+      confirm_isolated_no_deploy:
+        description: 'Enter ISOLATED_HCRAN_SRSCU_TWO_DUS_NO_DEPLOY'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: hcransrs-dual-f1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline contracts only
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          bash -n scripts/experiments/hcransrs_build.sh
+          python3 -m py_compile scripts/experiments/hcransrs_*.py
+          python3 -m unittest discover -s tests -p test_hcransrs_research.py -v
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Verify actual H-CRAN CU/macro/small Helm configuration, offline only
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/render"
+          helm template hcran-srsran-cu helm/cran-srsran/cu \
+            -f helm/cran-srsran/cu/values-hcran.yaml \
+            --set-string image.reference=example.invalid/hcransrs:offline \
+            --set-string image.pullPolicy=Never > "$RUNNER_TEMP/render/cu.yaml"
+          for cell in macro small; do
+            helm template "hcran-srsran-$cell" helm/cran-srsran/du \
+              -f "helm/cran-srsran/du/values-hcran-$cell.yaml" \
+              --set-string image.reference=example.invalid/hcransrs:offline \
+              --set-string image.pullPolicy=Never > "$RUNNER_TEMP/render/$cell.yaml"
+          done
+          python3 - "$RUNNER_TEMP/render" <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,"scripts/experiments")
+          from hcransrs_ngf1 import render_config
+          for role in ("cu","macro","small"):
+              render_config(Path(sys.argv[1])/(role+".yaml"),role)
+          print("H-CRAN srsRAN static dual-DU profile valid. No runtime or UE tested.")
+          PY
+
+  observer-preflight:
+    if: github.event_name == 'push'
+    name: Disposable SCTP observer startup probe (NO RAN build or protocol)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install only observer prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          mkdir -p "$RUNNER_TEMP/hcransrs-observer"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tshark
+          test -d /proc/net/sctp || sudo modprobe sctp
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+      - name: Prove capture startup on disposable isolated Docker bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u scripts/experiments/hcransrs_observer_preflight.py \
+            --out "$RUNNER_TEMP/hcransrs-observer"
+      - name: Upload ONLY bounded startup category (never logs or PCAP)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-observer-startup-${{ github.run_id }}
+          path: ${{ runner.temp }}/hcransrs-observer/observer-preflight-receipt.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  offline-gate:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require exact branch and SHA full offline success
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HCRANSRS_OFFLINE_RUN_ID: ${{ inputs.offline_run_id }}
+          HCRANSRS_ISOLATED_CONFIRM: ${{ inputs.confirm_isolated_no_deploy }}
+        run: python3 scripts/experiments/hcransrs_verify_offline_run.py
+
+  build-and-wire:
+    if: github.event_name == 'workflow_dispatch'
+    needs: offline-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    env:
+      SRS_IMAGE: hcransrs-srsran:25.04.0-11c9bbabb6-2du-signaling
+      CORE_IMAGE: gradiant/open5gs:2.7.6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: qualification
+      - name: Frozen disposable AMF/NRF input
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 4080110a74bf6ba58804797c5b7216458e2f0a93
+          path: baseline
+      - name: Install packet decoder and pinned parser on disposable runner only
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          mkdir -p "$RUNNER_TEMP/hcransrs-render" "$RUNNER_TEMP/hcransrs-evidence"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tshark
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -d /proc/net/sctp
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          tshark --version > "$RUNNER_TEMP/hcransrs-evidence/tshark-version.txt"
+          printf '%s\n' "source_sha=${{ github.sha }}" "stage3_base=4080110a74bf6ba58804797c5b7216458e2f0a93" > "$RUNNER_TEMP/hcransrs-evidence/source-pins.txt"
+          python3 -m unittest discover -s qualification/tests -p test_hcransrs_research.py -v
+      - name: Fail-fast observer startup (BEFORE srsRAN compilation)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u qualification/scripts/experiments/hcransrs_observer_preflight.py \
+            --out "$RUNNER_TEMP/hcransrs-evidence/observer-preflight"
+      - name: Pinned srsRAN source CU plus two independent DUs, no physical SDR
+        timeout-minutes: 100
+        run: bash qualification/scripts/experiments/hcransrs_build.sh
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Render canonical H-CRAN CU plus macro/small DU profiles; no deployment
+        run: |
+          set -euo pipefail
+          helm template hcran-srsran-cu qualification/helm/cran-srsran/cu \
+            -f qualification/helm/cran-srsran/cu/values-hcran.yaml \
+            --set-string image.reference=example.invalid/hcransrs:offline \
+            --set-string image.pullPolicy=Never > "$RUNNER_TEMP/hcransrs-render/cu.yaml"
+          for cell in macro small; do
+            helm template "hcran-srsran-$cell" qualification/helm/cran-srsran/du \
+              -f "qualification/helm/cran-srsran/du/values-hcran-$cell.yaml" \
+              --set-string image.reference=example.invalid/hcransrs:offline \
+              --set-string image.pullPolicy=Never > "$RUNNER_TEMP/hcransrs-render/$cell.yaml"
+          done
+          docker pull "$CORE_IMAGE"
+          docker image inspect "$CORE_IMAGE" --format '{{.Id}} {{json .RepoDigests}}' > "$RUNNER_TEMP/hcransrs-evidence/core-image-id.txt"
+      - name: Capture one N2 NG Setup and TWO distinct F1AP setups (DU100 and DU101)
+        timeout-minutes: 7
+        run: |
+          set -euo pipefail
+          python3 -u qualification/scripts/experiments/hcransrs_ngf1.py \
+            --rendered "$RUNNER_TEMP/hcransrs-render" \
+            --stage3 "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13/stage3" \
+            --out "$RUNNER_TEMP/hcransrs-evidence" \
+            --srs-image "$SRS_IMAGE" --core-image "$CORE_IMAGE"
+      - name: Retain bounded receipts and build identities only (raw traces remain runner-local)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-srsran-wire-evidence-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/hcransrs-evidence/receipt.json
+            ${{ runner.temp }}/hcransrs-evidence/observer-preflight/observer-preflight-receipt.json
+            ${{ runner.temp }}/hcransrs-evidence/source-pins.txt
+            ${{ runner.temp }}/hcransrs-evidence/tshark-version.txt
+            ${{ runner.temp }}/hcransrs-evidence/core-image-id.txt
+            ${{ runner.temp }}/hcransrs-build/source-pin.txt
+            ${{ runner.temp }}/hcransrs-build/base-digest.txt
+            ${{ runner.temp }}/hcransrs-build/image-id.txt
+            ${{ runner.temp }}/hcransrs-build/binary-proof.txt
+            ${{ runner.temp }}/hcransrs-build/package-and-runtime-proof.txt
+          if-no-files-found: warn
+          retention-days: 14

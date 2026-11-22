@@ -1,0 +1,39 @@
+# Research-only native srsRAN split runtime; no physical SDR dependencies.
+# BASE is a resolved, recorded immutable Ubuntu image reference, not a tag.
+ARG BASE
+FROM ${BASE} AS build
+COPY . /src
+WORKDIR /src
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates git cmake ninja-build gcc g++ pkg-config libfftw3-dev \
+      libmbedtls-dev libsctp-dev libyaml-cpp-dev libgtest-dev libzmq3-dev && \
+    git config --global --add safe.directory /src
+ARG SOURCE_COMMIT
+RUN test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT" && \
+    cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_TESTING=OFF -DENABLE_UHD=OFF -DENABLE_DPDK=OFF \
+      -DENABLE_ZEROMQ=ON -DENABLE_EXPORT=ON -DMARCH=native && \
+    grep -qx 'ENABLE_ZEROMQ:BOOL=ON' /build/CMakeCache.txt && \
+    cmake --build /build --target srscu srsdu --parallel 2 && \
+    test -x /build/apps/cu/srscu && test -x /build/apps/du/srsdu && \
+    mkdir -p /proof && \
+    sha256sum /build/apps/cu/srscu /build/apps/du/srsdu > /proof/binary-sha256.txt && \
+    grep -E '^(ENABLE_(UHD|DPDK|ZEROMQ|EXPORT)|BUILD_TESTING|MARCH|CMAKE_BUILD_TYPE):' /build/CMakeCache.txt > /proof/build-options.txt && \
+    dpkg-query -W > /proof/build-packages.txt
+FROM ${BASE} AS runtime
+ARG SOURCE_COMMIT
+LABEL org.opencontainers.image.source="https://github.com/herlesupreeth/srsRAN_Project.git"
+LABEL org.opencontainers.image.revision="${SOURCE_COMMIT}"
+LABEL io.5g-kubernetes.scope="hcransrs-isolated-two-du-signaling-only"
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      libfftw3-dev libmbedtls-dev libsctp-dev libyaml-cpp-dev libzmq5 && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=build /build/apps/cu/srscu /usr/local/bin/srscu
+COPY --from=build /build/apps/du/srsdu /usr/local/bin/srsdu
+COPY --from=build /proof /proof
+RUN ldd /usr/local/bin/srscu > /proof/cu-linkage.txt && \
+    ldd /usr/local/bin/srsdu > /proof/du-linkage.txt && \
+    ! grep -F 'not found' /proof/*-linkage.txt && \
+    dpkg-query -W > /proof/runtime-packages.txt

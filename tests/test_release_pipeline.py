@@ -172,6 +172,17 @@ class ImpactTests(unittest.TestCase):
         self.assertEqual(result['paths']['scripts/telecom/subcharts.py']['class'], 'researcher-cicd')
         self.assertEqual(result['paths']['helm/ueransim/values.yaml']['class'], 'helm-not-in-registry')
 
+    def test_approved_local_layer3_observers_only_are_non_package(self):
+        allowed = ['scripts/layer3/install_local_protocol_observer.py',
+                   'scripts/layer3/local_protocol_observer.py']
+        result = self.impact(allowed)
+        self.assertEqual(result['status'], 'determined')
+        self.assertEqual((result['ran_scenarios'], result['core_components']), ([], []))
+        for path in allowed:
+            self.assertEqual(result['paths'][path]['class'], 'non-package')
+        self.assertEqual(self.impact(['scripts/layer3/unreviewed_runtime.py'])['status'],
+                         'full-rebuild')
+
     def test_unknown_paths_force_a_full_rebuild(self):
         for path in ('newdir/tool.py', 'scripts/new_generator.py', 'config/new-policy.json'):
             with self.subTest(path=path):
