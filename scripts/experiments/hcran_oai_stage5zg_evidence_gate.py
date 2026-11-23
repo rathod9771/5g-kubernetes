@@ -65,7 +65,7 @@ def main():
     args = ap.parse_args()
     run = gh(f"actions/runs/{RUN_ID}")
     jobs = gh(f"actions/runs/{RUN_ID}/jobs?per_page=100")["jobs"]
-    artifacts = gh(f"runs/{RUN_ID}/artifacts?per_page=100")["artifacts"] if False else gh(f"actions/runs/{RUN_ID}/artifacts?per_page=100")["artifacts"]
+    artifacts = gh(f"actions/runs/{RUN_ID}/artifacts?per_page=100")["artifacts"]
     receipt = inspect(run, jobs, artifacts)
     p = Path(args.out)
     p.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
