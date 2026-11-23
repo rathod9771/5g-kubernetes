@@ -12,7 +12,6 @@ import math
 import struct
 import threading
 import time
-import zmq
 
 FRAMES = 12
 SAMPLES = 256
@@ -30,6 +29,7 @@ def iq(sequence, cell, direction):
 
 
 def run_cell(ctx, cell):
+    import zmq
     # A real pinned srsRAN TX binds REP; UE RX polls with REQ. UL is inverse.
     gnb_dl = ctx.socket(zmq.REP)
     gnb_ul = ctx.socket(zmq.REQ)
@@ -94,6 +94,7 @@ def run_cell(ctx, cell):
 
 
 def smoke():
+    import zmq
     ctx = zmq.Context()
     started = time.monotonic()
     try:
