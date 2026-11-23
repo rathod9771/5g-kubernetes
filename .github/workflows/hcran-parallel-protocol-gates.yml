@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: hcran-parallel-protocol-${{ github.ref }}
   cancel-in-progress: false
@@ -38,9 +39,41 @@ jobs:
         if: always()
         run: |
           echo 'OAI protocol baseline: initial UE/NAS/PDU/GTP-U and isolated mobility PASSED historically.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Native AMF recovery: NOT QUALIFIED; offline contract tests do not demonstrate recovery.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Native AMF recovery: historical Stage5ZG run 44457384676 reports 2/2 successful three-cycle sessions; independently verify in the acceptance-evidence job. Offline tests alone are not recovery evidence.' >> "$GITHUB_STEP_SUMMARY"
           echo 'Frozen OAI source SHA: 7fa911ece3b510b09351bf19c722007365ba47bd.' >> "$GITHUB_STEP_SUMMARY"
           echo 'HP/production: UNTOUCHED. Decision: NO-GO.' >> "$GITHUB_STEP_SUMMARY"
+
+  oai-live-recovery-acceptance-evidence:
+    name: OAI archived 2x3-cycle AMF recovery evidence integrity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify exact historical GitHub-hosted acceptance and artifacts (GET-only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/experiments/hcran_oai_stage5zg_evidence_gate.py \
+            --out "$RUNNER_TEMP/oai-stage5zg-evidence-receipt.json"
+      - name: Retain bounded no-secret evidence receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oai-6cycle-recovery-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/oai-stage5zg-evidence-receipt.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: State limit
+        if: always()
+        run: |
+          echo 'Archived two-session, six-cycle AMF recovery audit is limited to exact historical source/accepted jobs; no live faults were performed in this workflow.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No full-5GC restart, QoS/security conformance or production claim.' >> "$GITHUB_STEP_SUMMARY"
 
   srsran-ue-feasibility:
     name: srsRAN H-CRAN H2 UE compatibility and negative gates
