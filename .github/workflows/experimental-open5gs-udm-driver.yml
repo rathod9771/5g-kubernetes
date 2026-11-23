@@ -1,0 +1,87 @@
+name: Experimental Open5GS subscriber-free selection driver
+on:
+  push:
+    branches: [experimental/open5gs-udm-sbi-20261123]
+    paths: ['ci/experimental/open5gs-udm-driver/**', '.github/workflows/experimental-open5gs-udm-driver.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: experimental-open5gs-udm-driver
+  cancel-in-progress: false
+jobs:
+  isolated-driver:
+    if: github.repository == 'rathod9771/5g-kubernetes' && github.ref == 'refs/heads/experimental/open5gs-udm-sbi-20261123'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Original native provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir evidence
+          gh api repos/rathod9771/5g-kubernetes/actions/runs/45121234959 > evidence/native-run.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          repository: rathod9771/5g-kubernetes
+          run-id: 45121234959
+          name: experimental-open5gs-udm-sbi-evidence
+          path: native-artifact
+      - name: Verify existing artifact; do not rebuild candidate
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          (cd ci/experimental/open5gs-udm-runtime && sha256sum -c SHA256SUMS)
+          (cd ci/experimental/open5gs-udm-driver && sha256sum -c SHA256SUMS) > evidence/driver-input-checksums.txt
+          timeout -k 2s 150s python3 ci/experimental/open5gs-udm-runtime/verify_artifact.py native-artifact evidence evidence/native-run.json
+          timeout -k 2s 40s docker load -i native-artifact/experimental-image.docker.tar.gz > evidence/image-load.txt
+      - name: Prepare pinned disposable compiler environment
+        timeout-minutes: 10
+        env:
+          DOCKER_BUILDKIT: '0'
+        run: |
+          set -euo pipefail
+          ulimit -f 16384
+          test "$(awk '/MemAvailable/ {print $2}' /proc/meminfo)" -ge 5000000
+          test "$(df -Pk . | awk 'NR==2 {print $4}')" -ge 10000000
+          timeout -k 5s 550s docker build --memory=5g --cpu-quota=200000 -f ci/experimental/open5gs-udm-sbi/Builder.Dockerfile -t l3-udm-driver-toolchain ci/experimental/open5gs-udm-sbi > evidence/driver-builder.log 2>&1
+      - name: Compile only driver against existing artifact libraries offline
+        timeout-minutes: 11
+        run: |
+          set -euo pipefail
+          ulimit -f 16384
+          timeout -k 5s 600s docker run --rm --name "l3-udm-driver-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --network none --cpus 2 --memory 5g --memory-swap 5g --pids-limit 256 \
+            -v "$PWD/ci/experimental/open5gs-udm-driver:/ci:ro" -v "$PWD/ci/experimental/open5gs-udm-sbi:/native-inputs:ro" \
+            -v "$PWD/native-artifact:/artifact:ro" -v "$PWD/evidence:/out" \
+            l3-udm-driver-toolchain env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/tmp L3_DISPOSABLE_DRIVER_BUILD=approved /bin/bash /ci/build_driver.sh > evidence/driver-compile-link.log 2>&1
+      - name: Run six subscriber-free driver cases
+        timeout-minutes: 3
+        run: timeout -k 5s 120s python3 ci/experimental/open5gs-udm-driver/run_driver.py evidence
+      - name: Always verify run-specific cleanup
+        if: always()
+        run: |
+          set -euo pipefail
+          for n in "l3-udm-driver-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "l3-udm-driver-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-fixture"; do
+            if docker container inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker rm -f "$n"; fi
+            if docker container inspect "$n" >/dev/null 2>&1; then exit 1; fi
+          done
+          n="l3-udm-driver-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if docker network inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker network rm "$n"; fi
+          if docker network inspect "$n" >/dev/null 2>&1; then exit 1; fi
+          echo PASS > evidence/driver-cleanup.txt
+      - name: Preserve bounded driver evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: experimental-open5gs-udm-driver-evidence
+          path: |
+            evidence/driver-*
+            evidence/artifact-verification.json
+            evidence/native-input-verification.txt
+          if-no-files-found: error
+          retention-days: 14
