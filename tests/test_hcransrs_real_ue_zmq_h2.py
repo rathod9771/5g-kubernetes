@@ -41,4 +41,37 @@ class H2ZMQContracts(unittest.TestCase):
             self.assertEqual(evidence["wire_evidence"],"UNQUALIFIED_OR_ONE_WAY_ZMQ_TCP_PAYLOAD")
             self.assertEqual(evidence["actual_du_to_ue_large_tcp_payload_frames"],0)
             self.assertEqual(evidence["actual_ue_to_du_large_tcp_payload_frames"],0)
+    def test_h3_rejects_transport_only_synthetic_success(self):
+        r={"status":"REAL_OAI_UE_SRS_DU_ZMQ_TRANSPORT_CANDIDATE_ONLY"}
+        self.assertEqual(m.assess_h3(r),"BLOCKED_NO_INDEPENDENT_CONTROL_WIRE")
+    def test_h3_requires_independent_sib1_and_both_f1_rrc_directions(self):
+        r={
+            "status":"REAL_OAI_UE_SRS_DU_ZMQ_TRANSPORT_CANDIDATE_ONLY",
+            "protocol_wire":{
+                "evidence_kind":"INDEPENDENT_SCTP_PACKET_DECODING",
+                "frame_counts":{
+                    "macro_f1ap_ul_rrc_message_transfer":1,
+                    "macro_f1ap_dl_rrc_message_transfer":1,
+                },
+            },
+            "ue":{"bounded_synthetic_ue_log_markers":["SIB1_LOG_CANDIDATE"]},
+        }
+        self.assertEqual(m.assess_h3(r),
+            "SIB1_LOG_AND_BIDIRECTIONAL_F1AP_RRC_TRANSFER_CANDIDATES")
+        r["ue"]["bounded_synthetic_ue_log_markers"]=[]
+        self.assertEqual(m.assess_h3(r),"BLOCKED_SIB1_LOG_EVIDENCE")
+        r["ue"]["bounded_synthetic_ue_log_markers"]=["SIB1_LOG_CANDIDATE"]
+        r["protocol_wire"]["frame_counts"]["macro_f1ap_ul_rrc_message_transfer"]=0
+        self.assertEqual(m.assess_h3(r),"BLOCKED_F1AP_UL_RRC_EVIDENCE")
+        r["protocol_wire"]["frame_counts"]["macro_f1ap_ul_rrc_message_transfer"]=1
+        r["protocol_wire"]["frame_counts"]["macro_f1ap_dl_rrc_message_transfer"]=0
+        self.assertEqual(m.assess_h3(r),"BLOCKED_F1AP_DL_RRC_EVIDENCE")
+    def test_no_control_wire_capture_cannot_pass_protocol_evidence(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            p=m.protocol_wire_summary(Path(td)/"missing.pcap")
+            self.assertEqual(p["status"],"NO_CONTROL_WIRE_CAPTURE")
+            self.assertEqual(p["protocol_validation"],"NOT_ESTABLISHED")
+            self.assertEqual(sum(p["frame_counts"].values()),0)
+
 if __name__=="__main__":unittest.main()
