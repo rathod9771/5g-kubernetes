@@ -1,0 +1,89 @@
+name: H-CRAN OAI NR UE 2026.w45 real ZMQ build qualification (NO DEPLOY)
+on:
+  push:
+    branches:
+      - experiment/hcran-parallel-protocol-gates-20261123
+    paths:
+      - .github/workflows/hcransrs-oai-nrue-zmq-build.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hcransrs-oai-zmq-build-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  source-built-oai-nrue:
+    name: Source-build pinned OAI NR UE with native ZeroMQ driver (NO RAN/UE START)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    env:
+      OAI_COMMIT: dfb296ab867050a7bde81b393fa31b757ada2c83
+      OAI_REPO: https://github.com/OPENAIRINTERFACE/openairinterface5g.git
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fail closed on host/local runner, wrong source, or production access
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$OAI_COMMIT" = dfb296ab867050a7bde81b393fa31b757ada2c83
+          test "$OAI_REPO" = https://github.com/OPENAIRINTERFACE/openairinterface5g.git
+          test ! -e "$RUNNER_TEMP/oai-zmq-ue"
+          mkdir -p "$RUNNER_TEMP/oai-zmq-proof"
+          printf 'pinned_oai_commit=%s\n' "$OAI_COMMIT" > "$RUNNER_TEMP/oai-zmq-proof/source-pin.txt"
+      - name: Fetch exact OAI 2026.w45 source only on isolated GitHub runner
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          git init -q "$RUNNER_TEMP/oai-zmq-ue"
+          git -C "$RUNNER_TEMP/oai-zmq-ue" remote add origin "$OAI_REPO"
+          git -C "$RUNNER_TEMP/oai-zmq-ue" fetch --depth 1 origin "$OAI_COMMIT"
+          git -C "$RUNNER_TEMP/oai-zmq-ue" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/oai-zmq-ue" rev-parse HEAD)" = "$OAI_COMMIT"
+          test -z "$(git -C "$RUNNER_TEMP/oai-zmq-ue" status --porcelain)"
+          test -f "$RUNNER_TEMP/oai-zmq-ue/radio/zmq/zmq_radio.cpp"
+          grep -Fq 'zmq_socket(zmq_state->context, ZMQ_REP)' "$RUNNER_TEMP/oai-zmq-ue/radio/zmq/zmq_radio.cpp"
+          grep -Fq 'zmq_socket(zmq_state->context, ZMQ_REQ)' "$RUNNER_TEMP/oai-zmq-ue/radio/zmq/zmq_radio.cpp"
+      - name: Install only OAI UE build prerequisites on disposable runner
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/oai-zmq-ue/cmake_targets"
+          # Upstream supported Ubuntu 24 setup; never run against HP or production.
+          sudo timeout --signal=TERM --kill-after=20s 1500s ./build_oai -I -w ZMQ \
+            > "$RUNNER_TEMP/oai-install.log" 2>&1 || { tail -n 65 "$RUNNER_TEMP/oai-install.log"; exit 1; }
+          test -d "$RUNNER_TEMP/oai-zmq-ue"
+      - name: Compile genuine OAI NR UE and ZMQ plugin with bounded resources
+        timeout-minutes: 70
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/oai-zmq-ue/cmake_targets"
+          export CMAKE_BUILD_PARALLEL_LEVEL=2
+          timeout --signal=TERM --kill-after=20s 3900s ./build_oai --ninja -w ZMQ --nrUE --noavx512 \
+            --build-tool-opt '-j2' > "$RUNNER_TEMP/oai-build.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/oai-build.log"; exit 1; }
+          BUILD="$RUNNER_TEMP/oai-zmq-ue/cmake_targets/ran_build/build"
+          test -x "$BUILD/nr-uesoftmodem"
+          find "$BUILD" -type f -name 'liboai_zmqdevif.so' -print > "$RUNNER_TEMP/oai-zmq-proof/driver-file.txt"
+          test -s "$RUNNER_TEMP/oai-zmq-proof/driver-file.txt"
+          sha256sum "$BUILD/nr-uesoftmodem" > "$RUNNER_TEMP/oai-zmq-proof/nr-ue-sha256.txt"
+          DRIVER="$(head -n 1 "$RUNNER_TEMP/oai-zmq-proof/driver-file.txt")"
+          sha256sum "$DRIVER" > "$RUNNER_TEMP/oai-zmq-proof/zmq-driver-sha256.txt"
+          ldd "$BUILD/nr-uesoftmodem" > "$RUNNER_TEMP/oai-zmq-proof/ue-ldd.txt"
+          ! grep -Fq 'not found' "$RUNNER_TEMP/oai-zmq-proof/ue-ldd.txt"
+          echo 'PINNED OAI NR UE AND ZMQ DRIVER SOURCE BUILD PASS; REAL UE START AND PROTOCOL NOT RUN' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve binary IDs, not binary or subscriber secrets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-oai-w45-zmq-nrue-build-${{ github.run_id }}
+          path: ${{ runner.temp }}/oai-zmq-proof/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Keep strict research qualification boundary
+        if: always()
+        run: |
+          echo 'Pinned source-build verification ONLY. No srsRAN/OAI shared runtime, RF samples, SIB1/RRC/NAS/PDU/GTP-U, mobility or recovery demonstrated.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No synthetic subscriber, no production credentials, no HP K8s/OSM, no main branch changes. NO-GO.' >> "$GITHUB_STEP_SUMMARY"
