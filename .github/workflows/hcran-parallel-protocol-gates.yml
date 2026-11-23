@@ -13,6 +13,8 @@ on:
       - tests/test_hcran_oai_qos_lifecycle_gate.py
       - scripts/experiments/hcransrs_zmq_pinned_transport_audit.py
       - tests/test_hcransrs_zmq_pinned_transport_audit.py
+      - scripts/experiments/hcransrs_zmq_socket_smoke.py
+      - tests/test_hcransrs_zmq_socket_smoke.py
   workflow_dispatch:
 permissions:
   contents: read
@@ -216,3 +218,43 @@ jobs:
         run: |
           echo 'Pinned srsRAN source REQ/REP and cf_t behavior verified if source audit passed. OAI UE reciprocal framing/ABI remains UNVERIFIED.' >> "$GITHUB_STEP_SUMMARY"
           echo 'No RF sample exchange, no RRC/NAS/GTP-U, no deployment. NO-GO.' >> "$GITHUB_STEP_SUMMARY"
+
+  srsran-zmq-real-socket-smoke:
+    name: srsRAN H2 transport design - real disposable ZMQ IQ socket exchange (NO UE)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install exact disposable ZMQ socket dependency
+        run: python -m pip install --disable-pip-version-check pyzmq==26.4.0
+      - name: Real loopback TCP ZMQ two-cell sample exchange (no srsRAN/OAI binaries)
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_hcransrs_zmq_socket_smoke.py -v
+          python scripts/experiments/hcransrs_zmq_socket_smoke.py --output "$RUNNER_TEMP/hcransrs-zmq-socket-receipt.json"
+          python - "$RUNNER_TEMP/hcransrs-zmq-socket-receipt.json" <<'PY'
+          import json,sys
+          with open(sys.argv[1]) as f:r=json.load(f)
+          assert r["status"]=="INDEPENDENT_PYTHON_ZMQ_PEER_TRANSPORT_PASS"
+          assert r["h2_ue_interoperability"]=="NOT_VALIDATED"
+          assert r["production_decision"]=="NO_GO"
+          assert len(r["cells"])==2
+          PY
+      - name: Archive bounded no-secret socket receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-zmq-socket-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/hcransrs-zmq-socket-receipt.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Report limitations
+        if: always()
+        run: |
+          echo 'Loopback TCP REQ/REP IQ smoke uses Python peers; does not run source-built srsRAN or OAI NR UE.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No UE interoperability, radio timing, RRC/NAS/PDU, GTP-U, mobility or recovery established. NO-GO.' >> "$GITHUB_STEP_SUMMARY"
