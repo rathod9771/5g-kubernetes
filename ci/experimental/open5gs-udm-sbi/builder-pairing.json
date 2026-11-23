@@ -1,0 +1,7 @@
+{
+  "builder_tag_metadata": "bullseye-20240904",
+  "amd64_manifest": "sha256:2a1c9a0e7aa4fcad4d6319547bfcc0d8a7a290fada438d6fabc416f137cf12b4",
+  "package_snapshot": "20240905T000000Z",
+  "previous_run": 45120069470,
+  "correction": "replace newer base / older packages mismatch; no dependency downgrading or authentication bypass"
+}
