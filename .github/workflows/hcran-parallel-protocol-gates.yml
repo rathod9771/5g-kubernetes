@@ -7,6 +7,8 @@ on:
       - .github/workflows/hcran-parallel-protocol-gates.yml
       - scripts/experiments/hcran_oai_stage5zg_evidence_gate.py
       - tests/test_hcran_oai_stage5zg_evidence_gate.py
+      - scripts/experiments/hcransrs_h2_zmq_candidate_audit.py
+      - tests/test_hcransrs_h2_zmq_candidate_audit.py
   workflow_dispatch:
 permissions:
   contents: read
@@ -115,3 +117,37 @@ jobs:
           echo 'H2 5G SA n78/30kHz TDD UE compatibility BLOCKED with documented srsUE prototype.' >> "$GITHUB_STEP_SUMMARY"
           echo 'H3-H6 NAS/PDU/GTP-U/mobility/recovery: NOT RUN. Decision: NO-GO.' >> "$GITHUB_STEP_SUMMARY"
           echo 'HP/production: UNTOUCHED.' >> "$GITHUB_STEP_SUMMARY"
+
+  srsran-zmq-candidate:
+    name: srsRAN n78 H2 OAI-ZMQ candidate source audit (NO UE)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install static parser
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
+      - name: Assert source-only candidate and negative cases
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_hcransrs_h2_zmq_candidate_audit.py -v
+          python scripts/experiments/hcransrs_h2_zmq_candidate_audit.py --output "$RUNNER_TEMP/hcransrs-zmq-candidate.json"
+          python - "$RUNNER_TEMP/hcransrs-zmq-candidate.json" <<'PY'
+          import json,sys
+          with open(sys.argv[1]) as f:r=json.load(f)
+          assert r["decision"]=="CANDIDATE_ONLY_INTEROPERABILITY_NOT_VALIDATED"
+          assert r["h2_rrc"]=="BLOCKED"
+          assert r["production_decision"]=="NO_GO"
+          PY
+      - name: Store no-secret source-only feasibility receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: srsran-h2-zmq-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/hcransrs-zmq-candidate.json
+          if-no-files-found: warn
+          retention-days: 14
