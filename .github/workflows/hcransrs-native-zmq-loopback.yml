@@ -1,0 +1,113 @@
+name: H-CRAN srsRAN pinned native ZMQ radio loopback (ISOLATED; NO UE)
+on:
+  push:
+    branches:
+      - experiment/hcran-parallel-protocol-gates-20261123
+    paths:
+      - .github/workflows/hcransrs-native-zmq-loopback.yml
+permissions:
+  contents: read
+concurrency:
+  group: hcransrs-native-zmq-loopback-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  pinned-native-radio-zmq:
+    name: Source-built srsRAN 25.04 native C++ ZeroMQ radio unit test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      SOURCE_SHA: 11c9bbabb69873752500d676f55e0034f6caa5c5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify isolated test-only intent and exact pinned source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$SOURCE_SHA" = "11c9bbabb69873752500d676f55e0034f6caa5c5"
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open("config/reference-versions.json"))
+          s=d["ran_images"]["components"]["srsran"]["source"]
+          assert s["commit"]==os.environ["SOURCE_SHA"]
+          assert s["repository"]=="https://github.com/herlesupreeth/srsRAN_Project.git"
+          PY
+      - name: Install bounded source build dependencies on disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            cmake ninja-build gcc g++ pkg-config git ca-certificates \
+            libfftw3-dev libmbedtls-dev libsctp-dev libyaml-cpp-dev \
+            libgtest-dev libzmq3-dev
+      - name: Checkout exact srsRAN radio source (no modifications)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE="$RUNNER_TEMP/srsran-source"
+          test ! -e "$SOURCE"
+          git init -q "$SOURCE"
+          git -C "$SOURCE" remote add origin https://github.com/herlesupreeth/srsRAN_Project.git
+          git -C "$SOURCE" fetch --depth 1 origin "$SOURCE_SHA"
+          git -C "$SOURCE" checkout --detach FETCH_HEAD
+          test "$(git -C "$SOURCE" rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git -C "$SOURCE" status --porcelain)"
+          printf 'source_sha=%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/source-receipt.txt"
+      - name: Compile upstream native radio_zmq_loopback_test only
+        shell: bash
+        timeout-minutes: 75
+        run: |
+          set -euo pipefail
+          SOURCE="$RUNNER_TEMP/srsran-source"
+          BUILD="$RUNNER_TEMP/srsran-zmq-build"
+          cmake -S "$SOURCE" -B "$BUILD" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DENABLE_UHD=OFF -DENABLE_DPDK=OFF -DENABLE_ZEROMQ=ON \
+            -DMARCH=x86-64
+          grep -qx 'ENABLE_ZEROMQ:BOOL=ON' "$BUILD/CMakeCache.txt"
+          grep -qx 'BUILD_TESTING:BOOL=ON' "$BUILD/CMakeCache.txt"
+          cmake --build "$BUILD" --target radio_zmq_loopback_test --parallel 2
+          test -x "$BUILD/tests/unittests/radio/zmq/radio_zmq_loopback_test"
+          sha256sum "$BUILD/tests/unittests/radio/zmq/radio_zmq_loopback_test" \
+            > "$RUNNER_TEMP/native-binary-sha256.txt"
+      - name: Run actual srsRAN C++ ZeroMQ loopback test, bounded, one GTest case
+        shell: bash
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          BINARY="$RUNNER_TEMP/srsran-zmq-build/tests/unittests/radio/zmq/radio_zmq_loopback_test"
+          "$BINARY" --gtest_list_tests > "$RUNNER_TEMP/gtest-cases.txt"
+          grep -q 'RadioZmqE2EFlow' "$RUNNER_TEMP/gtest-cases.txt"
+          timeout --signal=TERM --kill-after=10s 180s \
+            "$BINARY" --gtest_filter='*RadioZmqE2EFlow/0' \
+              --gtest_output="xml:$RUNNER_TEMP/srsran-radio-zmq.xml" \
+            > "$RUNNER_TEMP/test-execution.log" 2>&1
+          grep -q '\[  PASSED  \] 1 test' "$RUNNER_TEMP/test-execution.log"
+          python3 - <<'PY'
+          import os,xml.etree.ElementTree as ET
+          root=ET.parse(os.environ["RUNNER_TEMP"]+"/srsran-radio-zmq.xml").getroot()
+          assert root.attrib.get("tests")=="1",root.attrib
+          assert root.attrib.get("failures")=="0",root.attrib
+          assert root.attrib.get("errors")=="0",root.attrib
+          PY
+          echo "PINNED_SRSCAN_NATIVE_RADIO_ZMQ_SINGLE_LOOPBACK_PASS_NOT_UE" >> "$GITHUB_STEP_SUMMARY"
+          echo "No real NR UE, SIB1, RRC, NAS, PDU, GTP-U or mobility validated." >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain bounded nonsecret native test metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-native-radio-zmq-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/source-receipt.txt
+            ${{ runner.temp }}/native-binary-sha256.txt
+            ${{ runner.temp }}/srsran-radio-zmq.xml
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Fail-closed release statement
+        if: always()
+        run: |
+          echo 'Scope: isolated GitHub-hosted native srsRAN radio library only, no HP/OSM/K8s deployment.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Actual OAI NR UE interoperability and protocol compliance remain NOT VALIDATED; production NO-GO.' >> "$GITHUB_STEP_SUMMARY"
