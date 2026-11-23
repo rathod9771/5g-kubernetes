@@ -1,0 +1,49 @@
+name: H-CRAN srsRAN H2 UE feasibility (offline-only)
+on:
+  push:
+    branches:
+      - experiment/hcransrs-h2-feasibility-20261123
+    paths:
+      - .github/workflows/hcransrs-h2-feasibility.yml
+      - scripts/experiments/hcransrs_h2_feasibility.py
+      - tests/test_hcransrs_h2_feasibility.py
+      - docs/hcransrs-h2-feasibility-20261123.md
+      - helm/cran-srsran/du/templates/du.yaml
+      - helm/cran-srsran/du/values-hcran-*.yaml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  h2-offline-capability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pinned static parser
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
+      - name: H2 capability contract and negative tests (NO UE, no RF)
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_hcransrs_h2_feasibility.py -v
+          python scripts/experiments/hcransrs_h2_feasibility.py --output "$RUNNER_TEMP/h2-feasibility.json"
+          python - "$RUNNER_TEMP/h2-feasibility.json" <<'PY'
+          import json,sys
+          r=json.load(open(sys.argv[1]))
+          assert r["h2"] == "BLOCKED_INCOMPATIBLE_UE"
+          assert r["end_to_end"] == "NOT_VALIDATED"
+          assert r["production_decision"] == "NO_GO"
+          assert len(r["du_results"]) == 2
+          PY
+      - name: Preserve sanitized feasibility receipt only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-h2-feasibility-${{ github.run_id }}
+          path: ${{ runner.temp }}/h2-feasibility.json
+          if-no-files-found: warn
+          retention-days: 14
