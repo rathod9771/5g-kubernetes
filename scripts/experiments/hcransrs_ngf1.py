@@ -148,6 +148,19 @@ def render_config(path, role):
             raise EvidenceError("DU PLMN/TAC/ARFCN/SCS drift")
         if "tx_port=tcp://127.0.0.1:2000,rx_port=tcp://127.0.0.1:2001" not in cfg["ru_sdr"]["device_args"]:
             raise EvidenceError("Unreviewed ZMQ RF transport")
+        if role == "small":
+            # Research-only H1 overlay for 10 MHz / 30 kHz n78 cell.
+            # The pinned srsRAN DU rejects its default PUCCH resource
+            # budget (>50% of 24-PRB BWP). Reduce HARQ/SR/CSI resources
+            # without changing the canonical Helm profile or cell identity.
+            # This is a startup candidate, NOT RF/UE capacity validation.
+            if "pucch" in cell:
+                raise EvidenceError("Canonical small-DU PUCCH configuration changed; review required")
+            cell["pucch"] = {
+                "nof_ue_res_harq_per_set": 2,
+                "f0_or_f1_nof_cell_res_sr": 2,
+                "f2_or_f3_or_f4_nof_cell_res_csi": 2,
+            }
     if "e2" in cfg or "ric" in cfg:
         raise EvidenceError("H-CRAN research forbids Near-RT RIC/E2")
     return cfg
