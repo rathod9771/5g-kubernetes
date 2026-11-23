@@ -51,6 +51,11 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/oai-zmq-ue/cmake_targets"
+          # OAI -I does not install the ZeroMQ headers/pkg-config metadata on this runner.
+          # This package is installed only inside the disposable GitHub-hosted VM.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libzmq3-dev
+          pkg-config --exists libzmq
+          pkg-config --modversion libzmq > "$RUNNER_TEMP/oai-zmq-proof/libzmq-version.txt"
           # Upstream supported Ubuntu 24 setup; never run against HP or production.
           sudo timeout --signal=TERM --kill-after=20s 1500s ./build_oai -I -w ZMQ \
             > "$RUNNER_TEMP/oai-install.log" 2>&1 || { tail -n 65 "$RUNNER_TEMP/oai-install.log"; exit 1; }
