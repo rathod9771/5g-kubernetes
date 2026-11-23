@@ -1,0 +1,106 @@
+name: Experimental Open5GS UDM response correction
+on:
+  push:
+    branches: [experimental/open5gs-udm-sbi-20261123]
+    paths: ['ci/experimental/open5gs-udm-response-fix/**', '.github/workflows/experimental-open5gs-udm-response-fix.yml']
+permissions:
+  contents: read
+concurrency:
+  group: experimental-open5gs-udm-response-fix
+  cancel-in-progress: false
+jobs:
+  isolated-build:
+    if: github.ref == 'refs/heads/experimental/open5gs-udm-sbi-20261123' && github.repository == 'rathod9771/5g-kubernetes'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build and validate only on disposable runner
+        timeout-minutes: 55
+        env:
+          DOCKER_BUILDKIT: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          r=ci/experimental/open5gs-udm-sbi
+          f=ci/experimental/open5gs-udm-response-fix
+          mkdir evidence
+          (cd "$f" && sha256sum -c SHA256SUMS) > evidence/fix-input-verification.txt
+          df -h > evidence/runner-disk.txt
+          free -b > evidence/runner-memory.txt
+          test "$(awk '/MemAvailable/ {print $2}' /proc/meminfo)" -ge 5000000
+          test "$(df -Pk . | awk 'NR==2 {print $4}')" -ge 15000000
+          (cd "$r" && sha256sum -c SHA256SUMS) | tee evidence/input-verification.txt
+          timeout -k 10s 900s docker build --memory=5g --cpu-quota=200000 -f "$r/Builder.Dockerfile" -t l3-udm-builder "$r" 2>&1 | tee evidence/builder.log
+          docker image inspect l3-udm-builder > evidence/builder-image.json
+          set +e
+          timeout -k 10s 1800s docker run --rm --network none --cpus 2 --memory 5g --memory-swap 5g --pids-limit 256 -v "$PWD/$r:/ci:ro" -v "$PWD/$f:/fix:ro" -v "$PWD/ci/experimental/open5gs-udm-driver:/driver:ro" -v "$PWD/evidence:/out" l3-udm-builder env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/tmp /bin/bash /fix/build.sh 2>&1 | tee evidence/build-supervisor.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > evidence/build-exit.txt
+          test "$result" -eq 0
+          cp "$f/Runtime.Dockerfile" evidence/Runtime.Dockerfile
+          timeout -k 5s 180s docker build --memory=2g --cpu-quota=100000 -f evidence/Runtime.Dockerfile -t l3-open5gs-udm:2.7.2-guard.2 evidence 2>&1 | tee evidence/runtime-image-build.log
+          docker image inspect l3-open5gs-udm:2.7.2-guard.2 > evidence/experimental-image.json
+          timeout -k 2s 15s docker run --rm --network none --cpus 1 --memory 256m --pids-limit 64 --entrypoint /opt/open5gs/bin/open5gs-udmd l3-open5gs-udm:2.7.2-guard.2 -v > evidence/runtime-version.txt 2>&1
+          grep -q '2.7.2' evidence/runtime-version.txt
+          timeout -k 2s 15s docker run --rm --network none --entrypoint /usr/bin/ldd l3-open5gs-udm:2.7.2-guard.2 -v /opt/open5gs/bin/open5gs-udmd > evidence/runtime-linker.txt 2>&1
+          if grep -E 'not found|OPENSSL_3|libssl.so.3|libcrypto.so.3' evidence/runtime-linker.txt; then exit 1; fi
+          docker save l3-open5gs-udm:2.7.2-guard.2 | gzip -1 > evidence/experimental-image.docker.tar.gz
+          sha256sum evidence/experimental-image.docker.tar.gz > evidence/image-archive-sha256.txt
+          python3 "$f/candidate.py" evidence
+          docker tag l3-udm-builder l3-udm-stage8-toolchain
+          docker tag l3-udm-builder l3-udm-driver-toolchain
+          timeout -k 2s 30s docker build --network none -f ci/experimental/open5gs-udm-integration/Fixture.Dockerfile -t l3-udm-stage8-fixture ci/experimental/open5gs-udm-integration > evidence/fixture-builder.log 2>&1
+      - name: Preserved six-case subscriber-free driver on NEW candidate
+        timeout-minutes: 3
+        run: timeout -k 5s 120s python3 ci/experimental/open5gs-udm-response-fix/run_driver.py evidence
+      - name: Actual UDM A-F on NEW candidate, strict upstream completion
+        timeout-minutes: 10
+        run: timeout -k 5s 550s python3 ci/experimental/open5gs-udm-response-fix/run_integration.py evidence
+      - name: Verify experiment-specific cleanup including temporary synthetic material
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          for c in a b c d e f; do
+            for suffix in originator-ready originator-attempt udm nf; do
+              n="l3-udm-stage8-$id-$c-$suffix"
+              if docker container inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker rm -f "$n"; fi
+              if docker container inspect "$n" >/dev/null 2>&1; then exit 1; fi
+            done
+            n="l3-udm-stage8-$id-$c"
+            if docker network inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker network rm "$n"; fi
+            if docker network inspect "$n" >/dev/null 2>&1; then exit 1; fi
+          done
+          n="l3-udm-stage8-build-$id"
+          if docker container inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker rm -f "$n"; fi
+          n="l3-udm-driver-$id-fixture"
+          if docker container inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker rm -f "$n"; fi
+          n="l3-udm-driver-$id"
+          if docker network inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker network rm "$n"; fi
+          python3 - <<'PY'
+          import os,pathlib,shutil
+          identity=os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT']
+          for p in pathlib.Path('/dev/shm').glob('l3-stage8-'+identity+'-*'):
+              if p.is_symlink() or not p.is_dir():raise SystemExit('unsafe cleanup entry')
+              shutil.rmtree(p)
+          assert not list(pathlib.Path('/dev/shm').glob('l3-stage8-'+identity+'-*'))
+          PY
+          echo PASS > evidence/stage8-cleanup.txt
+      - name: Preserve complete or partial evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: experimental-open5gs-udm-response-fix-evidence
+          path: |
+            evidence/*.txt
+            evidence/*.json
+            evidence/*.log
+            evidence/*.sha256
+            evidence/experimental-image.docker.tar.gz
+          retention-days: 14
+          if-no-files-found: error

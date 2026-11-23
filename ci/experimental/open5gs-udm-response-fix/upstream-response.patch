@@ -1,0 +1,63 @@
+--- a/src/udm/nnrf-handler.c
++++ b/src/udm/nnrf-handler.c
+@@ -25,6 +25,8 @@
+ {
+     ogs_sbi_nf_instance_t *nf_instance = NULL;
+     ogs_sbi_object_t *sbi_object = NULL;
++    ogs_pool_id_t stream_id;
++    ogs_sbi_stream_t *stream = NULL;
+     ogs_pool_id_t sbi_object_id = OGS_INVALID_POOL_ID;
+     ogs_sbi_service_type_e service_type = OGS_SBI_SERVICE_TYPE_NULL;
+     ogs_sbi_discovery_option_t *discovery_option = NULL;
+@@ -38,6 +40,8 @@
+ 
+     ogs_assert(recvmsg);
+     ogs_assert(xact);
++    /* The send path consumes xact on failure. Retain no transaction pointer. */
++    stream_id = xact->assoc_stream_id;
+     sbi_object = xact->sbi_object;
+     ogs_assert(sbi_object);
+     service_type = xact->service_type;
+@@ -56,7 +60,8 @@
+     SearchResult = recvmsg->SearchResult;
+     if (!SearchResult) {
+         ogs_error("No SearchResult");
+-        return;
++        ogs_sbi_xact_remove(xact);
++        goto unavailable;
+     }
+ 
+     if (sbi_object->type == OGS_SBI_OBJ_UE_TYPE) {
+@@ -78,16 +83,25 @@
+     nf_instance = ogs_sbi_nf_instance_find_by_discovery_param(
+                     target_nf_type, requester_nf_type, discovery_option);
+     if (!nf_instance) {
+-        ogs_error("[%s:%d] (NF discover) No [%s:%s]",
+-                    udm_ue ? udm_ue->supi : "Unknown",
+-                    sess ? sess->psi : 0,
+-                    ogs_sbi_service_type_to_name(service_type),
+-                    OpenAPI_nf_type_ToString(requester_nf_type));
+-        return;
++        ogs_error("Required UDR service unavailable after discovery");
++        ogs_sbi_xact_remove(xact);
++        goto unavailable;
+     }
+ 
+     OGS_SBI_SETUP_NF_INSTANCE(
+             sbi_object->service_type_array[service_type], nf_instance);
+ 
+-    ogs_expect(true == udm_sbi_send_request(nf_instance, xact));
++    if (udm_sbi_send_request(nf_instance, xact))
++        return;
++
++    /* ogs_sbi_send_request_to_nf_instance removed xact and its response timer.
++     * This callback runs on the UDM owner event loop. Re-resolve the stream ID
++     * rather than accessing the consumed transaction or a stale stream pointer.
++     */
++unavailable:
++    stream = ogs_sbi_stream_find_by_id(stream_id);
++    if (stream)
++        ogs_expect(true == ogs_sbi_server_send_error(stream,
++                    OGS_SBI_HTTP_STATUS_SERVICE_UNAVAILABLE, NULL,
++                    "Required UDR service unavailable", NULL, NULL));
+ }

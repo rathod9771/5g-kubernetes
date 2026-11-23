@@ -30,7 +30,8 @@ NON_PACKAGE_PREFIXES = ('docs/', 'tests/', 'ran-selector/', 'scripts/assurance/'
                         'ci/experimental/open5gs-udm-sbi/',
                         'ci/experimental/open5gs-udm-runtime/',
                         'ci/experimental/open5gs-udm-driver/',
-                        'ci/experimental/open5gs-udm-integration/')
+                        'ci/experimental/open5gs-udm-integration/',
+                        'ci/experimental/open5gs-udm-response-fix/')
 NON_PACKAGE_FILES = frozenset((
     'README.md', 'INSTALLATION.md', '.gitignore', 'install.sh', 'uninstall.sh', 'deploy.sh', 'orchestrator.sh',
     'status.sh', 'bench-all-ran.sh', 'config/global.env.example', 'config/assurance-event.schema.json',

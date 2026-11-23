@@ -1,0 +1,6 @@
+{
+  "upstream_revision": "43fa4857cce8af6b6ec3c8e3b0cbf99444948f76",
+  "original_handler_sha256": "666ec1e6f4a1f45c5026cc3ceaea3c890dfc5ef87f8543aab1ad426f160d88f7",
+  "corrected_handler_sha256": "d4da5a9d2670a18a2f08d55bda336e6dc747ba8b0195eb56c3c1d06a02c1d063",
+  "guard_context_sha256": "0b5207bde626ba5282187e3c14721c20def84c9a53d9ab31ee6eb0e6c8e7ee93"
+}
