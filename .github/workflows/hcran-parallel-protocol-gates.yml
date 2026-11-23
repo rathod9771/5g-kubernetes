@@ -5,6 +5,8 @@ on:
       - experiment/hcran-parallel-protocol-gates-20261123
     paths:
       - .github/workflows/hcran-parallel-protocol-gates.yml
+      - scripts/experiments/hcran_oai_stage5zg_evidence_gate.py
+      - tests/test_hcran_oai_stage5zg_evidence_gate.py
   workflow_dispatch:
 permissions:
   contents: read
@@ -59,6 +61,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          python -m unittest discover -s tests -p test_hcran_oai_stage5zg_evidence_gate.py -v
           python scripts/experiments/hcran_oai_stage5zg_evidence_gate.py \
             --out "$RUNNER_TEMP/oai-stage5zg-evidence-receipt.json"
       - name: Retain bounded no-secret evidence receipt
