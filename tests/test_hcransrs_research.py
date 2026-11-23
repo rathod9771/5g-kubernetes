@@ -198,6 +198,15 @@ class HCRAN3GPPProfile(unittest.TestCase):
         self.assertEqual((a["gnb_du_id"], b["gnb_du_id"]), (100,101))
         self.assertEqual((a["cell_cfg"]["pci"], b["cell_cfg"]["pci"]), (101,102))
         self.assertNotEqual(a["f1u"]["socket"], b["f1u"]["socket"])
+        # Exact, isolated H1 small-cell fix for the observed PUCCH/BWP failure.
+        self.assertNotIn("pucch", a["cell_cfg"])
+        self.assertEqual(b["cell_cfg"]["pucch"], {
+            "nof_ue_res_harq_per_set": 2,
+            "f0_or_f1_nof_cell_res_sr": 2,
+            "f2_or_f3_or_f4_nof_cell_res_csi": 2,
+        })
+        self.assertEqual((b["cell_cfg"]["band"], b["cell_cfg"]["common_scs"],
+                          b["cell_cfg"]["channel_bandwidth_MHz"]), (78, 30, 10))
 
     def test_reject_duplicated_cell_identity_or_wrong_gnb(self):
         for role, args in (("small", {"du": 100, "pci": 101, "sector": 1}),
