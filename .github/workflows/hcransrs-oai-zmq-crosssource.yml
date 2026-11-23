@@ -1,0 +1,58 @@
+name: H-CRAN OAI W45 to srsRAN ZMQ driver compatibility source gate (NO UE)
+on:
+  push:
+    branches:
+      - experiment/hcran-parallel-protocol-gates-20261123
+    paths:
+      - .github/workflows/hcransrs-oai-zmq-crosssource.yml
+      - scripts/experiments/hcransrs_oai_pinned_crosssource_audit.py
+      - tests/test_hcransrs_oai_pinned_crosssource_audit.py
+permissions:
+  contents: read
+concurrency:
+  group: hcransrs-oai-crosssource-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  exact-upstream-zmq-driver:
+    name: Exact OAI W45 and srsRAN 25.04 ZMQ source comparison (GET-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run synthetic negative controls and GET-only exact Git blob checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          python -m unittest discover -s tests -p test_hcransrs_oai_pinned_crosssource_audit.py -v
+          python scripts/experiments/hcransrs_oai_pinned_crosssource_audit.py \
+            --output "$RUNNER_TEMP/hcransrs-zmq-crosssource.json"
+          python - "$RUNNER_TEMP/hcransrs-zmq-crosssource.json" <<'PY'
+          import json,sys
+          with open(sys.argv[1]) as f:d=json.load(f)
+          assert d["status"]=="SOURCE_SOCKET_ROLES_AND_PAYLOAD_FRAMING_COMPATIBLE"
+          assert d["protocol_validation"]=="NOT_RUN"
+          assert d["production_decision"]=="NO_GO"
+          assert d["actual_oai_ue_connected"] is False
+          assert d["actual_srsran_du_connected"] is False
+          PY
+      - name: Preserve bounded nonsecret source audit receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-oai-zmq-source-compatibility-${{ github.run_id }}
+          path: ${{ runner.temp }}/hcransrs-zmq-crosssource.json
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Record test limitations
+        if: always()
+        run: |
+          echo 'READ-ONLY pinned OAI 2026.w45 and srsRAN 25.04 source comparison; real sockets/NR UE NOT executed.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Socket framing compatibility is only a necessary precondition; sample clocks, RF, SIB1, RRC, NAS, GTP-U remain unvalidated.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No HP/OSM/Kubernetes deployment. NO-GO.' >> "$GITHUB_STEP_SUMMARY"
