@@ -185,6 +185,12 @@ class HCRAN3GPPProfile(unittest.TestCase):
         config = self.verify("cu")
         self.assertEqual(config["cu_cp"]["max_nof_dus"], 2)
         self.assertEqual(config["cu_cp"]["f1ap"]["bind_addr"], wire.IP["cu"])
+        self.assertEqual(config["cu_up"]["f1u"]["socket"], [{"bind_addr": wire.IP["cu"]}])
+        # H1 is signaling-only: NG-U loopback avoids UDP/2152 collision;
+        # this address is NOT acceptable evidence for UE or N3 traffic.
+        self.assertEqual(config["cu_up"]["ngu"]["socket"], [{"bind_addr": "127.0.3.1"}])
+        self.assertNotEqual(config["cu_up"]["ngu"]["socket"][0]["bind_addr"],
+                            config["cu_up"]["f1u"]["socket"][0]["bind_addr"])
 
     def test_exact_macro_and_small_identities(self):
         a = self.verify("macro")
