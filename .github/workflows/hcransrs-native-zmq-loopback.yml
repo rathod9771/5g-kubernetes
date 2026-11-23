@@ -95,6 +95,32 @@ jobs:
           PY
           echo "PINNED_SRSCAN_NATIVE_RADIO_ZMQ_SINGLE_LOOPBACK_PASS_NOT_UE" >> "$GITHUB_STEP_SUMMARY"
           echo "No real NR UE, SIB1, RRC, NAS, PDU, GTP-U or mobility validated." >> "$GITHUB_STEP_SUMMARY"
+      - name: Run pinned native ZMQ matrix, 32 GTest parameter combinations
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          BINARY="$RUNNER_TEMP/srsran-zmq-build/tests/unittests/radio/zmq/radio_zmq_loopback_test"
+          test -x "$BINARY"
+          timeout --signal=TERM --kill-after=10s 600s \
+            "$BINARY" --gtest_filter='*RadioZmqE2EFlow/*' \
+              --gtest_output="xml:$RUNNER_TEMP/srsran-radio-zmq-matrix.xml" \
+            > "$RUNNER_TEMP/matrix-execution.log" 2>&1
+          python3 - <<'PY'
+          import os,xml.etree.ElementTree as ET
+          from pathlib import Path
+          d=Path(os.environ["RUNNER_TEMP"])
+          root=ET.parse(d/"srsran-radio-zmq-matrix.xml").getroot()
+          assert int(root.attrib.get("tests","-1"))==32,root.attrib
+          assert int(root.attrib.get("failures","-1"))==0,root.attrib
+          assert int(root.attrib.get("errors","-1"))==0,root.attrib
+          cases=list(root.iter("testcase"))
+          assert len(cases)==32,len(cases)
+          assert all("RadioZmqE2EFlow" in c.attrib.get("name","") for c in cases)
+          assert not any(list(c) for c in cases)
+          print("PASS: 32 pinned srsRAN C++ ZMQ parameterized loopback cases")
+          PY
+          echo "Native pinned srsRAN ZMQ test matrix: 32/32 parameter combinations PASS. This is NOT OAI UE/RRC/NAS interoperability." >> "$GITHUB_STEP_SUMMARY"
       - name: Retain bounded nonsecret native test metadata
         if: always()
         uses: actions/upload-artifact@v4
@@ -104,6 +130,7 @@ jobs:
             ${{ runner.temp }}/source-receipt.txt
             ${{ runner.temp }}/native-binary-sha256.txt
             ${{ runner.temp }}/srsran-radio-zmq.xml
+            ${{ runner.temp }}/srsran-radio-zmq-matrix.xml
           retention-days: 14
           if-no-files-found: warn
       - name: Fail-closed release statement
