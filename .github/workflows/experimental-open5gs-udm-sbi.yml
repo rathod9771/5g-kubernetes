@@ -40,7 +40,7 @@ jobs:
           printf '%s\n' "$result" > evidence/build-exit.txt
           test "$result" -eq 0
           cp "$r/Runtime.Dockerfile" evidence/Runtime.Dockerfile
-          timeout -k 5s 180s docker build --memory=2g --cpu-quota=100000 -t l3-open5gs-udm:2.7.2-guard.1 evidence 2>&1 | tee evidence/runtime-image-build.log
+          timeout -k 5s 180s docker build --memory=2g --cpu-quota=100000 -f evidence/Runtime.Dockerfile -t l3-open5gs-udm:2.7.2-guard.1 evidence 2>&1 | tee evidence/runtime-image-build.log
           docker image inspect l3-open5gs-udm:2.7.2-guard.1 > evidence/experimental-image.json
           timeout -k 2s 15s docker run --rm --network none --cpus 1 --memory 256m --pids-limit 64 --entrypoint /opt/open5gs/bin/open5gs-udmd l3-open5gs-udm:2.7.2-guard.1 -v > evidence/runtime-version.txt 2>&1
           grep -q '2.7.2' evidence/runtime-version.txt
