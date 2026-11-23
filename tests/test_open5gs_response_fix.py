@@ -39,3 +39,22 @@ class ResponseFixTests(unittest.TestCase):
   sys.path.insert(0,str(ROOT/'scripts'))
   spec=importlib.util.spec_from_file_location('impact',ROOT/'scripts/release_impact.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
   self.assertIn('ci/experimental/open5gs-udm-response-fix/',m.NON_PACKAGE_PREFIXES)
+
+ def test_error_projection_preserves_single_response_count(self):
+  import importlib.util,sys
+  from unittest.mock import patch
+  from types import SimpleNamespace
+  spec=importlib.util.spec_from_file_location('response_runtime',FIX/'run_integration.py')
+  module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+  module.IMAGE='sha256:'+'a'*64
+  with tempfile.TemporaryDirectory() as d:
+   private=pathlib.Path(d);cfg=private/'attempt.conf';cfg.touch()
+   (private/'response.json').write_text(json.dumps({'status':503,'title':'Required UDR service unavailable'}))
+   (private/'headers.txt').write_text('HTTP/2 503\r\ncontent-type: application/problem+json\r\n\r\n')
+   meta={'http_code':503,'http_version':'2','time_total':.01,'remote_ip':'172.29.250.3','remote_port':7777}
+   with patch.object(module.subprocess,'run',return_value=SimpleNamespace(stdout=json.dumps(meta).encode(),stderr=b'',returncode=0)):
+    result=module.request('disposable',private,cfg)
+   self.assertEqual(result['response_count'],1)
+   self.assertEqual(result['problem_status'],503)
+   self.assertTrue(result['only_generic_fields'])
+   self.assertFalse((private/'response.json').exists());self.assertFalse((private/'headers.txt').exists())

@@ -3,8 +3,7 @@ import datetime,json,os,pathlib,secrets,shutil,signal,subprocess,sys,tempfile,ti
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'open5gs-udm-runtime'))
 from runtime import docker,cleanup,config
 # Bind solely to the freshly built candidate, never the original image pin.
-IMAGE=json.loads((pathlib.Path(sys.argv[1])/'candidate.json').read_text())['image_id']
-if not IMAGE.startswith('sha256:') or len(IMAGE)!=71:raise ValueError('candidate identity')
+IMAGE=None
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'open5gs-udm-integration'))
 from sbi_fixture import profile,UDR_ID
 
@@ -48,10 +47,10 @@ def request(network,private,cfg):
         if len(raw)>65536:raise RuntimeError('response limit')
         if m.get('http_code')==200 and cfg.stem=='attempt':
             body=json.loads(raw);v=body.get('authenticationVector',{})
-            safe={'authentication_result_valid':body.get('authType')=='5G_AKA' and v.get('avType')=='5G_HE_AKA' and all(isinstance(v.get(k),str) and len(v[k])==n and all(c in '0123456789abcdefABCDEF' for c in v[k]) for k,n in [('rand',32),('autn',32),('xresStar',32),('kausf',64)])}
+            safe={**safe,'authentication_result_valid':body.get('authType')=='5G_AKA' and v.get('avType')=='5G_HE_AKA' and all(isinstance(v.get(k),str) and len(v[k])==n and all(c in '0123456789abcdefABCDEF' for c in v[k]) for k,n in [('rand',32),('autn',32),('xresStar',32),('kausf',64)])}
         if m.get('http_code')==503:
             body=json.loads(raw)
-            safe={'problem_status':body.get('status'),
+            safe={**safe,'problem_status':body.get('status'),
                   'generic_title':body.get('title')=='Required UDR service unavailable',
                   'only_generic_fields':set(body)<= {'status','title'}}
         response.unlink()
@@ -210,6 +209,9 @@ def trial(case,out,runid):
     return result
 
 def main(out):
+    global IMAGE
+    IMAGE=json.loads((out/'candidate.json').read_text())['image_id']
+    if not IMAGE.startswith('sha256:') or len(IMAGE)!=71:raise ValueError('candidate identity')
     if os.environ.get('GITHUB_ACTIONS')!='true' or os.environ.get('RUNNER_ENVIRONMENT')!='github-hosted' or os.environ.get('GITHUB_REF')!='refs/heads/experimental/open5gs-udm-sbi-20261123':raise RuntimeError('hosted experimental runner required')
     identity=os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT']
     if not all(c in '0123456789-' for c in identity):raise ValueError('run identity')
