@@ -1,0 +1,81 @@
+name: Parallel H-CRAN OAI and srsRAN protocol readiness (OFFLINE; NO DEPLOY)
+on:
+  push:
+    branches:
+      - experiment/hcran-parallel-protocol-gates-20261123
+    paths:
+      - .github/workflows/hcran-parallel-protocol-gates.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hcran-parallel-protocol-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  oai-recovery-contracts:
+    name: OAI H-CRAN frozen Stage5ZG recovery evidence contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 7fa911ece3b510b09351bf19c722007365ba47bd
+          persist-credentials: false
+          path: oai-frozen
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install offline parsers
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
+      - name: Verify frozen Stage5P/5Y/5ZG recovery contracts only
+        working-directory: oai-frozen
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_hcran_stage5zg_contract.py -v
+          python -m unittest discover -s tests -p test_hcran_stage5p_contract.py -v
+          python -m unittest discover -s tests -p test_hcran_stage5y_contract.py -v
+      - name: Record qualification limit
+        if: always()
+        run: |
+          echo 'OAI protocol baseline: initial UE/NAS/PDU/GTP-U and isolated mobility PASSED historically.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Native AMF recovery: NOT QUALIFIED; offline contract tests do not demonstrate recovery.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Frozen OAI source SHA: 7fa911ece3b510b09351bf19c722007365ba47bd.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'HP/production: UNTOUCHED. Decision: NO-GO.' >> "$GITHUB_STEP_SUMMARY"
+
+  srsran-ue-feasibility:
+    name: srsRAN H-CRAN H2 UE compatibility and negative gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 571100eca51c39353c111ca8b5abe1c227b3d887
+          persist-credentials: false
+          path: srsran-h2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned static parser
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
+      - name: Assert incompatible canonical UE is BLOCKED, never PASS
+        working-directory: srsran-h2
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_hcransrs_h2_feasibility.py -v
+          python scripts/experiments/hcransrs_h2_feasibility.py --output "$RUNNER_TEMP/hcransrs-h2-readiness.json"
+          python - "$RUNNER_TEMP/hcransrs-h2-readiness.json" <<'PY'
+          import json,sys
+          with open(sys.argv[1]) as f:
+              r=json.load(f)
+          assert r["h2"] == "BLOCKED_INCOMPATIBLE_UE"
+          assert r["end_to_end"] == "NOT_VALIDATED"
+          assert r["production_decision"] == "NO_GO"
+          assert len(r["du_results"]) == 2
+          PY
+      - name: Record qualification limit
+        if: always()
+        run: |
+          echo 'srsRAN H1 NGAP and both F1AP setups PASS on historical run 45113602402.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'H2 5G SA n78/30kHz TDD UE compatibility BLOCKED with documented srsUE prototype.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'H3-H6 NAS/PDU/GTP-U/mobility/recovery: NOT RUN. Decision: NO-GO.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'HP/production: UNTOUCHED.' >> "$GITHUB_STEP_SUMMARY"
