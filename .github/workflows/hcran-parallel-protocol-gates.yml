@@ -11,6 +11,8 @@ on:
       - tests/test_hcransrs_h2_zmq_candidate_audit.py
       - scripts/experiments/hcran_oai_qos_lifecycle_gate.py
       - tests/test_hcran_oai_qos_lifecycle_gate.py
+      - scripts/experiments/hcransrs_zmq_pinned_transport_audit.py
+      - tests/test_hcransrs_zmq_pinned_transport_audit.py
   workflow_dispatch:
 permissions:
   contents: read
@@ -175,3 +177,42 @@ jobs:
         run: |
           echo 'OAI QoS/PDU modification/release: NOT RUN. This checks only synthetic contract fixtures and missing-evidence rejection.' >> "$GITHUB_STEP_SUMMARY"
           echo 'Do not claim protocol success from an offline green test. Production decision NO-GO.' >> "$GITHUB_STEP_SUMMARY"
+
+  srsran-pinned-zmq-handshake:
+    name: srsRAN pinned ZMQ REQ/REP sample ABI audit (GET-only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Negative tests and GET-only pinned upstream radio source verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_hcransrs_zmq_pinned_transport_audit.py -v
+          python scripts/experiments/hcransrs_zmq_pinned_transport_audit.py --out "$RUNNER_TEMP/pinned-zmq-audit.json"
+          python - "$RUNNER_TEMP/pinned-zmq-audit.json" <<'PY'
+          import json,sys
+          with open(sys.argv[1]) as f: r=json.load(f)
+          assert r["decision"]=="ZMQ_HANDSHAKE_SOURCE_OBSERVED_INTEROPERABILITY_BLOCKED"
+          assert r["h2"]=="BLOCKED"
+          assert r["production_decision"]=="NO_GO"
+          PY
+      - name: Archive bounded source-only observation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-zmq-pinned-source-${{ github.run_id }}
+          path: ${{ runner.temp }}/pinned-zmq-audit.json
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Report runtime boundary
+        if: always()
+        run: |
+          echo 'Pinned srsRAN source REQ/REP and cf_t behavior verified if source audit passed. OAI UE reciprocal framing/ABI remains UNVERIFIED.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No RF sample exchange, no RRC/NAS/GTP-U, no deployment. NO-GO.' >> "$GITHUB_STEP_SUMMARY"
