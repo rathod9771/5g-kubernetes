@@ -1,0 +1,75 @@
+name: Experimental Open5GS UDM disposable runtime
+on:
+  push:
+    branches: [experimental/open5gs-udm-sbi-20261123]
+    paths: ['ci/experimental/open5gs-udm-runtime/**', '.github/workflows/experimental-open5gs-udm-runtime.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: experimental-open5gs-udm-runtime
+  cancel-in-progress: false
+jobs:
+  disposable-runtime:
+    if: github.repository == 'rathod9771/5g-kubernetes' && github.ref == 'refs/heads/experimental/open5gs-udm-sbi-20261123'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify original successful run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir evidence
+          gh api repos/rathod9771/5g-kubernetes/actions/runs/45121234959 > evidence/native-run.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          repository: rathod9771/5g-kubernetes
+          run-id: 45121234959
+          name: experimental-open5gs-udm-sbi-evidence
+          path: native-artifact
+      - name: Verify archive, OCI identity, source and binary provenance
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          r=ci/experimental/open5gs-udm-runtime
+          (cd "$r" && sha256sum -c SHA256SUMS) > evidence/input-checksums.txt
+          timeout -k 2s 150s python3 "$r/verify_artifact.py" native-artifact evidence evidence/native-run.json
+          timeout -k 2s 40s docker load -i native-artifact/experimental-image.docker.tar.gz > evidence/image-load.txt
+      - name: Bounded real UDM and NRF runtime; blocked cases fail admission
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          timeout -k 5s 180s python3 ci/experimental/open5gs-udm-runtime/runtime.py evidence
+      - name: Verify cleanup even after interruption
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          n="l3-udm-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          for suffix in udm nrf; do
+            if docker container inspect "$n-$suffix" >/dev/null 2>&1; then
+              timeout -k 2s 15s docker rm -f "$n-$suffix"
+            fi
+            if docker container inspect "$n-$suffix" >/dev/null 2>&1; then exit 1; fi
+          done
+          if docker network inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker network rm "$n"; fi
+          if docker network inspect "$n" >/dev/null 2>&1; then exit 1; fi
+          printf 'PASS: run-specific containers and network absent\n' > evidence/cleanup.txt
+      - name: Preserve sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: experimental-open5gs-udm-runtime-evidence
+          path: |
+            evidence/artifact-verification.json
+            evidence/input-checksums.txt
+            evidence/image-load.txt
+            evidence/runtime-results.json
+            evidence/cleanup.txt
+          if-no-files-found: error
+          retention-days: 14
