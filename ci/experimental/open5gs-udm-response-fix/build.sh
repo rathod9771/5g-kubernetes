@@ -56,5 +56,7 @@ cp build/compile_commands.json /out/
 printf 'PASS native compilation and 9 actual-library checks\n' > /out/native-result.txt
 
 cp build/src/udm/selection-driver /out/selection-driver
+patchelf --set-rpath /opt/open5gs/lib/x86_64-linux-gnu /out/selection-driver
+readelf -d /out/selection-driver > /out/driver-dynamic.txt
 sha256sum /out/selection-driver > /out/driver-sha256.txt
 python3 /fix/test_lifecycle.py /work/source /out

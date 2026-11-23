@@ -7,6 +7,9 @@ x=json.loads(subprocess.check_output(['docker','image','inspect','l3-open5gs-udm
 old='sha256:9560fbf2a7e53f8976fcdecbce5d4e6a86cdbf74466f5b94d871ec4323c2dc12'
 assert x['Id']!=old
 receipt=convert(out/'experimental-image.docker.tar.gz',out/'oci')
+index=json.loads((out/'oci/index.json').read_text())
+index['manifests'][0]['annotations']['org.opencontainers.image.ref.name']='2.7.2-guard.2'
+(out/'oci/index.json').write_text(json.dumps(index,indent=2)+'\n')
 assert receipt['config_digest']==x['Id']
 assert receipt['oci_manifest_digest']!='sha256:9735e0a099b5002658e0e8cf6348079894ea4bc3e6befbf70bef5710ce509bde'
 root=pathlib.Path(__file__).parent

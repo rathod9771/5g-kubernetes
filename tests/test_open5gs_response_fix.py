@@ -58,3 +58,8 @@ class ResponseFixTests(unittest.TestCase):
    self.assertEqual(result['problem_status'],503)
    self.assertTrue(result['only_generic_fields'])
    self.assertFalse((private/'response.json').exists());self.assertFalse((private/'headers.txt').exists())
+
+ def test_relocated_driver_has_explicit_loader_validation(self):
+  self.assertIn('patchelf --set-rpath /opt/open5gs/lib/x86_64-linux-gnu /out/selection-driver',(FIX/'build.sh').read_text())
+  self.assertIn("b'not found'",(FIX/'run_driver.py').read_text())
+  self.assertIn("'--network','none'",(FIX/'run_driver.py').read_text())
