@@ -67,7 +67,10 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/oai-zmq-ue/cmake_targets"
           export CMAKE_BUILD_PARALLEL_LEVEL=2
-          timeout --signal=TERM --kill-after=20s 3900s ./build_oai --ninja -w ZMQ --nrUE --noavx512 \
+          # Reuse Unix Makefiles generated during upstream -I prerequisite configuration.
+          test -f "$RUNNER_TEMP/oai-zmq-ue/cmake_targets/ran_build/build/CMakeCache.txt"
+          grep -Fqx 'CMAKE_GENERATOR:INTERNAL=Unix Makefiles' "$RUNNER_TEMP/oai-zmq-ue/cmake_targets/ran_build/build/CMakeCache.txt"
+          timeout --signal=TERM --kill-after=20s 3900s ./build_oai -w ZMQ --nrUE --noavx512 \
             --build-tool-opt '-j2' > "$RUNNER_TEMP/oai-build.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/oai-build.log"; exit 1; }
           BUILD="$RUNNER_TEMP/oai-zmq-ue/cmake_targets/ran_build/build"
           test -x "$BUILD/nr-uesoftmodem"
