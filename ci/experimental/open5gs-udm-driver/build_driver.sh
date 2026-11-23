@@ -25,7 +25,7 @@ cd build
 # All project ABI declarations come from the approved patched source; only the
 # isolated driver is compiled. Link solely the six already-built artifact libs.
 set -x
-cc -std=gnu11 -O2 -g -Wall -Wextra -Werror -DOGS_SBI_COMPILATION \
+cc -std=gnu11 -O2 -g -Wall -Wextra -Werror -Wno-sign-compare -DOGS_SBI_COMPILATION \
  -I. -I.. -Ilib -I../lib -Ilib/core -I../lib/core -Ilib/app -I../lib/app \
  -Ilib/sbi -I../lib/sbi -Ilib/crypt -I../lib/crypt -Ilib/proto -I../lib/proto \
  -Ilib/sbi/openapi -I../lib/sbi/openapi -I/usr/include/p11-kit-1 -pthread \

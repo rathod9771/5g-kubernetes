@@ -44,6 +44,8 @@ class DriverPreparationTests(unittest.TestCase):
         self.assertNotIn('ninja ',s);self.assertNotIn('meson compile',s)
         self.assertIn('/artifact/root/opt/open5gs/lib',s)
         self.assertIn('cmp /package-versions.txt',s)
+        # Match the validated upstream compile database for its inline headers.
+        self.assertIn('-Werror -Wno-sign-compare',s)
     def test_workflow_not_candidate_rebuild_or_daemon_rerun(self):
         s=(ROOT/'.github/workflows/experimental-open5gs-udm-driver.yml').read_text()
         self.assertNotIn('Runtime.Dockerfile',s);self.assertNotIn('runtime.py evidence',s)

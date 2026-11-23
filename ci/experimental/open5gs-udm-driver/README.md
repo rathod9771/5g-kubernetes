@@ -33,3 +33,9 @@ Limits: driver build 2 CPU/5 GiB/256 PIDs/600s offline container; fixture and pr
 supervisor 120s. Per-process external calls 15s; 1 MiB captured output ceiling,
 driver JSON 1 KiB, probe output 8 KiB. Cleanup in finally and workflow always.
 No production settings, credentials, host mounts or external Core connections.
+
+Compiler compatibility: the original native regression compile database explicitly
+uses `-Wno-sign-compare`. Driver build retains this same flag for the pinned
+`ogs-pkbuf.h` inline int/unsigned comparison, preserving `-Werror` for other warnings.
+The first driver build's failure is preserved in run 45145095914; no source or
+shared library correction was required.
