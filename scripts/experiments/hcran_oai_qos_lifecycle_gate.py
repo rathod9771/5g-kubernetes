@@ -68,8 +68,18 @@ def verify(receipt):
             if event.get("decoded") is not True:
                 raise EvidenceError("Keyword-only evidence not accepted")
             seq.append(event["frame"])
-        if seq!=sorted(set(seq)):
-            raise EvidenceError("Protocol procedure order invalid or reused frame")
+        if len(set(seq))!=len(seq):
+            raise EvidenceError("Protocol observations cannot reuse packet frames")
+        for before_key, after_key in (
+            ("nas_registration_accept", "pdu_session_establishment_accept"),
+            ("pdu_session_establishment_accept", "pdu_session_modification_command"),
+            ("pdu_session_modification_command", "pdu_session_modification_complete"),
+            ("pdu_session_modification_complete", "pdu_session_release_command"),
+            ("pdu_session_release_command", "pdu_session_release_complete"),
+            ("ngap_pdu_session_resource_modify", "ngap_pdu_session_resource_release"),
+            ("f1ap_ue_context_modification", "f1ap_ue_context_release")):
+            if events[before_key]["frame"] >= events[after_key]["frame"]:
+                raise EvidenceError("Invalid causal ordering: "+before_key+" -> "+after_key)
         qos=ue.get("qos")
         if not isinstance(qos,dict) or type(qos.get("five_qi")) is not int or not 1<=qos["five_qi"]<=255 or type(qos.get("qfi")) is not int or not 1<=qos["qfi"]<=63:
             raise EvidenceError("Missing valid 5QI/QFI mapping")
