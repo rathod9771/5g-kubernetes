@@ -87,6 +87,76 @@ def wire_summary(path):
     }
 
 
+def protocol_wire_summary(pcap):
+    """Independently decode candidate UE-associated F1AP/NGAP message frames.
+
+    This function never asserts an actual RRC procedure from mere ZeroMQ
+    payload or UE log strings; it reports independent control-plane frames.
+    """
+    filt = {
+        "macro_f1ap_ul_rrc_message_transfer":
+            f"f1ap.ULRRCMessageTransfer_element && ip.src == {DU_ADDRESS} && ip.dst == {h1.IP['cu']}",
+        "macro_f1ap_dl_rrc_message_transfer":
+            f"f1ap.DLRRCMessageTransfer_element && ip.src == {h1.IP['cu']} && ip.dst == {DU_ADDRESS}",
+        "ngap_initial_ue_message":
+            f"ngap.InitialUEMessage_element && ip.src == {h1.IP['cu']} && ip.dst == {h1.IP['amf']}",
+    }
+    if not pcap.is_file() or pcap.is_symlink() or pcap.stat().st_size < 128:
+        return {
+            "status": "NO_CONTROL_WIRE_CAPTURE",
+            "frame_counts": {name: 0 for name in filt},
+            "first_frame_numbers": {name: None for name in filt},
+            "evidence_kind": "INDEPENDENT_SCTP_PACKET_DECODING",
+            "protocol_validation": "NOT_ESTABLISHED",
+        }
+    counts={}
+    first={}
+    for name,expr in filt.items():
+        output=h1.cmd(
+            "tshark","-n","-r",str(pcap),"-Y",expr,
+            "-T","fields","-e","frame.number",timeout=20
+        )
+        values=output.splitlines()
+        if any(not re.fullmatch(r"[1-9][0-9]*",v) for v in values):
+            raise h1.EvidenceError("Invalid independent F1AP or NGAP frame values")
+        numbers=sorted(set(int(v) for v in values))
+        counts[name]=len(numbers)
+        first[name]=numbers[0] if numbers else None
+    if all(counts.values()):
+        status="UE_ASSOCIATED_F1AP_NGAP_WIRE_CANDIDATES"
+    elif counts["macro_f1ap_ul_rrc_message_transfer"] and counts["macro_f1ap_dl_rrc_message_transfer"]:
+        status="BIDIRECTIONAL_UE_ASSOCIATED_F1AP_WIRE_CANDIDATES"
+    else:
+        status="NO_BIDIRECTIONAL_UE_ASSOCIATED_F1AP_WIRE"
+    return {
+        "status":status,
+        "frame_counts":counts,
+        "first_frame_numbers":first,
+        "control_capture_sha256":hashlib.sha256(pcap.read_bytes()).hexdigest(),
+        "evidence_kind":"INDEPENDENT_SCTP_PACKET_DECODING",
+        "protocol_validation":"CANDIDATE_ONLY",
+    }
+
+
+def assess_h3(receipt):
+    """Fail closed on missing UE log and independently decoded F1AP evidence."""
+    wire=receipt.get("protocol_wire") or {}
+    ue=receipt.get("ue") or {}
+    markers=set(ue.get("bounded_synthetic_ue_log_markers") or [])
+    counts=wire.get("frame_counts") or {}
+    if receipt.get("status")!="REAL_OAI_UE_SRS_DU_ZMQ_TRANSPORT_CANDIDATE_ONLY":
+        return "BLOCKED_TRANSPORT"
+    if wire.get("evidence_kind")!="INDEPENDENT_SCTP_PACKET_DECODING":
+        return "BLOCKED_NO_INDEPENDENT_CONTROL_WIRE"
+    if "SIB1_LOG_CANDIDATE" not in markers:
+        return "BLOCKED_SIB1_LOG_EVIDENCE"
+    if not counts.get("macro_f1ap_ul_rrc_message_transfer",0):
+        return "BLOCKED_F1AP_UL_RRC_EVIDENCE"
+    if not counts.get("macro_f1ap_dl_rrc_message_transfer",0):
+        return "BLOCKED_F1AP_DL_RRC_EVIDENCE"
+    return "SIB1_LOG_AND_BIDIRECTIONAL_F1AP_RRC_TRANSFER_CANDIDATES"
+
+
 def run_ue(out,ue,library_path):
     result={"started":False,"exit_code":None,"ran_seconds":0,
             "bounded_synthetic_ue_log_markers":[]}
@@ -208,6 +278,7 @@ def run(a):
         outcome["h1_dual_f1_wire"]=h1_result["status"]
         outcome["ue"]=ue_result
         outcome["radio_wire"]=wire_summary(pcap)
+        outcome["protocol_wire"]=protocol_wire_summary(out/"runner-local"/"setup.pcapng")
         if not ue_result.get("started"):
             outcome["status"]="BLOCKED_UE_START"
         elif outcome["radio_wire"]["wire_evidence"]=="BIDIRECTIONAL_LARGE_ZMQ_TCP_PAYLOAD":
@@ -227,6 +298,9 @@ def run(a):
             thread.join(timeout=10)
         if "ue" not in outcome:outcome["ue"]=ue_result
         if "radio_wire" not in outcome:outcome["radio_wire"]=wire_summary(pcap)
+        if "protocol_wire" not in outcome:
+            outcome["protocol_wire"]={"status":"UNAVAILABLE", "protocol_validation":"NOT_ESTABLISHED"}
+        outcome["h3_candidate_qualification"]=assess_h3(outcome)
         (out/"receipt.json").write_text(json.dumps(outcome,indent=2,sort_keys=True)+"\n")
     print(json.dumps({"status":outcome["status"],"radio_wire":outcome["radio_wire"],
                       "production_decision":"NO_GO"},sort_keys=True))
