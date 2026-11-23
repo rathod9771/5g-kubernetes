@@ -41,7 +41,7 @@ test "$(cat /out/http2-response.txt)" = isolated-non-subscriber-control
 kill "$server"; wait "$server" || true
 trap - EXIT
 cp build/src/udm/open5gs-udmd /out/root/opt/open5gs/bin/
-find build/lib build/subprojects -name '*.so*' -type f -exec cp -t /out/root/opt/open5gs/lib/x86_64-linux-gnu/ {} +
+python3 /ci/collect_elf.py
 # Stage SONAME symlinks for every built library; no unbuilt/original internal library overlay.
 for f in /out/root/opt/open5gs/lib/x86_64-linux-gnu/*.so*; do
  soname=$(readelf -d "$f" | sed -n 's/.*(SONAME).*\[\(.*\)\].*/\1/p')
