@@ -1,0 +1,129 @@
+name: Experimental Open5GS UDM actual daemon integration
+on:
+  push:
+    branches: [experimental/open5gs-udm-sbi-20261123]
+    paths: ['ci/experimental/open5gs-udm-integration/**', '.github/workflows/experimental-open5gs-udm-integration.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: experimental-open5gs-udm-stage8
+  cancel-in-progress: false
+jobs:
+  disposable-integration:
+    if: github.repository == 'rathod9771/5g-kubernetes' && github.ref == 'refs/heads/experimental/open5gs-udm-sbi-20261123'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Preserve approved native run provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir evidence
+          gh api repos/rathod9771/5g-kubernetes/actions/runs/45121234959 > evidence/native-run.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          repository: rathod9771/5g-kubernetes
+          run-id: 45121234959
+          name: experimental-open5gs-udm-sbi-evidence
+          path: native-artifact
+      - name: Verify original artifact and all experiment inputs
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          for r in open5gs-udm-sbi open5gs-udm-runtime open5gs-udm-driver open5gs-udm-integration; do
+            (cd "ci/experimental/$r" && sha256sum -c SHA256SUMS)
+          done > evidence/inputs.txt
+          timeout -k 2s 150s python3 ci/experimental/open5gs-udm-runtime/verify_artifact.py native-artifact evidence evidence/native-run.json
+          timeout -k 2s 40s docker load -i native-artifact/experimental-image.docker.tar.gz > evidence/image-load.txt
+      - name: Pinned disposable toolchain and HTTP2 fixture
+        timeout-minutes: 11
+        env:
+          DOCKER_BUILDKIT: '0'
+        run: |
+          set -euo pipefail
+          ulimit -f 16384
+          test "$(awk '/MemAvailable/ {print $2}' /proc/meminfo)" -ge 5000000
+          test "$(df -Pk . | awk 'NR==2 {print $4}')" -ge 10000000
+          timeout -k 5s 550s docker build --memory=5g --cpu-quota=200000 -f ci/experimental/open5gs-udm-sbi/Builder.Dockerfile -t l3-udm-stage8-toolchain ci/experimental/open5gs-udm-sbi > evidence/toolchain-builder.log 2>&1
+          docker tag l3-udm-stage8-toolchain l3-udm-driver-toolchain
+          timeout -k 2s 30s docker build --network none -f ci/experimental/open5gs-udm-integration/Fixture.Dockerfile -t l3-udm-stage8-fixture ci/experimental/open5gs-udm-integration > evidence/fixture-builder.log 2>&1
+      - name: Rebuild only isolated regression drivers, never candidate libraries or image
+        timeout-minutes: 11
+        run: |
+          set -euo pipefail
+          ulimit -f 16384
+          timeout -k 5s 600s docker run --rm --name "l3-udm-stage8-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --network none --cpus 2 --memory 5g --memory-swap 5g --pids-limit 256 \
+            -v "$PWD/ci/experimental/open5gs-udm-driver:/ci:ro" -v "$PWD/ci/experimental/open5gs-udm-sbi:/native-inputs:ro" \
+            -v "$PWD/ci/experimental/open5gs-udm-integration:/stage:ro" -v "$PWD/native-artifact:/artifact:ro" -v "$PWD/evidence:/out" \
+            l3-udm-stage8-toolchain env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/tmp L3_DISPOSABLE_DRIVER_BUILD=approved /bin/bash -c '/bin/bash /ci/build_driver.sh && python3 /stage/build_regressions.py && sha256sum /out/original-regression > /out/original-regression.sha256' > evidence/regression-compile.log 2>&1
+      - name: Execute original nine actual-library cases
+        run: |
+          set -euo pipefail
+          timeout -k 2s 15s docker run --rm --network none --cpus 0.5 --memory 128m --memory-swap 128m --pids-limit 32 --read-only --cap-drop ALL --security-opt no-new-privileges \
+            -v "$PWD/evidence/original-regression:/regression:ro" --entrypoint /regression \
+            sha256:9560fbf2a7e53f8976fcdecbce5d4e6a86cdbf74466f5b94d871ec4323c2dc12 > evidence/original-regression.log 2>&1
+          test "$(grep -c ' PASS$' evidence/original-regression.log)" -eq 9
+      - name: Execute preserved subscriber-free six-case driver
+        timeout-minutes: 3
+        run: timeout -k 5s 120s python3 ci/experimental/open5gs-udm-driver/run_driver.py evidence
+      - name: Actual UDM-daemon A-F with ephemeral synthetic context
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          timeout -k 5s 550s python3 ci/experimental/open5gs-udm-integration/run_integration.py evidence
+      - name: Verify experiment-specific cleanup including temporary synthetic material
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          for c in a b c d e f; do
+            for suffix in originator-ready originator-attempt udm nf; do
+              n="l3-udm-stage8-$id-$c-$suffix"
+              if docker container inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker rm -f "$n"; fi
+              if docker container inspect "$n" >/dev/null 2>&1; then exit 1; fi
+            done
+            n="l3-udm-stage8-$id-$c"
+            if docker network inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker network rm "$n"; fi
+            if docker network inspect "$n" >/dev/null 2>&1; then exit 1; fi
+          done
+          n="l3-udm-stage8-build-$id"
+          if docker container inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker rm -f "$n"; fi
+          n="l3-udm-driver-$id-fixture"
+          if docker container inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker rm -f "$n"; fi
+          n="l3-udm-driver-$id"
+          if docker network inspect "$n" >/dev/null 2>&1; then timeout -k 2s 15s docker network rm "$n"; fi
+          python3 - <<'PY'
+          import os,pathlib,shutil
+          identity=os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT']
+          for p in pathlib.Path('/dev/shm').glob('l3-stage8-'+identity+'-*'):
+              if p.is_symlink() or not p.is_dir():raise SystemExit('unsafe cleanup entry')
+              shutil.rmtree(p)
+          assert not list(pathlib.Path('/dev/shm').glob('l3-stage8-'+identity+'-*'))
+          PY
+          echo PASS > evidence/stage8-cleanup.txt
+      - name: Export only allowlisted sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: experimental-open5gs-udm-stage8-evidence
+          path: |
+            evidence/artifact-verification.json
+            evidence/inputs.txt
+            evidence/regression-compile.log
+            evidence/driver-*.txt
+            evidence/driver-results.json
+            evidence/original-regression.log
+            evidence/original-regression.sha256
+            evidence/case-*.json
+            evidence/integration-summary.json
+            evidence/stage8-cleanup.txt
+            evidence/fixture-builder.log
+          if-no-files-found: error
+          retention-days: 14
