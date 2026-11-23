@@ -199,13 +199,76 @@ class APITests(unittest.TestCase):
             finally:release.set()
             self.assertEqual(future.result()[0], 200)
 
+    def track_worker_completion(self):
+        # A response body can arrive before shutdown_request()/slot release.
+        # Observe the end of the actual worker, not client receipt or a sleep.
+        condition = threading.Condition()
+        completed = [0]
+        original = self.server._process
+        def tracked(request, address):
+            try:
+                return original(request, address)
+            finally:
+                with condition:
+                    completed[0] += 1
+                    condition.notify_all()
+        self.server._process = tracked
+        def wait_for(count):
+            with condition:
+                self.assertTrue(condition.wait_for(lambda: completed[0] >= count, timeout=3),
+                                'accepted workers did not complete within deadline')
+        return wait_for
+
     def test_counters_are_exact_under_concurrent_processing(self):
+        wait_for = self.track_worker_completion()
+        results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-            results=list(pool.map(lambda _:self.request('/process', b'{"values":[1,2]}'), range(30)))
-        self.assertTrue(all(r[0]==200 for r in results))
+            for batch in range(10):
+                results.extend(pool.map(lambda _:self.request('/process', b'{"values":[1,2]}'), range(3)))
+                wait_for((batch + 1) * 3)
+        self.assertEqual(len(results), 30)
+        self.assertTrue(all(r[0]==200 for r in results), [r[0] for r in results])
         values=dict(line.split() for line in self.request('/metrics')[1].splitlines() if not line.startswith('#'))
         self.assertEqual(values['fog_processed_values_total'], '60')
         self.assertEqual(values['fog_requests_total'], '31')
+
+    def test_completed_responses_can_overlap_admission_cleanup(self):
+        wait_for = self.track_worker_completion()
+        release = threading.Event()
+        condition = threading.Condition()
+        arrived = [0]
+        original = self.server.finish_request
+        def hold_after_response(request, address):
+            original(request, address)
+            with condition:
+                arrived[0] += 1
+                condition.notify_all()
+            if not release.wait(3):
+                raise RuntimeError('test cleanup barrier expired')
+        self.server.finish_request = hold_after_response
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.app.MAX_REQUESTS) as pool:
+                results = list(pool.map(lambda _:self.request('/process', b'{"values":[1,2]}'),
+                                        range(self.app.MAX_REQUESTS)))
+            self.assertEqual([r[0] for r in results], [200] * self.app.MAX_REQUESTS)
+            with condition:
+                self.assertTrue(condition.wait_for(lambda: arrived[0] == self.app.MAX_REQUESTS, timeout=2))
+            # All bodies arrived, but their admitted workers still hold slots.
+            # Body-free probe avoids a client write racing the intentional close.
+            self.assertEqual(self.request('/health')[0], 503)
+            with self.app.counters_lock:
+                self.assertEqual(self.app.counters, {'requests':self.app.MAX_REQUESTS,
+                                                   'processed':2*self.app.MAX_REQUESTS})
+        finally:
+            release.set()
+        wait_for(self.app.MAX_REQUESTS)
+        self.server.finish_request = original
+        self.assertEqual(self.request('/process', b'{"values":[3]}')[0], 200)
+        wait_for(self.app.MAX_REQUESTS + 1)
+        metrics = self.request('/metrics')[1]
+        values = dict(line.split() for line in metrics.splitlines() if not line.startswith('#'))
+        self.assertEqual(values['fog_requests_total'], str(self.app.MAX_REQUESTS + 2))
+        self.assertEqual(values['fog_processed_values_total'], str(2*self.app.MAX_REQUESTS + 1))
 
     def test_admission_bound_and_shutdown_interrupt_slow_clients(self):
         sockets=[]
