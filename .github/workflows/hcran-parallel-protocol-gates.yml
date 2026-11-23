@@ -9,6 +9,8 @@ on:
       - tests/test_hcran_oai_stage5zg_evidence_gate.py
       - scripts/experiments/hcransrs_h2_zmq_candidate_audit.py
       - tests/test_hcransrs_h2_zmq_candidate_audit.py
+      - scripts/experiments/hcran_oai_qos_lifecycle_gate.py
+      - tests/test_hcran_oai_qos_lifecycle_gate.py
   workflow_dispatch:
 permissions:
   contents: read
@@ -151,3 +153,25 @@ jobs:
           path: ${{ runner.temp }}/hcransrs-zmq-candidate.json
           if-no-files-found: warn
           retention-days: 14
+
+  oai-qos-lifecycle-contract:
+    name: OAI H-CRAN QoS and PDU lifecycle negative acceptance contract (NO UE)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test fail-closed QFI/DRB and NAS/NGAP/F1AP/GTP-U evidence contracts
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_hcran_oai_qos_lifecycle_gate.py -v
+          python -m py_compile scripts/experiments/hcran_oai_qos_lifecycle_gate.py
+      - name: Record actual runtime boundary
+        if: always()
+        run: |
+          echo 'OAI QoS/PDU modification/release: NOT RUN. This checks only synthetic contract fixtures and missing-evidence rejection.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Do not claim protocol success from an offline green test. Production decision NO-GO.' >> "$GITHUB_STEP_SUMMARY"
