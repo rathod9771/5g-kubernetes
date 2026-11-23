@@ -11,6 +11,8 @@ m=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
 class ZMQTransport(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec('zmq') is not None,
+                         'pyzmq is installed only in isolated ZMQ socket job')
     def test_real_loopback_two_independent_cells(self):
         r=m.smoke()
         self.assertEqual(r["status"],"INDEPENDENT_PYTHON_ZMQ_PEER_TRANSPORT_PASS")
