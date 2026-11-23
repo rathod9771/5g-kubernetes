@@ -63,3 +63,14 @@ class ResponseFixTests(unittest.TestCase):
   self.assertIn('patchelf --set-rpath /opt/open5gs/lib/x86_64-linux-gnu /out/selection-driver',(FIX/'build.sh').read_text())
   self.assertIn("b'not found'",(FIX/'run_driver.py').read_text())
   self.assertIn("'--network','none'",(FIX/'run_driver.py').read_text())
+
+ def test_curl_has_exactly_one_private_response_destination(self):
+  import importlib.util
+  spec=importlib.util.spec_from_file_location('capture_runtime',FIX/'run_integration.py')
+  module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+  with tempfile.TemporaryDirectory() as d:
+   cfg=pathlib.Path(d)/'attempt.conf';module.curl_cfg(cfg,'http://172.29.250.3:7777/non-subscriber-control')
+   self.assertEqual([line for line in cfg.read_text().splitlines() if line.startswith('output = ')],['output = /private/response.json'])
+   self.assertEqual(cfg.stat().st_mode & 0o777,0o600)
+  import inspect
+  self.assertNotIn("'--output'",inspect.getsource(module.request))

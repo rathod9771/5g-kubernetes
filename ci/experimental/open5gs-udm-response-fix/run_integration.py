@@ -20,7 +20,7 @@ def state_of(name):
 def curl_cfg(path,url,body=None):
     # Private config avoids secret URLs or data in process argv and GitHub logs.
     lines=['url = '+json.dumps(url),'http2-prior-knowledge','silent','show-error',
-           'max-time = 12','output = /dev/null','write-out = "%{json}"','noproxy = "*"']
+           'max-time = 12','output = /private/response.json','write-out = "%{json}"','noproxy = "*"']
     if body is not None:lines+=['request = POST','header = "Content-Type: application/json"','data = '+json.dumps(json.dumps(body))]
     path.write_text('\n'.join(lines)+'\n');path.chmod(0o600)
 
@@ -28,7 +28,7 @@ def request(network,private,cfg):
     p=subprocess.run(['docker','run','--rm','--name',network+'-originator-'+cfg.stem,'--network',network,'--user',str(os.getuid())+':'+str(os.getgid()),
         '--cpus','0.5','--memory','128m','--memory-swap','128m','--pids-limit','16','--cap-drop','ALL',
         '--read-only','--security-opt','no-new-privileges','--log-driver','none',
-        '-v',str(private)+':/private:rw','--entrypoint','/usr/bin/curl',IMAGE,'--config','/private/'+cfg.name,'--max-filesize','65536','--output','/private/response.json','--dump-header','/private/headers.txt'],
+        '-v',str(private)+':/private:rw','--entrypoint','/usr/bin/curl',IMAGE,'--config','/private/'+cfg.name,'--max-filesize','65536','--dump-header','/private/headers.txt'],
         capture_output=True,timeout=16)
     if len(p.stdout)>16384 or len(p.stderr)>4096:raise RuntimeError('originator output limit')
     try:m=json.loads(p.stdout)
