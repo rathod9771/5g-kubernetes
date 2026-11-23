@@ -26,6 +26,10 @@ def classify(profile):
 
 def audit(root):
     root = Path(root)
+    template = (root / "helm/cran-srsran/du/templates/du.yaml").read_text()
+    for expected in ("band: 78", "common_scs: 30"):
+        if expected not in template:
+            raise ValueError("Canonical H-CRAN radio template drift: " + expected)
     results = [classify(yaml.safe_load((root / path).read_text())) for path in CANONICAL]
     if {(x["du_id"], x["pci"]) for x in results} != {(100,101),(101,102)}:
         raise ValueError("H-CRAN DU identities drifted")
