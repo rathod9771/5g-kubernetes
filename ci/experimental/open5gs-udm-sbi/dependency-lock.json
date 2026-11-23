@@ -1,0 +1,22 @@
+{
+  "freeDiameter": {
+    "repository": "open5gs/freeDiameter",
+    "commit": "539ca5f2ded19413b756544ef8538755e9792877",
+    "sha256": "dbdceb196996a1c05355791237888521fd35faa316aaafa53f8115750ab7e5bb"
+  },
+  "libtins": {
+    "repository": "open5gs/libtins",
+    "commit": "bf22438172d269e6db70e27246dffd8e1f0b96e3",
+    "sha256": "fafa090c54b3ae87e65fc7ee7402a288693487fab881917c0ce2110b67657e14"
+  },
+  "prometheus-client-c": {
+    "repository": "open5gs/prometheus-client-c",
+    "commit": "a58ba25bf87a9b1b7c6be4e6f4c62047d620f402",
+    "sha256": "240ccf3616a4b12fcb1f987f75aaab835264fb132360100b9f2b0581718dd349"
+  },
+  "usrsctp": {
+    "repository": "sctplab/usrsctp",
+    "commit": "07f871bda23943c43c9e74cc54f25130459de830",
+    "sha256": "27be37315dccff4313f0622f88ef78691b0f579824494cfe25cbe13c7185da38"
+  }
+}

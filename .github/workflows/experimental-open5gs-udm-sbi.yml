@@ -1,0 +1,59 @@
+name: Experimental Open5GS UDM SBI compatibility
+on:
+  push:
+    branches: [experimental/open5gs-udm-sbi-20261123]
+    paths: ['ci/experimental/open5gs-udm-sbi/**', '.github/workflows/experimental-open5gs-udm-sbi.yml']
+permissions:
+  contents: read
+concurrency:
+  group: experimental-open5gs-udm-sbi
+  cancel-in-progress: false
+jobs:
+  isolated-build:
+    if: github.ref == 'refs/heads/experimental/open5gs-udm-sbi-20261123' && github.repository == 'rathod9771/5g-kubernetes'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Build and validate only on disposable runner
+        timeout-minutes: 50
+        env:
+          DOCKER_BUILDKIT: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          r=ci/experimental/open5gs-udm-sbi
+          mkdir evidence
+          df -h > evidence/runner-disk.txt
+          free -b > evidence/runner-memory.txt
+          test "$(awk '/MemAvailable/ {print $2}' /proc/meminfo)" -ge 5000000
+          test "$(df -Pk . | awk 'NR==2 {print $4}')" -ge 15000000
+          (cd "$r" && sha256sum -c SHA256SUMS) | tee evidence/input-verification.txt
+          timeout -k 10s 900s docker build --memory=5g --cpu-quota=200000 -f "$r/Builder.Dockerfile" -t l3-udm-builder "$r" 2>&1 | tee evidence/builder.log
+          docker image inspect l3-udm-builder > evidence/builder-image.json
+          set +e
+          timeout -k 10s 1800s docker run --rm --network none --cpus 2 --memory 5g --memory-swap 5g --pids-limit 256 -v "$PWD/$r:/ci:ro" -v "$PWD/evidence:/out" l3-udm-builder env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/tmp /bin/bash /ci/build.sh 2>&1 | tee evidence/build-supervisor.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > evidence/build-exit.txt
+          test "$result" -eq 0
+          cp "$r/Runtime.Dockerfile" evidence/Runtime.Dockerfile
+          timeout -k 5s 180s docker build --memory=2g --cpu-quota=100000 -t l3-open5gs-udm:2.7.2-guard.1 evidence 2>&1 | tee evidence/runtime-image-build.log
+          docker image inspect l3-open5gs-udm:2.7.2-guard.1 > evidence/experimental-image.json
+          timeout -k 2s 15s docker run --rm --network none --cpus 1 --memory 256m --pids-limit 64 --entrypoint /opt/open5gs/bin/open5gs-udmd l3-open5gs-udm:2.7.2-guard.1 -v > evidence/runtime-version.txt 2>&1
+          grep -q '2.7.2' evidence/runtime-version.txt
+          timeout -k 2s 15s docker run --rm --network none --entrypoint /usr/bin/ldd l3-open5gs-udm:2.7.2-guard.1 -v /opt/open5gs/bin/open5gs-udmd > evidence/runtime-linker.txt 2>&1
+          if grep -E 'not found|OPENSSL_3|libssl.so.3|libcrypto.so.3' evidence/runtime-linker.txt; then exit 1; fi
+          docker save l3-open5gs-udm:2.7.2-guard.1 | gzip -1 > evidence/experimental-image.docker.tar.gz
+          sha256sum evidence/experimental-image.docker.tar.gz > evidence/image-archive-sha256.txt
+          printf 'PASS build, actual-library regressions, HTTP2 control, runtime version and loader checks; NOT NAS validation\n' > evidence/FINAL.txt
+      - name: Preserve complete or partial evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: experimental-open5gs-udm-sbi-evidence
+          path: evidence/
+          retention-days: 14
+          if-no-files-found: error
