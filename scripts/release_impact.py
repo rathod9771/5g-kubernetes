@@ -25,7 +25,9 @@ RESEARCHER = ('scripts/telecom/', 'tests/test_telecom_', 'config/telecom/', 'doc
 # lifecycle, monitoring, docs, tests, workflows). Anything else is unknown.
 NON_PACKAGE_PREFIXES = ('docs/', 'tests/', 'ran-selector/', 'scripts/assurance/', 'scripts/installer/',
                         'scripts/experiments/', 'experiments/oai-ngap-2026w13/', 'monitoring/', 'layer3-autonomous/', 'deploy/', 'usrp-gnb/',
-                        '.github/')
+                        '.github/',
+                        # Isolated build inputs; no normal RAN/Core package consumer.
+                        'ci/experimental/open5gs-udm-sbi/')
 NON_PACKAGE_FILES = frozenset((
     'README.md', 'INSTALLATION.md', '.gitignore', 'install.sh', 'uninstall.sh', 'deploy.sh', 'orchestrator.sh',
     'status.sh', 'bench-all-ran.sh', 'config/global.env.example', 'config/assurance-event.schema.json',
@@ -42,6 +44,8 @@ NON_PACKAGE_FILES = frozenset((
     'scripts/build-private-installer.sh', 'scripts/build-ran-batch.sh', 'scripts/build-ran-nsds.sh',
     'scripts/rename-ran-packages.sh',
     'scripts/hcran_build_pinned_w45_ue_t3517_tunrenewal_raguard.sh', # opt-in RFsim research only
+    'scripts/layer3/install_local_protocol_observer.py',  # user-local observer, not a package input
+    'scripts/layer3/local_protocol_observer.py',
     'scripts/ci_oai_ngap_readiness.py',  # read-only historical H-CRAN CI inventory; never an OSM package input
 ))
 SHA = re.compile(r'[0-9a-f]{40}')

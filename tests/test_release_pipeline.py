@@ -172,6 +172,63 @@ class ImpactTests(unittest.TestCase):
         self.assertEqual(result['paths']['scripts/telecom/subcharts.py']['class'], 'researcher-cicd')
         self.assertEqual(result['paths']['helm/ueransim/values.yaml']['class'], 'helm-not-in-registry')
 
+    def test_experimental_udm_reviewed_files_are_non_package(self):
+        files = subprocess.check_output(
+            ['git', '-C', str(ROOT), 'ls-files', 'ci/experimental/open5gs-udm-sbi/'],
+            text=True).splitlines()
+        self.assertEqual(len(files), 16)
+        for path in files:
+            with self.subTest(path=path):
+                self.assertEqual(release_impact.classify(path, REGISTRY),
+                                 ('non-package', set(), False))
+
+    def test_experimental_udm_has_no_normal_package_impact(self):
+        paths = ['ci/experimental/open5gs-udm-sbi/build.sh',
+                 'ci/experimental/open5gs-udm-sbi/inputs/source.tar.gz']
+        result = self.impact(paths)
+        self.assertEqual((result['status'], result['ran_scenarios'], result['core_components']),
+                         ('determined', [], []))
+        self.assertEqual(result['buildable'], [])
+
+    def test_experimental_udm_does_not_hide_normal_package_changes(self):
+        path = 'helm/cran-oai/cu/templates/cu.yaml'
+        result = self.impact(['ci/experimental/open5gs-udm-sbi/build.sh', path])
+        self.assertEqual(release_impact.classify(path, REGISTRY)[0], 'package-input')
+        self.assertEqual(set(result['ran_scenarios']), users('helm/cran-oai/cu'))
+        self.assertEqual(release_impact.classify('scripts/build_srsran_from_source.sh', REGISTRY)[0],
+                         'container-build')
+        self.assertEqual(release_impact.classify(release_impact.LOCK_PATH, REGISTRY)[0], 'image-lock')
+
+    def test_experimental_udm_registry_input_precedes_non_package_scope(self):
+        registry = copy.deepcopy(REGISTRY)
+        entry = registry['scenarios'][0]
+        entry['charts'][0]['source'] = 'ci/experimental/open5gs-udm-sbi'
+        kind, affected, full = release_impact.classify(
+            'ci/experimental/open5gs-udm-sbi/build.sh', registry)
+        self.assertEqual(kind, 'package-input')
+        self.assertIn(entry['key'], affected)
+        self.assertFalse(full)
+
+    def test_experimental_udm_scope_does_not_exempt_neighbors(self):
+        for path in ('ci/other.py', 'ci/experimental/unreviewed/build.sh',
+                     'ci/experimental/open5gs-udm-sbi-other/build.sh',
+                     'experimental/unknown.py', 'scripts/layer3/unreviewed.py'):
+            with self.subTest(path=path):
+                self.assertEqual(release_impact.classify(path, REGISTRY)[0], 'unknown')
+                self.assertEqual(self.impact([path])['status'], 'full-rebuild')
+
+    def test_experimental_udm_unsafe_paths_remain_rejected(self):
+        for path in ('/ci/experimental/open5gs-udm-sbi/build.sh',
+                     'ci/experimental/open5gs-udm-sbi/../unknown.py', ''):
+            with self.subTest(path=path), self.assertRaises(release_impact.ImpactError):
+                self.impact([path])
+
+    def test_existing_local_observer_files_are_non_package(self):
+        for path in ('scripts/layer3/install_local_protocol_observer.py',
+                     'scripts/layer3/local_protocol_observer.py'):
+            self.assertEqual(release_impact.classify(path, REGISTRY),
+                             ('non-package', set(), False))
+
     def test_unknown_paths_force_a_full_rebuild(self):
         for path in ('newdir/tool.py', 'scripts/new_generator.py', 'config/new-policy.json'):
             with self.subTest(path=path):
