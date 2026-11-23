@@ -67,12 +67,20 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/oai-zmq-ue/cmake_targets"
           export CMAKE_BUILD_PARALLEL_LEVEL=2
-          # Reuse Unix Makefiles generated during upstream -I prerequisite configuration.
-          test -f "$RUNNER_TEMP/oai-zmq-ue/cmake_targets/ran_build/build/CMakeCache.txt"
-          grep -Fqx 'CMAKE_GENERATOR:INTERNAL=Unix Makefiles' "$RUNNER_TEMP/oai-zmq-ue/cmake_targets/ran_build/build/CMakeCache.txt"
-          timeout --signal=TERM --kill-after=20s 3900s ./build_oai -w ZMQ --nrUE --noavx512 \
+          # The root-run -I step created a root-owned ran_build and /root CPM cache.
+          # Compile with a NEW runner-owned build directory and source cache.
+          BUILD="$RUNNER_TEMP/oai-zmq-ue/cmake_targets/hcransrs_zmq_ue_build/build"
+          export CPM_SOURCE_CACHE="$RUNNER_TEMP/oai-cpm-source-cache"
+          mkdir -p "$CPM_SOURCE_CACHE"
+          test ! -e "$BUILD"
+          test -w "$RUNNER_TEMP/oai-zmq-ue/cmake_targets"
+          test -w "$CPM_SOURCE_CACHE"
+          timeout --signal=TERM --kill-after=20s 3900s ./build_oai \
+            -d hcransrs_zmq_ue_build -w ZMQ --nrUE --noavx512 \
             --build-tool-opt '-j2' > "$RUNNER_TEMP/oai-build.log" 2>&1 || { tail -n 100 "$RUNNER_TEMP/oai-build.log"; exit 1; }
-          BUILD="$RUNNER_TEMP/oai-zmq-ue/cmake_targets/ran_build/build"
+          test -f "$BUILD/CMakeCache.txt"
+          grep -Fqx 'CMAKE_GENERATOR:INTERNAL=Unix Makefiles' "$BUILD/CMakeCache.txt"
+          ! grep -Eq '/root/\.cache/cpm' "$BUILD/CMakeCache.txt"
           test -x "$BUILD/nr-uesoftmodem"
           find "$BUILD" -type f -name 'liboai_zmqdevif.so' -print > "$RUNNER_TEMP/oai-zmq-proof/driver-file.txt"
           test -s "$RUNNER_TEMP/oai-zmq-proof/driver-file.txt"
