@@ -118,6 +118,16 @@ def render_config(path, role):
             raise EvidenceError("CU 3GPP identity/slice mismatch")
         if cfg["cu_up"]["f1u"]["socket"] != [{"bind_addr": IP["cu"]}]:
             raise EvidenceError("CU F1-U must bind routable address")
+        # H1 is signaling-only. NG-U and F1-U both default to UDP/2152;
+        # binding both to the CU Pod IP crashes srscu before the DUs start.
+        # Keep F1-U routable for later stages, but isolate unused NG-U on
+        # loopback for this disposable, explicitly UE-free H1 trial ONLY.
+        # H2+ MUST replace this with an independently routable N3 address.
+        if "ngu" in cfg["cu_up"]:
+            raise EvidenceError("Unexpected canonical NG-U override; review required")
+        cfg["cu_up"]["ngu"] = {"socket": [{"bind_addr": "127.0.3.1"}]}
+        if cfg["cu_up"]["ngu"]["socket"][0]["bind_addr"] == IP["cu"]:
+            raise EvidenceError("NG-U/F1-U port 2152 bind collision")
     else:
         ident = {"macro": (100, 101, 1, 20, 75),
                  "small": (101, 102, 2, 10, 35)}[role]
