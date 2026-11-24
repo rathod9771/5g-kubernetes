@@ -74,6 +74,16 @@ jobs:
           test "$(git -C "$SOURCE" rev-parse HEAD)" = "$OAI_COMMIT"
           test -z "$(git -C "$SOURCE" status --porcelain)"
           echo "$OAI_COMMIT" > "$RUNNER_TEMP/hcransrs-h2/oai-source-sha.txt"
+      - name: Apply exact pinned OAI one-layer PDSCH UE baseline (focused source gate verified)
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          SOURCE="$RUNNER_TEMP/oai-zmq-ue"
+          python3 -m unittest discover -s tests -p test_hcransrs_pinned_oai_pdsch_baseline.py -v
+          python3 scripts/experiments/hcransrs_pinned_oai_pdsch_baseline.py --checkout "$SOURCE" --mode check
+          python3 scripts/experiments/hcransrs_pinned_oai_pdsch_baseline.py --checkout "$SOURCE" --mode apply \
+            > "$RUNNER_TEMP/hcransrs-h2/oai-pdsch-one-layer-patch.json"
+          python3 scripts/experiments/hcransrs_pinned_oai_pdsch_baseline.py --checkout "$SOURCE" --mode verify
       - name: Install upstream OAI build prerequisites (disposable VM only)
         timeout-minutes: 28
         run: |
@@ -85,6 +95,7 @@ jobs:
         timeout-minutes: 65
         run: |
           set -euo pipefail
+          python3 scripts/experiments/hcransrs_pinned_oai_pdsch_baseline.py --checkout "$RUNNER_TEMP/oai-zmq-ue" --mode verify
           cd "$RUNNER_TEMP/oai-zmq-ue/cmake_targets"
           export CPM_SOURCE_CACHE="$RUNNER_TEMP/oai-cpm-h2"
           export CMAKE_BUILD_PARALLEL_LEVEL=2
@@ -222,6 +233,7 @@ jobs:
           path: |
             ${{ runner.temp }}/hcransrs-h2/h6-receipt.json
             ${{ runner.temp }}/hcransrs-h2/oai-source-sha.txt
+            ${{ runner.temp }}/hcransrs-h2/oai-pdsch-one-layer-patch.json
             ${{ runner.temp }}/hcransrs-h2/oai-binaries-sha256.txt
             ${{ runner.temp }}/hcransrs-h2/core-image-id.txt
             ${{ runner.temp }}/hcransrs-build/source-pin.txt
@@ -231,6 +243,7 @@ jobs:
       - name: Enforce research-only interpretation and no production claims
         if: always()
         run: |
-          echo 'H6 checks real pinned OAI NR UE against source-built srsRAN H-CRAN dual DU with a disposable Open5GS 5G-AKA auth backend and generated one-UE subscription.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'H6 checks real pinned OAI NR UE against source-built srsRAN H-CRAN dual DU with a disposable Open5GS 5G-AKA auth backend and generated one-UE subscription.'
+          echo 'H6 builds OAI pin dfb296 with one exact-source-checked upstream-aligned one-layer PDSCH init correction. The original DCI >0 assertion is retained.' >> "$GITHUB_STEP_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
           echo 'H6 requires independently captured initial 5GS NAS Authentication Request/Response before PASS; still NO Registration Accept, NAS security, PDU, traffic, mobility, recovery or 3GPP conformance.' >> "$GITHUB_STEP_SUMMARY"
           echo 'All workloads disposable GitHub-hosted Docker/host loopback; HP K8s/OSM/main/frozen OAI untouched. Production NO-GO.' >> "$GITHUB_STEP_SUMMARY"
