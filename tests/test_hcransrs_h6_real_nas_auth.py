@@ -104,7 +104,17 @@ class H6AuthContracts(unittest.TestCase):
             self.assertTrue(result["ue_debug_received_auth_request"])
             self.assertTrue(result["ue_ul_nas_rrc_candidate"])
             self.assertNotIn("DO_NOT_PRINT",str(result))
+            self.assertEqual(result["ue_failure_markers"],[])
             self.assertEqual(len(calls),2)
+    def test_h6_ue_failure_codes_do_not_retain_raw_logs(self):
+        with tempfile.TemporaryDirectory() as td:
+            logfile=Path(td)/"ue-runner-local.log"
+            logfile.write_text("private_marker: DO_NOT_RETAIN\\nSIGSEGV: segmentation fault\\n")
+            observed=m.auth_gap_diagnostics(Path(td)/"missing.pcap",logfile,
+                {"authentication_request_frames":[]})
+            self.assertEqual(observed["ue_failure_markers"],["SEGMENTATION_FAULT"])
+            self.assertNotIn("DO_NOT_RETAIN",str(observed))
+            self.assertEqual(observed["status"],"NO_NGAP_AUTH_REQUEST")
     def test_h6_no_auth_request_is_not_falsely_qualified(self):
         with tempfile.TemporaryDirectory() as td:
             result=m.auth_gap_diagnostics(Path(td)/"capture",
