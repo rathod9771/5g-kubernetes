@@ -74,5 +74,18 @@ class H5AuthBackendContracts(unittest.TestCase):
                 m.h2_json_get("http://172.29.79.15:7777/nudr-dr/v1/foo")
             self.assertNotIn("SENSITIVE",str(cm.exception))
 
+    def test_nrf_discovery_uses_correct_nf_consumer(self):
+        from unittest.mock import Mock
+        probes=[]
+        def fake(url):
+            probes.append(url)
+            return {"nfInstances":[{"nfType":"UDR"}]}
+        with patch.object(m,"h2_json_get",side_effect=fake):
+            self.assertTrue(m.nrf_discovery("udr"))
+        self.assertIn("target-nf-type=UDR",probes[0])
+        self.assertIn("requester-nf-type=UDM",probes[0])
+        with self.assertRaises(m.PreflightError):
+            m.nrf_discovery("unknown")
+
 if __name__=="__main__":
     unittest.main()
