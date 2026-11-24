@@ -1,0 +1,53 @@
+name: H-CRAN pinned OAI UE MIMO init focused source gate (NO BUILD OR DEPLOY)
+on:
+  push:
+    branches:
+      - experiment/hcran-parallel-protocol-gates-20261123
+    paths:
+      - scripts/experiments/hcransrs_pinned_oai_pdsch_baseline.py
+      - tests/test_hcransrs_pinned_oai_pdsch_baseline.py
+      - .github/workflows/hcransrs-oai-mimo-init-focused.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hcransrs-oai-mimo-init-focused-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  pinned-source-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Offline negative controls (no OAI build)
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          python3 -m unittest discover -s tests -p test_hcransrs_pinned_oai_pdsch_baseline.py -v
+      - name: Fetch exact audited OAI revision with sparse sources only
+        run: |
+          set -euo pipefail
+          SOURCE="$RUNNER_TEMP/oai-pin"
+          git init -q "$SOURCE"
+          git -C "$SOURCE" remote add origin https://github.com/OPENAIRINTERFACE/openairinterface5g.git
+          git -C "$SOURCE" sparse-checkout init --cone
+          git -C "$SOURCE" sparse-checkout set openair2/LAYER2/NR_MAC_UE
+          git -C "$SOURCE" fetch -q --depth=1 --filter=blob:none origin dfb296ab867050a7bde81b393fa31b757ada2c83
+          git -C "$SOURCE" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$SOURCE" rev-parse HEAD)" = dfb296ab867050a7bde81b393fa31b757ada2c83
+      - name: Apply exact one-line PDSCH baseline and verify unchanged DCI assert
+        run: |
+          set -euo pipefail
+          SOURCE="$RUNNER_TEMP/oai-pin"
+          python3 scripts/experiments/hcransrs_pinned_oai_pdsch_baseline.py --checkout "$SOURCE" --mode check
+          python3 scripts/experiments/hcransrs_pinned_oai_pdsch_baseline.py --checkout "$SOURCE" --mode apply
+          python3 scripts/experiments/hcransrs_pinned_oai_pdsch_baseline.py --checkout "$SOURCE" --mode verify
+          test "$(git -C "$SOURCE" diff --name-only)" = openair2/LAYER2/NR_MAC_UE/main_ue_nr.c
+          git -C "$SOURCE" diff --check
+      - name: Explicit source-gate boundary
+        if: always()
+        run: |
+          echo 'Focused gate proves exact-version one-line PDSCH capability default and unchanged DCI assertion; it does not compile OAI nor prove runtime authentication.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No HP machine, subscriber, OSM, Kubernetes, radio deployment or production actions. H6 remains NO-GO.' >> "$GITHUB_STEP_SUMMARY"
