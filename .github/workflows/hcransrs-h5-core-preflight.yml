@@ -32,6 +32,7 @@ jobs:
           test "$RUNNER_ENVIRONMENT" = github-hosted
           test "$HCRANSRS_ALLOW_H5_CORE" = EXACTLY_ISOLATED_SYNTHETIC_NO_DEPLOY
           python3 -m py_compile scripts/experiments/hcransrs_h5_core_preflight.py
+          curl --version | grep -q HTTP2
           python3 -m unittest discover -s tests -p test_hcransrs_h5_core_preflight.py -v
       - name: Acquire isolated Open5GS 2.7.6 and Mongo 6 runtime images
         timeout-minutes: 7
