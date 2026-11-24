@@ -1,0 +1,83 @@
+name: H-CRAN srsRAN H5 disposable Open5GS authentication-backend preflight (NO UE)
+on:
+  push:
+    branches:
+      - experiment/hcran-parallel-protocol-gates-20261123
+    paths:
+      - .github/workflows/hcransrs-h5-core-preflight.yml
+      - scripts/experiments/hcransrs_h5_core_preflight.py
+      - tests/test_hcransrs_h5_core_preflight.py
+permissions:
+  contents: read
+concurrency:
+  group: hcransrs-h5-core-preflight-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  isolated-auth-backend:
+    name: Synthetic-only isolated NRF AUSF UDM UDR Mongo readiness; NO NR UE
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CORE_IMAGE: gradiant/open5gs:2.7.6
+      MONGO_IMAGE: mongo:6.0
+      HCRANSRS_ALLOW_H5_CORE: EXACTLY_ISOLATED_SYNTHETIC_NO_DEPLOY
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Enforce isolated GitHub runner and offline negative contracts
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$HCRANSRS_ALLOW_H5_CORE" = EXACTLY_ISOLATED_SYNTHETIC_NO_DEPLOY
+          python3 -m py_compile scripts/experiments/hcransrs_h5_core_preflight.py
+          python3 -m unittest discover -s tests -p test_hcransrs_h5_core_preflight.py -v
+      - name: Acquire isolated Open5GS 2.7.6 and Mongo 6 runtime images
+        timeout-minutes: 7
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$CORE_IMAGE"
+          docker pull "$MONGO_IMAGE"
+          mkdir -p "$RUNNER_TEMP/hcransrs-h5-proof"
+          docker image inspect "$CORE_IMAGE" --format '{{.Id}}' > "$RUNNER_TEMP/hcransrs-h5-proof/core-id.txt"
+          docker image inspect "$MONGO_IMAGE" --format '{{.Id}}' > "$RUNNER_TEMP/hcransrs-h5-proof/mongo-id.txt"
+      - name: Start disposable authentication NFs and verify synthetic subscriber via UDR
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u scripts/experiments/hcransrs_h5_core_preflight.py \
+            --out "$RUNNER_TEMP/hcransrs-h5-proof" \
+            --core-image "$CORE_IMAGE" \
+            --mongo-image "$MONGO_IMAGE"
+          python3 - "$RUNNER_TEMP/hcransrs-h5-proof/receipt.json" <<'PY'
+          import json,sys
+          from pathlib import Path
+          receipt=json.loads(Path(sys.argv[1]).read_text())
+          assert receipt["status"]=="ISOLATED_5GC_AUTH_BACKEND_AND_SYNTHETIC_UDR_LOOKUP_PASS_NO_UE"
+          assert receipt["udr_authentication_lookup"] is True
+          assert receipt["synthetic_subscriber"] is True
+          assert set(receipt["nrf_discovery"])=={"ausf","udm","udr"}
+          assert all(receipt["nrf_discovery"].values())
+          assert receipt["production_decision"]=="NO_GO"
+          assert "NAS_REGISTRATION_ACCEPT" in receipt["not_run"]
+          PY
+      - name: Retain sanitized NF and subscriber-prereq receipt only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-h5-auth-backend-no-ue-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/hcransrs-h5-proof/receipt.json
+            ${{ runner.temp }}/hcransrs-h5-proof/core-id.txt
+            ${{ runner.temp }}/hcransrs-h5-proof/mongo-id.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Explicit H5 qualification boundary
+        if: always()
+        run: |
+          echo 'H5 checks disposable real Open5GS AUSF, UDM, UDR, NRF plus MongoDB and a synthetic subscription record only.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No actual OAI NR UE or NAS Authentication Request/Response/Registration Accept/Complete/PDU/F1-U/NG-U in this workflow.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No production subscriber, HP cluster, OSM, kubeconfig, or main branch changes. Production NO-GO.' >> "$GITHUB_STEP_SUMMARY"
