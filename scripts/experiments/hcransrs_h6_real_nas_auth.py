@@ -309,6 +309,8 @@ def main():
         result["nas_wire"]=control
         result["auth_gap_diagnostics"]=diagnostic
         result["ue_runtime_seconds"]=h4.get("ue",{}).get("ran_seconds")
+        result["ue_exit_code"]=h4.get("ue",{}).get("exit_code")
+        result["ue_timed_out"]=h4.get("ue",{}).get("timed_out_as_designed",False)
         result["ue_log_markers"]=h4.get("ue",{}).get("bounded_synthetic_ue_log_markers",[])
         result["status"]=qualify(h4,control,bridge.backend_ok) if rc==0 else "BLOCKED_RADIO_H4"
     except Exception as exc:
@@ -323,6 +325,8 @@ def main():
     print(json.dumps({"status":result["status"],"backend_ready":result["backend_ready"],
                       "nas_wire":result.get("nas_wire",{}),
                       "auth_gap_diagnostics":result.get("auth_gap_diagnostics",{}),
+                      "ue_exit_code":result.get("ue_exit_code"),
+                      "ue_runtime_seconds":result.get("ue_runtime_seconds"),
                       "production_decision":"NO_GO"},sort_keys=True))
     return 0 if result["status"]=="REAL_NAS_AUTH_REQUEST_AND_RESPONSE_WIRE_CANDIDATE_ONLY" else 1
 
