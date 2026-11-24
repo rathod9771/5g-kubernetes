@@ -19,7 +19,6 @@ import socket
 import subprocess
 import time
 from urllib.parse import urlencode
-from urllib.request import urlopen
 
 NET="hcransrs-h5-core-only"
 PREFIX="hcransrs-h5"
@@ -107,33 +106,49 @@ def wait_socket(ip,port,deadline=45):
             time.sleep(1)
     return False
 
+def h2_json_get(url):
+    """Open5GS SBI requires cleartext HTTP/2 prior knowledge, not urllib HTTP/1.1.
+
+    Read-only call; response contents may include subscriber authentication
+    material and MUST never be printed, hashed into logs, or retained.
+    """
+    allowed_hosts=tuple(f"http://{IP[r]}:7777/" for r in ("nrf","udr"))
+    if not url.startswith(allowed_hosts) or "@" in url:
+        raise PreflightError("SBI read-only destination not allowlisted")
+    p=subprocess.run(
+        ["curl","--http2-prior-knowledge","--silent","--show-error",
+         "--fail","--max-time","8","--max-filesize","131072",
+         "--header","accept: application/json",url],
+        text=True,capture_output=True,timeout=12)
+    if p.returncode or len(p.stdout)>131072:
+        # Do not display HTTP body or error; potentially sensitive.
+        raise PreflightError("Isolated HTTP/2 SBI request failed")
+    return json.loads(p.stdout)
+
+
 def nrf_discovery(role):
+    if role not in ("ausf","udm","udr"):
+        raise PreflightError("Unreviewed target NF")
     params=urlencode({"target-nf-type":role.upper(),"requester-nf-type":"AMF"})
     url=f"http://{IP['nrf']}:7777/nnrf-disc/v1/nf-instances?{params}"
-    with urlopen(url,timeout=8) as response:
-        if response.status!=200:
-            raise PreflightError("NRF discovery request not accepted")
-        raw=response.read(128*1024+1)
-    if len(raw)>128*1024:
-        raise PreflightError("Oversized NRF discovery response")
-    data=json.loads(raw)
-    return any(n.get("nfType")==role.upper() for n in data.get("nfInstances",[]))
+    data=h2_json_get(url)
+    if not isinstance(data,dict):
+        raise PreflightError("Malformed NRF response")
+    return any(n.get("nfType")==role.upper() for n in data.get("nfInstances",[])
+               if isinstance(n,dict))
+
 
 def udr_test():
-    # No UDR response payload is printed, uploaded or persisted.
     url=(f"http://{IP['udr']}:7777/nudr-dr/v1/subscription-data/imsi-{IMSI}"
          "/authentication-data/authentication-subscription")
-    with urlopen(url,timeout=8) as response:
-        if response.status!=200:
-            raise PreflightError("UDR auth-subscription lookup rejected")
-        body=response.read(64*1024+1)
-    if len(body)>64*1024:
-        raise PreflightError("UDR response too large")
-    data=json.loads(body)
-    # Validate only the presence of expected *nonsecret* field names.
+    data=h2_json_get(url)
+    if not isinstance(data,dict):
+        raise PreflightError("Malformed UDR response")
+    # Presence/type only; no credential material in public receipt.
     return data.get("authenticationMethod")=="5G_AKA" and (
         "encPermanentKey" in data or "permanentKey" in data
     )
+
 
 def main():
     parser=argparse.ArgumentParser()
