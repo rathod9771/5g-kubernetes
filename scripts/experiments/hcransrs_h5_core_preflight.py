@@ -153,6 +153,7 @@ def main():
     work.mkdir(mode=0o700,exist_ok=False)
     started=[]
     network_created=False
+    stage="CREATING_ISOLATED_NETWORK"
     receipt={"schema":"hcransrs-h5-auth-backend-preflight-v1",
              "status":"BLOCKED","synthetic_subscriber":False,
              "backend_sbi_ready":{},"nrf_discovery":{},
@@ -162,6 +163,7 @@ def main():
         command("docker","network","create","--driver","bridge","--internal",
                 "--subnet","172.29.79.0/24",NET,timeout=25)
         network_created=True
+        stage="STARTING_SYNTHETIC_MONGO"
         command("docker","run","-d","--pull=never","--name",f"{PREFIX}-mongo",
                 "--network",NET,"--ip",IP["mongo"],"--memory","2g",
                 MONGO,"mongod","--bind_ip_all","--quiet",timeout=35)
@@ -181,6 +183,7 @@ def main():
             time.sleep(1)
         if not ready:
             raise PreflightError("Disposable synthetic MongoDB unavailable")
+        stage="INSERTING_SYNTHETIC_SUBSCRIBER"
         doc=subscriber()
         check_subscriber_doc(doc)
         js=("const d="+json.dumps(doc,separators=(",",":"))+"; "
@@ -195,9 +198,10 @@ def main():
         receipt["synthetic_subscriber"]=True
         del doc,js,output
         for role in SBI_ROLES:
+            stage="STARTING_SBI_"+role.upper()
             cfg=work/f"{role}.yaml"
             cfg.write_text(config(role))
-            cfg.chmod(0o600)
+            # Only nonsecret addresses and routes are in this file. Container\n            # Open5GS may run non-root, so a runner-owned 0600 mount is unreadable.\n            cfg.chmod(0o644)
             command("docker","run","-d","--pull=never",
                     "--name",f"{PREFIX}-{role}","--network",NET,
                     "--ip",IP[role],"--memory","1g",
@@ -208,6 +212,7 @@ def main():
             if not wait_socket(IP[role],7777,deadline=45):
                 raise PreflightError(f"{role} SBI not reachable in isolated network")
             receipt["backend_sbi_ready"][role]=True
+        stage="DISCOVERING_AUTH_NFS_AT_NRF"
         for role in ("ausf","udm","udr"):
             verified=False
             for _ in range(15):
@@ -220,6 +225,7 @@ def main():
             receipt["nrf_discovery"][role]=verified
         if not all(receipt["nrf_discovery"].values()):
             raise PreflightError("NRF has not registered all 3 authentication data functions")
+        stage="VERIFYING_SYNTHETIC_UDR_AUTH_RECORD"
         receipt["udr_authentication_lookup"]=udr_test()
         if not receipt["udr_authentication_lookup"]:
             raise PreflightError("UDR authentication-subscription data not verified")
@@ -227,9 +233,10 @@ def main():
             raise PreflightError("Some core NFs exited")
         receipt["status"]="ISOLATED_5GC_AUTH_BACKEND_AND_SYNTHETIC_UDR_LOOKUP_PASS_NO_UE"
     except Exception as ex:
+        receipt["failed_stage"]=stage
         receipt["error_type"]=type(ex).__name__
         receipt["status"]="BLOCKED_H5_AUTH_BACKEND"
-        print("H5 diagnostic class: "+type(ex).__name__,flush=True)
+        print("H5 failed stage: "+stage+"; diagnostic class: "+type(ex).__name__,flush=True)
     finally:
         for role in reversed(started):
             command("docker","rm","-f",f"{PREFIX}-{role}",timeout=20,check=False)
