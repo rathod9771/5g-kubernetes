@@ -90,13 +90,13 @@ class H6AuthContracts(unittest.TestCase):
             p=Path(td)/"capture.pcapng"
             p.write_bytes(b"x"*256)
             log=Path(td)/"ue-runner-local.log"
-            log.write_text("Ki=DO_NOT_PRINT\\nReceived NAS Authentication Request\\nPDCP_DATA_REQ ULInformationTransfer (NAS 33 B)\\n")
+            log.write_text("Ki=DO_NOT_PRINT\nReceived NAS Authentication Request\nPDCP_DATA_REQ ULInformationTransfer (NAS 33 B)\n")
             calls=[]
             def fake(*args,**kw):
                 calls.append(args)
                 if "DLRRCMessageTransfer" in args[5]:
-                    return "25\\n"
-                return "30\\n"
+                    return "25\n"
+                return "30\n"
             result=m.auth_gap_diagnostics(
                 p,log,{"authentication_request_frames":[21]},exec_fn=fake)
             self.assertEqual(result["f1ap_dl_rrc_after_auth_request_frames"],[25])
@@ -117,8 +117,8 @@ class H6AuthContracts(unittest.TestCase):
             p.write_bytes(b"x"*256)
             def fake(*args,**kwargs):
                 if "DownlinkNASTransport" in args[5]:
-                    return "21\\t7e0056" + "ab"*19 + "\\n"
-                return "31\\t7e0059" + "ab"*10 + "\\n"
+                    return "21\t7e0056" + "ab"*19 + "\n"
+                return "31\t7e0059" + "ab"*10 + "\n"
             data=m.nas_control_events(p,exec_fn=fake)
             self.assertEqual(data["authentication_failure_frames"],[31])
             self.assertEqual(data["authentication_response_frames"],[])
