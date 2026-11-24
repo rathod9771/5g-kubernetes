@@ -1,4 +1,4 @@
-name: H-CRAN H6 real OAI UE to srsRAN 5G NAS auth request-response (ISOLATED)
+name: H-CRAN H6 auth and H7 post-auth NAS security evidence (ISOLATED)
 on:
   push:
     branches:
@@ -9,6 +9,8 @@ on:
       - tests/test_hcransrs_h6_real_nas_auth.py
       - scripts/experiments/hcransrs_h5_core_preflight.py
       - scripts/experiments/hcransrs_real_ue_zmq_h2.py
+      - scripts/experiments/hcransrs_h7_nas_security_trace.py
+      - tests/test_hcransrs_h7_nas_security_trace.py
 permissions:
   contents: read
 concurrency:
@@ -60,6 +62,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_hcransrs_real_ue_zmq_h2.py -v
           python3 -m unittest discover -s tests -p test_hcransrs_h5_core_preflight.py -v
           python3 -m unittest discover -s tests -p test_hcransrs_h6_real_nas_auth.py -v
+          python3 -m unittest discover -s tests -p test_hcransrs_h7_nas_security_trace.py -v
           curl --version | grep -q HTTP2
       - name: Retrieve exact source of actual OAI NR UE
         timeout-minutes: 12
@@ -225,6 +228,15 @@ jobs:
           assert r.get("production_decision")=="NO_GO"
           PY
           echo 'H6 proves ONLY genuine 5GS NAS Authentication Request/Response headers on NGAP, if successful. NAS security, Registration Accept/Complete, PDU remain not validated.' >> "$GITHUB_STEP_SUMMARY"
+      - name: H7 independent post-auth NGAP NAS security/registration diagnostic gate
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          python3 -u scripts/experiments/hcransrs_h7_nas_security_trace.py \
+            --capture "$RUNNER_TEMP/hcransrs-h2/runner-local/setup.pcapng" \
+            --h6-receipt "$RUNNER_TEMP/hcransrs-h2/h6-receipt.json" \
+            --output "$RUNNER_TEMP/hcransrs-h2/h7-receipt.json"
+          echo 'H7: only independently visible SMC / SMC-Complete NAS headers are accepted; encrypted NAS identity is NOT inferred.' >> "$GITHUB_STEP_SUMMARY"
       - name: Retain only bounded sanitized result receipts (NO raw PCAP or UE logs)
         if: always()
         uses: actions/upload-artifact@v4
@@ -232,6 +244,7 @@ jobs:
           name: hcransrs-h6-real-5gs-nas-auth-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/hcransrs-h2/h6-receipt.json
+            ${{ runner.temp }}/hcransrs-h2/h7-receipt.json
             ${{ runner.temp }}/hcransrs-h2/oai-source-sha.txt
             ${{ runner.temp }}/hcransrs-h2/oai-pdsch-one-layer-patch.json
             ${{ runner.temp }}/hcransrs-h2/oai-binaries-sha256.txt
@@ -244,6 +257,6 @@ jobs:
         if: always()
         run: |
           echo 'H6 checks real pinned OAI NR UE against source-built srsRAN H-CRAN dual DU with a disposable Open5GS 5G-AKA auth backend and generated one-UE subscription.'
-          echo 'H6 builds OAI pin dfb296 with one exact-source-checked upstream-aligned one-layer PDSCH init correction. The original DCI >0 assertion is retained.' >> "$GITHUB_STEP_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          echo 'H6 builds OAI pin dfb296 with one exact-source-checked upstream-aligned one-layer PDSCH init correction. The original DCI >0 assertion is retained.' >> "$GITHUB_STEP_SUMMARY"
           echo 'H6 requires independently captured initial 5GS NAS Authentication Request/Response before PASS; still NO Registration Accept, NAS security, PDU, traffic, mobility, recovery or 3GPP conformance.' >> "$GITHUB_STEP_SUMMARY"
           echo 'All workloads disposable GitHub-hosted Docker/host loopback; HP K8s/OSM/main/frozen OAI untouched. Production NO-GO.' >> "$GITHUB_STEP_SUMMARY"
