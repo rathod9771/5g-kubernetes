@@ -50,9 +50,9 @@ class H6AuthContracts(unittest.TestCase):
             commands=[]
             def fake(*args,**kwargs):
                 commands.append(" ".join(map(str,args)))
-                if "DownlinkNASTransport" in args[4]:
+                if "DownlinkNASTransport" in args[5]:
                     return "15\t7e0056" + "ab"*19 + "\n"
-                if "UplinkNASTransport" in args[4]:
+                if "UplinkNASTransport" in args[5]:
                     return "20\t7e0057" + "cd"*14 + "\n"
                 return ""
             result=m.nas_control_events(path,exec_fn=fake)
@@ -66,6 +66,25 @@ class H6AuthContracts(unittest.TestCase):
             result=m.nas_control_events(Path(td)/"nonexistent.pcap")
         self.assertEqual(result["status"],"NO_BOUNDED_REAL_SCTP_CAPTURE")
         self.assertEqual(result["authentication_response_frames"],[])
+    def test_h6_trial_monkeypatch_methods_are_callable_and_restored(self):
+        with tempfile.TemporaryDirectory() as td:
+            bridge=m.CoreBridge(td)
+            original_launch=m.h1.Trial.launch
+            original_close=m.h1.Trial.close
+            with patch.object(bridge,"launch",return_value=None) as launcher, \
+                 patch.object(bridge,"close",return_value=None) as closer:
+                try:
+                    bridge.install()
+                    dummy=object()
+                    m.h1.Trial.launch(dummy,"nrf","image","bin","/tmp/config")
+                    m.h1.Trial.close(dummy)
+                    self.assertEqual(launcher.call_args.args[0],dummy)
+                    self.assertEqual(closer.call_args.args[0],dummy)
+                finally:
+                    bridge.restore()
+            self.assertIs(m.h1.Trial.launch,original_launch)
+            self.assertIs(m.h1.Trial.close,original_close)
+            bridge.credentials.clear()
     def test_uicc_credentials_match_ephemeral_subscriber_and_not_canonical(self):
         with tempfile.TemporaryDirectory() as td:
             bridge=m.CoreBridge(td)
