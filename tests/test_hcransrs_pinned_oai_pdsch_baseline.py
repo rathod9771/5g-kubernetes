@@ -40,7 +40,7 @@ class PinnedLayerDefaultTests(unittest.TestCase):
         raw=b"abc\n"
         import hashlib
         self.assertEqual(m.git_blob_sha(raw),
-                         hashlib.sha1(b"blob 4\\0"+raw).hexdigest())
+                         hashlib.sha1(b"blob 4\0"+raw).hexdigest())
     def test_no_other_ue_capability_changes(self):
         revised=m.checked_text(MAIN,CONFIG,DCI,"apply")
         self.assertEqual(len(revised.splitlines()),len(MAIN.splitlines()))
