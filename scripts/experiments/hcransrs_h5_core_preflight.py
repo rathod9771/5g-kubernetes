@@ -202,9 +202,12 @@ def main():
             cfg=work/f"{role}.yaml"
             cfg.write_text(config(role))
             # Only nonsecret addresses and routes are in this file. Container\n            # Open5GS may run non-root, so a runner-owned 0600 mount is unreadable.\n            cfg.chmod(0o644)
+            extras=(["-e","DB_URI=mongodb://"+IP["mongo"]+"/open5gs"]
+                    if role=="udr" else [])
             command("docker","run","-d","--pull=never",
                     "--name",f"{PREFIX}-{role}","--network",NET,
                     "--ip",IP[role],"--memory","1g",
+                    *extras,
                     "-v",str(cfg)+":/tmp/h5-config.yaml:ro",
                     "--entrypoint","/bin/sh",CORE,
                     "-ec",f"exec open5gs-{role}d -c /tmp/h5-config.yaml",timeout=30)
