@@ -100,6 +100,7 @@ def auth_gap_diagnostics(pcap, ue_log, events, exec_fn=h1.cmd):
     result={"status":"UNQUALIFIED","ue_debug_received_auth_request":False,
             "ue_auth_decode_error":False,"ue_invalid_ksi":False,
             "ue_ul_nas_rrc_candidate":False,"ue_log_missing":True,
+            "ue_failure_markers":[],
             "f1ap_dl_rrc_after_auth_request_frames":[],
             "f1ap_ul_rrc_after_auth_request_frames":[],
             "reason":"DIAGNOSTIC_ONLY_NOT_AUTHENTICATION_SUCCESS"}
@@ -117,6 +118,16 @@ def auth_gap_diagnostics(pcap, ue_log, events, exec_fn=h1.cmd):
         }
         for key,pattern in patterns.items():
             result[key]=bool(re.search(pattern,data))
+        failure_patterns={
+            "ASSERT_OR_ABORT":r"(?i)(assertfatal|assertion failed|SIGABRT)",
+            "SEGMENTATION_FAULT":r"(?i)(segmentation fault|SIGSEGV)",
+            "ZMQ_IO_ERROR":r"(?i)(zmq.{0,70}(?:failed|error|disconnect))",
+            "CONFIG_ERROR":r"(?i)(unknown option|invalid option|configuration error)",
+            "RRC_RELEASE":r"(?i)(RRCConnectionRelease|RRC release)",
+            "NAS_REJECTION":r"(?i)(Registration Reject|Authentication Reject)",
+        }
+        result["ue_failure_markers"]=sorted(
+            name for name,pattern in failure_patterns.items() if re.search(pattern,data))
     frames=events.get("authentication_request_frames") or []
     if not frames:
         result["status"]="NO_NGAP_AUTH_REQUEST"
