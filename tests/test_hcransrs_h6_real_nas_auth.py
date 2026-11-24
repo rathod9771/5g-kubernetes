@@ -115,6 +115,27 @@ class H6AuthContracts(unittest.TestCase):
             self.assertEqual(observed["ue_failure_markers"],["SEGMENTATION_FAULT"])
             self.assertNotIn("DO_NOT_RETAIN",str(observed))
             self.assertEqual(observed["status"],"NO_NGAP_AUTH_REQUEST")
+    def test_extract_safe_pinned_source_assert_location_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            log=Path(td)/"ue.log"
+            log.write_text("Ki=NEVER_PRINT\\nAssertion (x) failed!\\n"
+                           "In nr_rrc_process_data() openair2/RRC/NR_UE/rrc_UE.c:3033\\n"
+                           "OPc=NEVER_PRINT\\nExiting execution\\n")
+            result=m.read_safe_oai_abort_location(log)
+            self.assertTrue(result["assert_location_found"])
+            self.assertEqual(result["source_file"],"openair2/RRC/NR_UE/rrc_UE.c")
+            self.assertEqual(result["source_line"],3033)
+            self.assertEqual(result["function"],"nr_rrc_process_data")
+            self.assertTrue(result["abort_marker"])
+            self.assertNotIn("NEVER_PRINT",str(result))
+    def test_no_assert_location_does_not_claim_source(self):
+        with tempfile.TemporaryDirectory() as td:
+            log=Path(td)/"missing.log"
+            self.assertFalse(m.read_safe_oai_abort_location(log)["assert_location_found"])
+            log.write_text("Aborted without source location\\n")
+            result=m.read_safe_oai_abort_location(log)
+            self.assertTrue(result["abort_marker"])
+            self.assertFalse(result["assert_location_found"])
     def test_h6_no_auth_request_is_not_falsely_qualified(self):
         with tempfile.TemporaryDirectory() as td:
             result=m.auth_gap_diagnostics(Path(td)/"capture",
