@@ -89,12 +89,12 @@ class H7PacketContracts(unittest.TestCase):
                 observed.append(f)
                 if "DownlinkNASTransport_element" in f:
                     self.assertIn("ip.src == "+m.AMF, f)
-                    return "21\\t7e0056\\n"
+                    return "21\t7e0056\n"
                 if "UplinkNASTransport_element" in f:
                     self.assertIn("ip.dst == "+m.AMF, f)
-                    return "24\\t7e0057\\n"
+                    return "24\t7e0057\n"
                 self.assertIn("InitialUEMessage_element",f)
-                return "20\\t7e0041\\n"
+                return "20\t7e0041\n"
             data=m.decode_wire(capture,fake)
             self.assertEqual(data["known_frame_numbers"]["AUTHENTICATION_REQUEST"],[21])
             self.assertEqual(data["known_frame_numbers"]["AUTHENTICATION_RESPONSE"],[24])
