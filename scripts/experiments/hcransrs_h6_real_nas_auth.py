@@ -50,6 +50,7 @@ def nas_control_events(pcap,exec_fn=h1.cmd):
     receipt={"schema":"hcransrs-h6-nas-auth-wire-v1",
              "authentication_request_frames":[],
              "authentication_response_frames":[],
+             "authentication_failure_frames":[],
              "other_plain_5gs_nas_frames":0,
              "protected_nas_candidates":0,
              "independent_nas_decoder":"NGAP_NAS_PDU_FIRST_THREE_OCTETS_ONLY",
@@ -75,6 +76,8 @@ def nas_control_events(pcap,exec_fn=h1.cmd):
                 receipt["authentication_request_frames"].append(frame)
             elif header=="7e0057" and direction=="uplink":
                 receipt["authentication_response_frames"].append(frame)
+            elif header=="7e0059" and direction=="uplink":
+                receipt["authentication_failure_frames"].append(frame)
             elif header.startswith("7e0") and header[2:4]!="00":
                 receipt["protected_nas_candidates"]+=1
             else:
@@ -85,6 +88,58 @@ def nas_control_events(pcap,exec_fn=h1.cmd):
                        if req and rsp and min(req)<min(rsp)
                        else "NO_ORDERED_NAS_AUTH_REQUEST_RESPONSE")
     return receipt
+
+
+def auth_gap_diagnostics(pcap, ue_log, events, exec_fn=h1.cmd):
+    """Only integer frame counts and boolean source-grounded UE log markers.
+
+    Captured NAS, IMSI/SUCI, Ki, OPc and actual logs are NEVER serialized.
+    F1AP frames after the NGAP authentication request are directional
+    transport candidates, not proof of UE NAS delivery.
+    """
+    result={"status":"UNQUALIFIED","ue_debug_received_auth_request":False,
+            "ue_auth_decode_error":False,"ue_invalid_ksi":False,
+            "ue_ul_nas_rrc_candidate":False,"ue_log_missing":True,
+            "f1ap_dl_rrc_after_auth_request_frames":[],
+            "f1ap_ul_rrc_after_auth_request_frames":[],
+            "reason":"DIAGNOSTIC_ONLY_NOT_AUTHENTICATION_SUCCESS"}
+    if ue_log.is_file() and not ue_log.is_symlink():
+        # Bound the scan to the tail of a runner-private, never-uploaded log.
+        with ue_log.open("rb") as stream:
+            stream.seek(max(0,ue_log.stat().st_size-256*1024))
+            data=stream.read(256*1024).decode(errors="replace")
+        result["ue_log_missing"]=False
+        patterns={
+            "ue_debug_received_auth_request":r"Received NAS Authentication Request",
+            "ue_auth_decode_error":r"decode_(?:5gmm_msg_header|nas_key_set_identifier) failure in NAS Authentication Request handling",
+            "ue_invalid_ksi":r"Invalid NAS Key Set Identifier: send Authentication Failure",
+            "ue_ul_nas_rrc_candidate":r"PDCP_DATA_REQ ULInformationTransfer \\(NAS",
+        }
+        for key,pattern in patterns.items():
+            result[key]=bool(re.search(pattern,data))
+    frames=events.get("authentication_request_frames") or []
+    if not frames:
+        result["status"]="NO_NGAP_AUTH_REQUEST"
+        return result
+    if not pcap.is_file() or pcap.is_symlink() or not 128<=pcap.stat().st_size<=5*1024*1024:
+        result["status"]="NO_BOUNDED_CONTROL_CAPTURE"
+        return result
+    first=min(frames)
+    filters={
+        "f1ap_dl_rrc_after_auth_request_frames":
+            f"f1ap.DLRRCMessageTransfer_element && ip.src=={h1.IP['cu']} && ip.dst=={h1.IP['macro']} && frame.number>{first}",
+        "f1ap_ul_rrc_after_auth_request_frames":
+            f"f1ap.ULRRCMessageTransfer_element && ip.src=={h1.IP['macro']} && ip.dst=={h1.IP['cu']} && frame.number>{first}",
+    }
+    for name,expr in filters.items():
+        rows=exec_fn("tshark","-n","-r",str(pcap),"-Y",expr,
+                     "-T","fields","-e","frame.number",timeout=20)
+        numbers=rows.splitlines()
+        if any(not re.fullmatch(r"[1-9][0-9]*",n) for n in numbers):
+            raise h1.EvidenceError("Unexpected F1AP frame values")
+        result[name]=sorted(set(int(n) for n in numbers))
+    result["status"]="SANITIZED_POST_AUTH_F1_AND_UE_LOG_DIAGNOSTIC_ONLY"
+    return result
 
 
 def qualify(receipt,events,backend_pass):
@@ -136,7 +191,10 @@ class CoreBridge:
         # CLI may be visible to local /proc; this is a disposable, isolated
         # GitHub runner. OAI logs Ki/OPc, therefore never export UE logs.
         base=self.orig_ue(binary)
-        return base+["--uicc0.key",self.credentials["security"]["k"],
+        # Pinned OAI NAS uses LOG_D for "Received NAS Authentication Request".
+        # Debug output stays runner-local; NEVER upload or print raw UE logs.
+        return base+["--log_config.NAS_log_level","debug",
+                     "--uicc0.key",self.credentials["security"]["k"],
                      "--uicc0.opc",self.credentials["security"]["opc"],
                      "--uicc0.amf","8000"]
     def launch(self,trial,role,image,binary,config):
@@ -244,9 +302,14 @@ def main():
         rc=h2.run(args)
         h4=json.loads((out/"receipt.json").read_text())
         control=nas_control_events(out/"runner-local"/"setup.pcapng")
+        diagnostic=auth_gap_diagnostics(
+            out/"runner-local"/"setup.pcapng",out/"ue-runner-local.log",control)
         result["backend_ready"]=bridge.backend_ok
         result["h4"]=h4.get("h4_candidate_qualification")
         result["nas_wire"]=control
+        result["auth_gap_diagnostics"]=diagnostic
+        result["ue_runtime_seconds"]=h4.get("ue",{}).get("ran_seconds")
+        result["ue_log_markers"]=h4.get("ue",{}).get("bounded_synthetic_ue_log_markers",[])
         result["status"]=qualify(h4,control,bridge.backend_ok) if rc==0 else "BLOCKED_RADIO_H4"
     except Exception as exc:
         result["error_type"]=type(exc).__name__
@@ -258,7 +321,9 @@ def main():
         # Preserve H2 receipt in runner only; H6 is only uploaded artifact.
         (out/"h6-receipt.json").write_text(json.dumps(result,sort_keys=True,indent=2)+"\n")
     print(json.dumps({"status":result["status"],"backend_ready":result["backend_ready"],
-                      "nas_wire":result.get("nas_wire",{}),"production_decision":"NO_GO"},sort_keys=True))
+                      "nas_wire":result.get("nas_wire",{}),
+                      "auth_gap_diagnostics":result.get("auth_gap_diagnostics",{}),
+                      "production_decision":"NO_GO"},sort_keys=True))
     return 0 if result["status"]=="REAL_NAS_AUTH_REQUEST_AND_RESPONSE_WIRE_CANDIDATE_ONLY" else 1
 
 if __name__=="__main__":
