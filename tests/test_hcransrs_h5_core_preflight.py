@@ -51,5 +51,28 @@ class H5AuthBackendContracts(unittest.TestCase):
         self.assertEqual(m.CORE,"gradiant/open5gs:2.7.6")
         self.assertEqual(m.MONGO,"mongo:6.0")
 
+    def test_sbi_read_only_h2_prior_knowledge_and_fail_closed_url(self):
+        from unittest.mock import Mock
+        sample=Mock(returncode=0,stdout='{"nfInstances":[]}')
+        with patch.object(m.subprocess,"run",return_value=sample) as execute:
+            data=m.h2_json_get("http://172.29.79.11:7777/nnrf-disc/v1/nf-instances")
+        self.assertEqual(data,{"nfInstances":[]})
+        args=execute.call_args.args[0]
+        self.assertIn("--http2-prior-knowledge",args)
+        self.assertIn("--max-filesize",args)
+        self.assertIn("--silent",args)
+        self.assertNotIn("--verbose",args)
+        for url in ("https://example.com/nnrf-nfm/v1/nf-instances",
+                    "http://127.0.0.1:7777/nudr-dr/v1/foo"):
+            with self.subTest(url=url),self.assertRaises(m.PreflightError):
+                m.h2_json_get(url)
+    def test_sbi_rejects_http_failure_without_echoing_sensitive_body(self):
+        from unittest.mock import Mock
+        sample=Mock(returncode=22,stdout='SENSITIVE',stderr='SENSITIVE')
+        with patch.object(m.subprocess,"run",return_value=sample):
+            with self.assertRaises(m.PreflightError) as cm:
+                m.h2_json_get("http://172.29.79.15:7777/nudr-dr/v1/foo")
+            self.assertNotIn("SENSITIVE",str(cm.exception))
+
 if __name__=="__main__":
     unittest.main()
