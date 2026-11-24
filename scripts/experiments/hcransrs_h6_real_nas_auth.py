@@ -153,6 +153,35 @@ def auth_gap_diagnostics(pcap, ue_log, events, exec_fn=h1.cmd):
     return result
 
 
+
+def read_safe_oai_abort_location(ue_log):
+    """Extract pinned-source assertion location only; discard raw log content.
+
+    OAI assertions print: In <function>() <path>:<line>. No assertion
+    expression, NAS payload, identity or authentication secrets are retained.
+    """
+    out={"assert_location_found":False, "source_file":None,
+         "source_line":None,"function":None, "abort_marker":False}
+    if not ue_log.is_file() or ue_log.is_symlink():
+        return out
+    with ue_log.open("rb") as fp:
+        fp.seek(max(0,ue_log.stat().st_size-256*1024))
+        data=fp.read(256*1024).decode(errors="replace")
+    out["abort_marker"]=bool(re.search(
+        r"(Assertion \\(.{1,120}\\) failed!|Exiting execution|terminate called|Aborted)",
+        data))
+    # Only safe fixed source identifiers, never free-form assertion details.
+    source=re.search(
+        r"In ([A-Za-z_][A-Za-z0-9_]*)\\(\\) "
+        r"([A-Za-z0-9_./-]+[.]c(?:pp)?):([1-9][0-9]{0,5})",
+        data)
+    if source and len(source.group(2))<=180 and ".." not in source.group(2):
+        out.update({"assert_location_found":True, "function":source.group(1),
+                    "source_file":source.group(2),
+                    "source_line":int(source.group(3))})
+    return out
+
+
 def qualify(receipt,events,backend_pass):
     if not backend_pass:
         return "BLOCKED_ISOLATED_AUTH_BACKEND"
@@ -322,6 +351,7 @@ def main():
         result["ue_runtime_seconds"]=h4.get("ue",{}).get("ran_seconds")
         result["ue_exit_code"]=h4.get("ue",{}).get("exit_code")
         result["ue_timed_out"]=h4.get("ue",{}).get("timed_out_as_designed",False)
+        result["ue_assert_location"]=read_safe_oai_abort_location(out/"ue-runner-local.log")
         result["ue_log_markers"]=h4.get("ue",{}).get("bounded_synthetic_ue_log_markers",[])
         result["status"]=qualify(h4,control,bridge.backend_ok) if rc==0 else "BLOCKED_RADIO_H4"
     except Exception as exc:
@@ -337,6 +367,7 @@ def main():
                       "nas_wire":result.get("nas_wire",{}),
                       "auth_gap_diagnostics":result.get("auth_gap_diagnostics",{}),
                       "ue_exit_code":result.get("ue_exit_code"),
+                      "ue_assert_location":result.get("ue_assert_location"),
                       "ue_runtime_seconds":result.get("ue_runtime_seconds"),
                       "production_decision":"NO_GO"},sort_keys=True))
     return 0 if result["status"]=="REAL_NAS_AUTH_REQUEST_AND_RESPONSE_WIRE_CANDIDATE_ONLY" else 1
