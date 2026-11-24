@@ -129,7 +129,9 @@ def h2_json_get(url):
 def nrf_discovery(role):
     if role not in ("ausf","udm","udr"):
         raise PreflightError("Unreviewed target NF")
-    params=urlencode({"target-nf-type":role.upper(),"requester-nf-type":"AMF"})
+    # Use the real 5GC consumer relationship: UDM discovers UDR, not AMF.
+    requester={"ausf":"AMF","udm":"AUSF","udr":"UDM"}[role]
+    params=urlencode({"target-nf-type":role.upper(),"requester-nf-type":requester})
     url=f"http://{IP['nrf']}:7777/nnrf-disc/v1/nf-instances?{params}"
     data=h2_json_get(url)
     if not isinstance(data,dict):
