@@ -168,11 +168,11 @@ def read_safe_oai_abort_location(ue_log):
         fp.seek(max(0,ue_log.stat().st_size-256*1024))
         data=fp.read(256*1024).decode(errors="replace")
     out["abort_marker"]=bool(re.search(
-        r"(Assertion \\(.{1,120}\\) failed!|Exiting execution|terminate called|Aborted)",
+        r"(Assertion \(.{1,120}\) failed!|Exiting execution|terminate called|Aborted)",
         data))
     # Only safe fixed source identifiers, never free-form assertion details.
     source=re.search(
-        r"In ([A-Za-z_][A-Za-z0-9_]*)\\(\\) "
+        r"In ([A-Za-z_][A-Za-z0-9_]*)\(\) "
         r"([A-Za-z0-9_./-]+[.]c(?:pp)?):([1-9][0-9]{0,5})",
         data)
     if source and len(source.group(2))<=180 and ".." not in source.group(2):
