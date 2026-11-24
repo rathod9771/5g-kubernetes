@@ -1,0 +1,236 @@
+name: H-CRAN H6 real OAI UE to srsRAN 5G NAS auth request-response (ISOLATED)
+on:
+  push:
+    branches:
+      - experiment/hcran-parallel-protocol-gates-20261123
+    paths:
+      - .github/workflows/hcransrs-h6-real-nas-auth.yml
+      - scripts/experiments/hcransrs_h6_real_nas_auth.py
+      - tests/test_hcransrs_h6_real_nas_auth.py
+      - scripts/experiments/hcransrs_h5_core_preflight.py
+      - scripts/experiments/hcransrs_real_ue_zmq_h2.py
+permissions:
+  contents: read
+concurrency:
+  group: hcransrs-real-nas-auth-h6-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  genuine-source-built-pair:
+    name: Actual pinned OAI NR UE + srsCU/2 DU + Open5GS synthetic 5G-AKA request-response trial
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    env:
+      OAI_COMMIT: dfb296ab867050a7bde81b393fa31b757ada2c83
+      OAI_REPO: https://github.com/OPENAIRINTERFACE/openairinterface5g.git
+      SRS_IMAGE: hcransrs-srsran:25.04.0-11c9bbabb6-2du-signaling
+      CORE_IMAGE: gradiant/open5gs:2.7.6
+      MONGO_IMAGE: mongo:6.0
+      HCRANSRS_H6_ISOLATED_AUTH: SYNTHETIC_ONE_UE_NO_DEPLOY
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Frozen synthetic Open5GS H1 fixture only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: 4080110a74bf6ba58804797c5b7216458e2f0a93
+          path: baseline
+      - name: Enforce runner isolation and pinned build provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_ACTIONS" = true
+          test "$OAI_COMMIT" = dfb296ab867050a7bde81b393fa31b757ada2c83
+          test "$SRS_IMAGE" = hcransrs-srsran:25.04.0-11c9bbabb6-2du-signaling
+          mkdir -p "$RUNNER_TEMP/hcransrs-h2" "$RUNNER_TEMP/hcransrs-h2-render"
+          python3 -m py_compile scripts/experiments/hcransrs_real_ue_zmq_h2.py
+      - name: Install observer/parser and real ZeroMQ dependency
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            libzmq3-dev tshark
+          pkg-config --exists libzmq
+          test -d /proc/net/sctp || sudo modprobe sctp
+          test -d /proc/net/sctp
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.2
+          python3 -m unittest discover -s tests -p test_hcransrs_real_ue_zmq_h2.py -v
+          python3 -m unittest discover -s tests -p test_hcransrs_h5_core_preflight.py -v
+          python3 -m unittest discover -s tests -p test_hcransrs_h6_real_nas_auth.py -v
+          curl --version | grep -q HTTP2
+      - name: Retrieve exact source of actual OAI NR UE
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          SOURCE="$RUNNER_TEMP/oai-zmq-ue"
+          test ! -e "$SOURCE"
+          git init -q "$SOURCE"
+          git -C "$SOURCE" remote add origin "$OAI_REPO"
+          git -C "$SOURCE" fetch --depth=1 origin "$OAI_COMMIT"
+          git -C "$SOURCE" checkout --detach FETCH_HEAD
+          test "$(git -C "$SOURCE" rev-parse HEAD)" = "$OAI_COMMIT"
+          test -z "$(git -C "$SOURCE" status --porcelain)"
+          echo "$OAI_COMMIT" > "$RUNNER_TEMP/hcransrs-h2/oai-source-sha.txt"
+      - name: Install upstream OAI build prerequisites (disposable VM only)
+        timeout-minutes: 28
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/oai-zmq-ue/cmake_targets"
+          sudo timeout --signal=TERM --kill-after=20s 1500s ./build_oai -I -w ZMQ \
+            > "$RUNNER_TEMP/oai-install-h2.log" 2>&1 || { tail -n 75 "$RUNNER_TEMP/oai-install-h2.log"; exit 1; }
+      - name: Build real OAI NR UE with separated non-root CMake/CPM build paths
+        timeout-minutes: 65
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/oai-zmq-ue/cmake_targets"
+          export CPM_SOURCE_CACHE="$RUNNER_TEMP/oai-cpm-h2"
+          export CMAKE_BUILD_PARALLEL_LEVEL=2
+          mkdir -p "$CPM_SOURCE_CACHE"
+          timeout --signal=TERM --kill-after=20s 3600s ./build_oai \
+            -d hcransrs_h2_build -w ZMQ --nrUE --noavx512 \
+            --build-tool-opt '-j2' > "$RUNNER_TEMP/oai-build-h2.log" 2>&1 || { tail -n 90 "$RUNNER_TEMP/oai-build-h2.log"; exit 1; }
+          BUILD="$RUNNER_TEMP/oai-zmq-ue/cmake_targets/hcransrs_h2_build/build"
+          test -x "$BUILD/nr-uesoftmodem"
+          test -f "$BUILD/liboai_zmqdevif.so"
+          sha256sum "$BUILD/nr-uesoftmodem" "$BUILD/liboai_zmqdevif.so" \
+            > "$RUNNER_TEMP/hcransrs-h2/oai-binaries-sha256.txt"
+          ! grep -Eq '/root/\.cache/cpm' "$BUILD/CMakeCache.txt"
+      - name: Build real pinned srsRAN CU plus dual DU container images
+        timeout-minutes: 95
+        run: |
+          set -euo pipefail
+          bash scripts/experiments/hcransrs_build.sh
+          docker run --rm --network none --entrypoint /bin/sh "$SRS_IMAGE" \
+            -ec 'test -x /usr/local/bin/srsdu && test -x /usr/local/bin/srscu'
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.21.0
+      - name: Render existing canonical H-CRAN Helm configuration without deployment
+        run: |
+          set -euo pipefail
+          helm template hcran-srsran-cu helm/cran-srsran/cu \
+            -f helm/cran-srsran/cu/values-hcran.yaml \
+            --set-string image.reference=example.invalid/hcransrs:offline \
+            --set-string image.pullPolicy=Never > "$RUNNER_TEMP/hcransrs-h2-render/cu.yaml"
+          for cell in macro small; do
+            helm template "hcran-srsran-$cell" helm/cran-srsran/du \
+              -f "helm/cran-srsran/du/values-hcran-$cell.yaml" \
+              --set-string image.reference=example.invalid/hcransrs:offline \
+              --set-string image.pullPolicy=Never > "$RUNNER_TEMP/hcransrs-h2-render/$cell.yaml"
+          done
+          docker pull "$CORE_IMAGE"
+          docker pull "$MONGO_IMAGE"
+          docker image inspect "$CORE_IMAGE" --format '{{.Id}}' \
+            > "$RUNNER_TEMP/hcransrs-h2/core-image-id.txt"
+      - name: Real-pair H6 synthetic-only Open5GS auth + OAI NR UE + two DU radio and H1 controls
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          BUILD="$RUNNER_TEMP/oai-zmq-ue/cmake_targets/hcransrs_h2_build/build"
+          python3 -u scripts/experiments/hcransrs_h6_real_nas_auth.py \
+            --rendered "$RUNNER_TEMP/hcransrs-h2-render" \
+            --stage3 "$GITHUB_WORKSPACE/baseline/experiments/oai-ngap-2026w13/stage3" \
+            --out "$RUNNER_TEMP/hcransrs-h2" \
+            --srs-image "$SRS_IMAGE" --core-image "$CORE_IMAGE" \
+            --ue "$BUILD/nr-uesoftmodem" --library-path "$BUILD"
+      - name: H3 fail-closed genuine UE SIB1 and independent F1AP RRC evidence
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/hcransrs-h2/receipt.json" <<'PY'
+          import json,sys
+          from pathlib import Path
+          receipt=json.loads(Path(sys.argv[1]).read_text())
+          protocol=receipt.get("protocol_wire") or {}
+          ue=receipt.get("ue") or {}
+          qualification=receipt.get("h3_candidate_qualification")
+          print(json.dumps({
+              "h3_candidate_qualification":qualification,
+              "protocol_wire_status":protocol.get("status"),
+              "protocol_frame_counts":protocol.get("frame_counts"),
+              "ue_log_marker_categories":ue.get("bounded_synthetic_ue_log_markers"),
+              "production_decision":"NO_GO",
+          },sort_keys=True))
+          assert receipt.get("status")=="REAL_OAI_UE_SRS_DU_ZMQ_TRANSPORT_CANDIDATE_ONLY", "H2 radio transport not proven"
+          assert qualification=="SIB1_LOG_AND_BIDIRECTIONAL_F1AP_RRC_TRANSFER_CANDIDATES", (
+              "H3 protocol candidate remains BLOCKED: "+str(qualification)
+          )
+          # This is not RRC/NAS conformance. Message details and UE transactions
+          # must still be independently correlated before protocol completion.
+          PY
+          echo 'H3: SIB1 UE log and independently captured F1AP UL/DL RRC-transfer CANDIDATES; conformance NOT claimed.' >> "$GITHUB_STEP_SUMMARY"
+      - name: H4 fail-closed initial RRC order and NGAP 5GS NAS Registration Request
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/hcransrs-h2/receipt.json" <<'PY'
+          import json,sys
+          from pathlib import Path
+          receipt=json.loads(Path(sys.argv[1]).read_text())
+          nas=receipt.get("initial_nas_wire") or {}
+          result=receipt.get("h4_candidate_qualification")
+          print(json.dumps({
+              "h4_initial_registration_qualification":result,
+              "nas_wire_status":nas.get("status"),
+              "initial_ul_f1ap_frame_numbers":nas.get("initial_ul_f1ap_frame_numbers"),
+              "nas_registration_request_ngap_frame_numbers":nas.get("registration_request_ngap_frame_numbers"),
+              "nas_header_matches":nas.get("redacted_nas_header_match_count"),
+              "registration_accept_observed":False,
+              "registration_complete_observed":False,
+              "production_decision":"NO_GO",
+          },sort_keys=True))
+          assert result=="ORDERED_F1AP_RRC_AND_5GS_NAS_REGISTRATION_REQUEST_CANDIDATE_ONLY", (
+              "H4 initial registration request evidence BLOCKED: "+str(result)
+          )
+          PY
+          echo 'H4: independently parsed initial F1AP message, ordered F1AP UL/DL control, and plain 5GS NAS Registration Request candidate in NGAP; NO Registration Accept or PDU demonstrated.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Enforce H6 authentic 5GS NAS Authentication Request-Response candidate on NGAP wire
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/hcransrs-h2/h6-receipt.json" <<'PY'
+          import json,sys
+          from pathlib import Path
+          r=json.loads(Path(sys.argv[1]).read_text())
+          print(json.dumps({
+              "h6_status":r.get("status"),
+              "backend_ready":r.get("backend_ready"),
+              "nas_wire":r.get("nas_wire"),
+              "registration_accept":r.get("registration_accept"),
+              "registration_complete":r.get("registration_complete"),
+              "production_decision":r.get("production_decision")
+          },sort_keys=True))
+          assert r.get("backend_ready") is True
+          assert r.get("h4")=="ORDERED_F1AP_RRC_AND_5GS_NAS_REGISTRATION_REQUEST_CANDIDATE_ONLY"
+          assert r.get("status")=="REAL_NAS_AUTH_REQUEST_AND_RESPONSE_WIRE_CANDIDATE_ONLY"
+          assert r.get("registration_accept")=="NOT_VERIFIED"
+          assert r.get("registration_complete")=="NOT_VERIFIED"
+          assert r.get("production_decision")=="NO_GO"
+          PY
+          echo 'H6 proves ONLY genuine 5GS NAS Authentication Request/Response headers on NGAP, if successful. NAS security, Registration Accept/Complete, PDU remain not validated.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain only bounded sanitized result receipts (NO raw PCAP or UE logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-h6-real-5gs-nas-auth-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/hcransrs-h2/h6-receipt.json
+            ${{ runner.temp }}/hcransrs-h2/oai-source-sha.txt
+            ${{ runner.temp }}/hcransrs-h2/oai-binaries-sha256.txt
+            ${{ runner.temp }}/hcransrs-h2/core-image-id.txt
+            ${{ runner.temp }}/hcransrs-build/source-pin.txt
+            ${{ runner.temp }}/hcransrs-build/binary-proof.txt
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Enforce research-only interpretation and no production claims
+        if: always()
+        run: |
+          echo 'H6 checks real pinned OAI NR UE against source-built srsRAN H-CRAN dual DU with a disposable Open5GS 5G-AKA auth backend and generated one-UE subscription.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'H6 requires independently captured initial 5GS NAS Authentication Request/Response before PASS; still NO Registration Accept, NAS security, PDU, traffic, mobility, recovery or 3GPP conformance.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'All workloads disposable GitHub-hosted Docker/host loopback; HP K8s/OSM/main/frozen OAI untouched. Production NO-GO.' >> "$GITHUB_STEP_SUMMARY"
