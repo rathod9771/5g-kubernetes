@@ -3,6 +3,9 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/experiments"))
 
 p = Path(__file__).resolve().parents[1] / "scripts/experiments/hcransrs_h7_nas_security_trace.py"
 spec = importlib.util.spec_from_file_location("hcransrs_h7_nas_security_trace", p)
@@ -17,6 +20,8 @@ def events(**kw):
     base = {"source": "INDEPENDENT_REAL_NGAP_WIRE",
             "known_frame_numbers": {k: [] for k in m.KNOWN.values()},
             "security_header_counts": {}}
+    base["known_frame_numbers"]["AUTHENTICATION_REQUEST"] = [21]
+    base["known_frame_numbers"]["AUTHENTICATION_RESPONSE"] = [24]
     base.update(kw)
     return base
 
@@ -58,14 +63,48 @@ class H7PacketContracts(unittest.TestCase):
             def fake(cmd):
                 self.assertIn("ngap.NAS_PDU", cmd)
                 expr = cmd[cmd.index("-Y")+1]
-                if "ip.src == " + m.AMF in expr:
+                if "DownlinkNASTransport_element" in expr:
                     return "25\t7e0312345678017e005d\n"
-                return "28\t7e04aabbccdd01" + "aa"*40 + "\n"
+                if "UplinkNASTransport_element" in expr:
+                    return "28\t7e04aabbccdd01" + "aa"*40 + "\n"
+                self.assertIn("InitialUEMessage_element",expr)
+                return "20\t7e0041\n"
             out=m.decode_wire(p, fake)
             self.assertEqual(out["known_frame_numbers"]["SECURITY_MODE_COMMAND"], [25])
+            self.assertEqual(out["known_frame_numbers"]["REGISTRATION_REQUEST"], [20])
             self.assertEqual(out["security_header_counts"]["uplink:4"], 1)
             self.assertEqual(out["other_classes"].get("PROTECTED_CIPHERED_NAS_TYPE_UNAVAILABLE"), 1)
             self.assertNotIn("aabbccdd", str(out))
+    def test_h7_ip_source_matches_real_isolated_h1_and_uses_proven_ngap_filters(self):
+        self.assertEqual(m.AMF, m.h1.IP["amf"])
+        self.assertEqual(m.CU, m.h1.IP["cu"])
+        self.assertEqual(m.AMF, "172.29.78.10")
+        self.assertNotEqual(m.AMF, m.h1.IP["nrf"])
+        with tempfile.TemporaryDirectory() as td:
+            capture=Path(td)/"setup.pcapng"
+            capture.write_bytes(b"x"*160)
+            observed=[]
+            def fake(cmd):
+                f=cmd[cmd.index("-Y")+1]
+                observed.append(f)
+                if "DownlinkNASTransport_element" in f:
+                    self.assertIn("ip.src == "+m.AMF, f)
+                    return "21\\t7e0056\\n"
+                if "UplinkNASTransport_element" in f:
+                    self.assertIn("ip.dst == "+m.AMF, f)
+                    return "24\\t7e0057\\n"
+                self.assertIn("InitialUEMessage_element",f)
+                return "20\\t7e0041\\n"
+            data=m.decode_wire(capture,fake)
+            self.assertEqual(data["known_frame_numbers"]["AUTHENTICATION_REQUEST"],[21])
+            self.assertEqual(data["known_frame_numbers"]["AUTHENTICATION_RESPONSE"],[24])
+            self.assertEqual(data["known_frame_numbers"]["REGISTRATION_REQUEST"],[20])
+            self.assertEqual(len(observed),3)
+    def test_h7_refuses_false_no_smc_if_h6_auth_missing_from_redecode(self):
+        candidate=events()
+        candidate["known_frame_numbers"]["AUTHENTICATION_RESPONSE"]=[]
+        self.assertEqual(m.qualify(H6,candidate),"BLOCKED_H6_AUTH_NOT_REDECODED_BY_H7")
+
     def test_reject_invalid_tshark_fields(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "setup.pcapng"

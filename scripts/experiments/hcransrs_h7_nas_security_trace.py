@@ -14,10 +14,16 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+
+# Single source of truth for AMF/CU IPs: H1's actual isolated bridge.
+# H7 previously queried 172.29.78.11 (NRF!), silently discarding all NAS.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import hcransrs_ngf1 as h1
 
 H6_PASS = "REAL_NAS_AUTH_REQUEST_AND_RESPONSE_WIRE_CANDIDATE_ONLY"
-AMF = "172.29.78.11"
-CU = "172.29.78.20"
+AMF = h1.IP["amf"]
+CU = h1.IP["cu"]
 KNOWN = {
     0x41: "REGISTRATION_REQUEST",
     0x42: "REGISTRATION_ACCEPT",
@@ -104,8 +110,14 @@ def decode_wire(pcap, exec_fn=None):
               "security_header_counts": {},
               "total_nas_pdu_frames": 0,
               "ciphered_inner_messages_decoded": False}
-    for direction, src, dst in (("downlink", AMF, CU), ("uplink", CU, AMF)):
-        expr = f"ngap.NAS_PDU && ip.src == {src} && ip.dst == {dst}"
+    # Message-specific NGAP filters match the independently verified H4/H6
+    # dissection contract; a generic NAS-PDU presence filter hid a bad IP.
+    for direction, message, src, dst in (
+        ("downlink", "DownlinkNASTransport", AMF, CU),
+        ("uplink", "UplinkNASTransport", CU, AMF),
+        ("uplink", "InitialUEMessage", CU, AMF),
+    ):
+        expr = f"ngap.{message}_element && ip.src == {src} && ip.dst == {dst}"
         cmd = ["tshark", "-n", "-r", str(pcap),
                "-Y", expr, "-T", "fields", "-E", "occurrence=f",
                "-e", "frame.number", "-e", "ngap.NAS_PDU"]
@@ -143,6 +155,11 @@ def qualify(h6, wire):
     if not req or not rsp or min(req) >= min(rsp):
         return "BLOCKED_H6_AUTH_FRAME_ORDER"
     events = wire.get("known_frame_numbers") or {}
+    # A successful H6 audit MUST be reproducible independently in H7
+    # from the very same PCAP. Never report 'no SMC' after decoding zero
+    # authentication messages because of a bad IP/filter.
+    if not set(req).issubset(set(events.get("AUTHENTICATION_REQUEST") or [])) or not set(rsp).issubset(set(events.get("AUTHENTICATION_RESPONSE") or [])):
+        return "BLOCKED_H6_AUTH_NOT_REDECODED_BY_H7"
     reject = ["REGISTRATION_REJECT", "AUTHENTICATION_REJECT",
               "SECURITY_MODE_REJECT", "AUTHENTICATION_FAILURE"]
     if any(events.get(key) for key in reject):
