@@ -117,9 +117,16 @@ class CoreBridge:
         self.orig_ue=h2.ue_command
     def install(self):
         h5.IP=dict(IP)
-        h5.IMSI=h5.IMSI   # explicit fixed synthetic IMSI; never operator source
-        h1.Trial.launch=self.launch
-        h1.Trial.close=self.close
+        if self.credentials["imsi"]!=h5.IMSI:
+            raise h1.EvidenceError("Synthetic identity mismatch")
+        # Install ordinary class-callable adapters, not CoreBridge bound
+        # methods: Trial must pass its own instance to launch/close.
+        def launch_adapter(trial,role,image,binary,config):
+            return self.launch(trial,role,image,binary,config)
+        def close_adapter(trial):
+            return self.close(trial)
+        h1.Trial.launch=launch_adapter
+        h1.Trial.close=close_adapter
         h2.ue_command=self.ue_command
     def restore(self):
         h1.Trial.launch=self.orig_launch
