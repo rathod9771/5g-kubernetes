@@ -113,7 +113,7 @@ def auth_gap_diagnostics(pcap, ue_log, events, exec_fn=h1.cmd):
             "ue_debug_received_auth_request":r"Received NAS Authentication Request",
             "ue_auth_decode_error":r"decode_(?:5gmm_msg_header|nas_key_set_identifier) failure in NAS Authentication Request handling",
             "ue_invalid_ksi":r"Invalid NAS Key Set Identifier: send Authentication Failure",
-            "ue_ul_nas_rrc_candidate":r"PDCP_DATA_REQ ULInformationTransfer \\(NAS",
+            "ue_ul_nas_rrc_candidate":r"PDCP_DATA_REQ ULInformationTransfer \(NAS",
         }
         for key,pattern in patterns.items():
             result[key]=bool(re.search(pattern,data))
