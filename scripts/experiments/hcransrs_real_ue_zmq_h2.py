@@ -188,7 +188,7 @@ def initial_nas_wire_summary(pcap):
         "-T","fields","-e","frame.number","-e","ngap.NAS_PDU",timeout=20)
     initial_ue=[]
     for line in decoded.splitlines():
-        cols=line.split("\\t")
+        cols=line.split("\t")
         if len(cols)!=2 or not re.fullmatch(r"[1-9][0-9]*",cols[0]):
             raise h1.EvidenceError("Missing independent NAS PDU alongside NGAP InitialUEMessage")
         # Treat all payload bytes as sensitive; inspect only the first 3
