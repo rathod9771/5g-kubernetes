@@ -157,6 +157,82 @@ def assess_h3(receipt):
     return "SIB1_LOG_AND_BIDIRECTIONAL_F1AP_RRC_TRANSFER_CANDIDATES"
 
 
+def initial_nas_wire_summary(pcap):
+    """Independent NGAP and 5GS NAS initial Registration Request wire audit.
+
+    Never retain NAS payload, IMSI/SUCI, keys, or unredacted decoded traces.
+    7e 00 41 is the plain 5GS mobility Registration Request header.
+    """
+    output={
+        "status":"NO_5GS_REGISTRATION_REQUEST_WIRE",
+        "initial_ul_f1ap_frame_numbers":[],
+        "registration_request_ngap_frame_numbers":[],
+        "redacted_nas_header_match_count":0,
+        "evidence_kind":"INDEPENDENT_NGAP_NAS_PDU_WIRE_DISSECTION",
+        "registration_accept_observed":False,
+        "registration_complete_observed":False,
+        "nas_registration_complete":"NOT_VALIDATED",
+    }
+    if not pcap.is_file() or pcap.is_symlink() or pcap.stat().st_size < 128:
+        return output
+    filt=f"f1ap.InitialULRRCMessageTransfer_element && ip.src == {DU_ADDRESS} && ip.dst == {h1.IP['cu']}"
+    initial=h1.cmd("tshark","-n","-r",str(pcap),"-Y",filt,
+        "-T","fields","-e","frame.number",timeout=20)
+    values=initial.splitlines()
+    if any(not re.fullmatch(r"[1-9][0-9]*",v) for v in values):
+        raise h1.EvidenceError("Invalid initial UL F1AP wire frame")
+    output["initial_ul_f1ap_frame_numbers"]=sorted(set(int(v) for v in values))
+    ngap_expr=(f"ngap.InitialUEMessage_element && ip.src == {h1.IP['cu']} "
+               f"&& ip.dst == {h1.IP['amf']}")
+    decoded=h1.cmd("tshark","-n","-r",str(pcap),"-Y",ngap_expr,
+        "-T","fields","-e","frame.number","-e","ngap.NAS_PDU",timeout=20)
+    initial_ue=[]
+    for line in decoded.splitlines():
+        cols=line.split("\\t")
+        if len(cols)!=2 or not re.fullmatch(r"[1-9][0-9]*",cols[0]):
+            raise h1.EvidenceError("Missing independent NAS PDU alongside NGAP InitialUEMessage")
+        # Treat all payload bytes as sensitive; inspect only the first 3
+        # hexadecimal octets in-memory. Never print or persist the PDU.
+        nas=cols[1].replace(":","").lower()
+        if not re.fullmatch("[0-9a-f]*",nas) or len(nas)>8192 or len(nas)<6:
+            continue
+        if nas.startswith("7e0041"):
+            initial_ue.append(int(cols[0]))
+    output["registration_request_ngap_frame_numbers"]=sorted(set(initial_ue))
+    output["redacted_nas_header_match_count"]=len(output["registration_request_ngap_frame_numbers"])
+    if output["initial_ul_f1ap_frame_numbers"] and initial_ue:
+        output["status"]="F1AP_INITIAL_UL_AND_5GS_REGISTRATION_REQUEST_WIRE_CANDIDATES"
+    elif initial_ue:
+        output["status"]="5GS_REGISTRATION_REQUEST_NGAP_ONLY_CANDIDATE"
+    return output
+
+
+def assess_h4(receipt):
+    """Initial 5GS NAS request candidate only; registration acceptance is out of scope."""
+    if receipt.get("h3_candidate_qualification")!="SIB1_LOG_AND_BIDIRECTIONAL_F1AP_RRC_TRANSFER_CANDIDATES":
+        return "BLOCKED_H3_RRC_CANDIDATE"
+    nas=receipt.get("initial_nas_wire") or {}
+    if nas.get("evidence_kind")!="INDEPENDENT_NGAP_NAS_PDU_WIRE_DISSECTION":
+        return "BLOCKED_NO_INDEPENDENT_NAS_DECODER"
+    if not nas.get("initial_ul_f1ap_frame_numbers"):
+        return "BLOCKED_F1AP_INITIAL_UL_RRC"
+    reg=nas.get("registration_request_ngap_frame_numbers") or []
+    if not reg or not nas.get("redacted_nas_header_match_count"):
+        return "BLOCKED_NAS_REGISTRATION_REQUEST_PDU"
+    first=receipt["protocol_wire"].get("first_frame_numbers") or {}
+    dl=first.get("macro_f1ap_dl_rrc_message_transfer")
+    ul=first.get("macro_f1ap_ul_rrc_message_transfer")
+    ng=first.get("ngap_initial_ue_message")
+    init=min(nas["initial_ul_f1ap_frame_numbers"])
+    if not all(type(x) is int and x>0 for x in (init,dl,ul,ng)):
+        return "BLOCKED_MISSING_ORDERED_CONTROL_FRAMES"
+    if not (init<dl<ul<=ng and ng in reg):
+        return "BLOCKED_INCORRECT_INITIAL_RRC_NAS_FRAME_ORDER"
+    if nas.get("registration_accept_observed") is not False or nas.get("registration_complete_observed") is not False:
+        return "BLOCKED_UNSUPPORTED_COMPLETED_NAS_CLAIM"
+    return "ORDERED_F1AP_RRC_AND_5GS_NAS_REGISTRATION_REQUEST_CANDIDATE_ONLY"
+
+
 def run_ue(out,ue,library_path):
     result={"started":False,"exit_code":None,"ran_seconds":0,
             "bounded_synthetic_ue_log_markers":[]}
@@ -279,6 +355,7 @@ def run(a):
         outcome["ue"]=ue_result
         outcome["radio_wire"]=wire_summary(pcap)
         outcome["protocol_wire"]=protocol_wire_summary(out/"runner-local"/"setup.pcapng")
+        outcome["initial_nas_wire"]=initial_nas_wire_summary(out/"runner-local"/"setup.pcapng")
         if not ue_result.get("started"):
             outcome["status"]="BLOCKED_UE_START"
         elif outcome["radio_wire"]["wire_evidence"]=="BIDIRECTIONAL_LARGE_ZMQ_TCP_PAYLOAD":
@@ -301,6 +378,7 @@ def run(a):
         if "protocol_wire" not in outcome:
             outcome["protocol_wire"]={"status":"UNAVAILABLE", "protocol_validation":"NOT_ESTABLISHED"}
         outcome["h3_candidate_qualification"]=assess_h3(outcome)
+        outcome["h4_candidate_qualification"]=assess_h4(outcome)
         (out/"receipt.json").write_text(json.dumps(outcome,indent=2,sort_keys=True)+"\n")
     print(json.dumps({"status":outcome["status"],"radio_wire":outcome["radio_wire"],
                       "production_decision":"NO_GO"},sort_keys=True))
