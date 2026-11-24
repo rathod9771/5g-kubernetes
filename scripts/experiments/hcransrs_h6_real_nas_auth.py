@@ -193,7 +193,7 @@ class CoreBridge:
         base=self.orig_ue(binary)
         # Pinned OAI NAS uses LOG_D for "Received NAS Authentication Request".
         # Debug output stays runner-local; NEVER upload or print raw UE logs.
-        return base+["--log_config.NAS_log_level","debug",
+        return base+["--log_config.nas_log_level","debug",
                      "--uicc0.key",self.credentials["security"]["k"],
                      "--uicc0.opc",self.credentials["security"]["opc"],
                      "--uicc0.amf","8000"]
