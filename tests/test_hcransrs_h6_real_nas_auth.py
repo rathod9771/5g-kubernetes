@@ -85,6 +85,44 @@ class H6AuthContracts(unittest.TestCase):
             self.assertIs(m.h1.Trial.launch,original_launch)
             self.assertIs(m.h1.Trial.close,original_close)
             bridge.credentials.clear()
+    def test_h6_sanitized_diagnostics_show_post_auth_f1_direction_only(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"capture.pcapng"
+            p.write_bytes(b"x"*256)
+            log=Path(td)/"ue-runner-local.log"
+            log.write_text("Ki=DO_NOT_PRINT\\nReceived NAS Authentication Request\\nPDCP_DATA_REQ ULInformationTransfer (NAS 33 B)\\n")
+            calls=[]
+            def fake(*args,**kw):
+                calls.append(args)
+                if "DLRRCMessageTransfer" in args[5]:
+                    return "25\\n"
+                return "30\\n"
+            result=m.auth_gap_diagnostics(
+                p,log,{"authentication_request_frames":[21]},exec_fn=fake)
+            self.assertEqual(result["f1ap_dl_rrc_after_auth_request_frames"],[25])
+            self.assertEqual(result["f1ap_ul_rrc_after_auth_request_frames"],[30])
+            self.assertTrue(result["ue_debug_received_auth_request"])
+            self.assertTrue(result["ue_ul_nas_rrc_candidate"])
+            self.assertNotIn("DO_NOT_PRINT",str(result))
+            self.assertEqual(len(calls),2)
+    def test_h6_no_auth_request_is_not_falsely_qualified(self):
+        with tempfile.TemporaryDirectory() as td:
+            result=m.auth_gap_diagnostics(Path(td)/"capture",
+                Path(td)/"log",{"authentication_request_frames":[]})
+            self.assertEqual(result["status"],"NO_NGAP_AUTH_REQUEST")
+            self.assertEqual(result["f1ap_dl_rrc_after_auth_request_frames"],[])
+    def test_h6_auth_failure_is_distinct_from_auth_response(self):
+        with tempfile.TemporaryDirectory() as td:
+            p=Path(td)/"capture.pcapng"
+            p.write_bytes(b"x"*256)
+            def fake(*args,**kwargs):
+                if "DownlinkNASTransport" in args[5]:
+                    return "21\\t7e0056" + "ab"*19 + "\\n"
+                return "31\\t7e0059" + "ab"*10 + "\\n"
+            data=m.nas_control_events(p,exec_fn=fake)
+            self.assertEqual(data["authentication_failure_frames"],[31])
+            self.assertEqual(data["authentication_response_frames"],[])
+            self.assertEqual(data["status"],"NO_ORDERED_NAS_AUTH_REQUEST_RESPONSE")
     def test_uicc_credentials_match_ephemeral_subscriber_and_not_canonical(self):
         with tempfile.TemporaryDirectory() as td:
             bridge=m.CoreBridge(td)
