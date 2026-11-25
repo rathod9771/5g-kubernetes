@@ -21,13 +21,16 @@ from release_manifest import (MANIFEST_NAME, SCHEMA, SCHEMA_VERSION, WORKFLOW_PA
 from scenario_registry import RegistryError, load_registry, repository_path, select_scenarios
 
 DEFAULT_RELEASE_BRANCHES = ('reproducible-installer',)
+DELL_WORKFLOW_PATH = '.github/workflows/dell-release-candidate.yml'
+DELL_RELEASE_BRANCH = 'p5/dell-release-candidate'
+DELL_ENVIRONMENT = 'dell-precision-3680-research'
 
 
 class ReleaseError(ValueError):
     pass
 
 
-def identity(root, environ):
+def identity(root, environ, workflow_path=WORKFLOW_PATH):
     """Workflow identity from the GitHub runtime; anything else is a local, ineligible build."""
     if environ.get('GITHUB_ACTIONS') != 'true':
         branch = git(root, 'rev-parse', '--abbrev-ref', 'HEAD').decode().strip()
@@ -39,7 +42,7 @@ def identity(root, environ):
         raise ReleaseError('Release candidates are built only on GitHub-hosted runners')
     repository, workflow_ref = environ['GITHUB_REPOSITORY'], environ['GITHUB_WORKFLOW_REF']
     path = workflow_ref.split('@', 1)[0][len(repository) + 1:]
-    if not workflow_ref.startswith(repository + '/') or path != WORKFLOW_PATH:
+    if not workflow_ref.startswith(repository + '/') or path != workflow_path:
         raise ReleaseError('Unexpected workflow identity')
     return {'repository': repository, 'event': environ['GITHUB_EVENT_NAME'], 'ref': environ['GITHUB_REF'],
             'workflow': {'path': path, 'ref': workflow_ref, 'run_id': int(environ['GITHUB_RUN_ID']),
@@ -48,7 +51,8 @@ def identity(root, environ):
 
 
 def build_release(root, base, head, output, environ, release_branches=DEFAULT_RELEASE_BRANCHES,
-                  environment='hp-lab', ci_validation='not-run', verify_images=False, clock=time.time, opener=None):
+                  environment='hp-lab', ci_validation='not-run', verify_images=False, clock=time.time, opener=None,
+                  workflow_path=WORKFLOW_PATH):
     root, output = Path(root).resolve(), Path(output).absolute()
     if output.is_relative_to(root) or root.is_relative_to(output):
         raise ReleaseError('Release output must be outside the repository')
@@ -58,7 +62,12 @@ def build_release(root, base, head, output, environ, release_branches=DEFAULT_RE
         raise ReleaseError('Release commit differs from the workflow commit')
     if git(root, 'status', '--porcelain', '--untracked-files=all').strip():
         raise ReleaseError('Working tree is not clean; artifacts must come from the exact commit')
-    source = identity(root, environ)
+    if workflow_path not in (WORKFLOW_PATH, DELL_WORKFLOW_PATH):
+        raise ReleaseError('Unapproved release workflow identity')
+    if workflow_path == DELL_WORKFLOW_PATH and (
+            tuple(release_branches) != (DELL_RELEASE_BRANCH,) or environment != DELL_ENVIRONMENT):
+        raise ReleaseError('Dell workflow requires exact Dell branch and environment')
+    source = identity(root, environ, workflow_path=workflow_path)
     registry = load_registry(root)
     paths = git_changes(root, base, head)
     impact = analyze(paths, registry, git_reader(root, base) if paths is not None else None, git_reader(root, head))
@@ -148,12 +157,15 @@ def main(argv=None):
     parser.add_argument('--environment', default='hp-lab')
     parser.add_argument('--ci-validation', choices=('passed', 'not-run'), default='not-run')
     parser.add_argument('--verify-registry', action='store_true', help='CI only: verify pinned digests anonymously')
+    parser.add_argument('--dell-release-candidate', action='store_true',
+                        help='Strictly scoped Dell research workflow identity; no deployment')
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     try:
         manifest = build_release(root, args.base, args.head, args.output, dict(os.environ),
                                  tuple(args.release_branches or DEFAULT_RELEASE_BRANCHES), args.environment,
-                                 args.ci_validation, args.verify_registry)
+                                 args.ci_validation, args.verify_registry,
+                                 workflow_path=DELL_WORKFLOW_PATH if args.dell_release_candidate else WORKFLOW_PATH)
     except (ReleaseError, ImpactError, ManifestError, PackageError, RegistryError, OSError, ValueError, KeyError) as error:
         print('ERROR: ' + str(error), file=sys.stderr)
         return 1

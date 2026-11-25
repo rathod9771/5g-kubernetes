@@ -1,0 +1,185 @@
+name: Dell Research Release Candidate (no deployment)
+
+# Dell-only, GitHub-hosted build/attestation. NEVER installs, uploads to OSM,
+# changes Kubernetes, or invokes a target-side deployment agent.
+on:
+  push:
+    branches:
+      - p5/dell-release-candidate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dell-research-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_BRANCH: p5/dell-release-candidate
+  RELEASE_ENVIRONMENT: dell-precision-3680-research
+
+jobs:
+  build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/p5/dell-release-candidate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      channel: ${{ steps.release.outputs.channel }}
+      packages: ${{ steps.release.outputs.packages }}
+      publication_allowed: ${{ steps.decision.outputs.publication_allowed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: 'v3.21.0'
+      - name: Exact Dell checkout and locked HP policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$GITHUB_REPOSITORY" = 'rathod9771/5g-kubernetes'
+          test "$GITHUB_REF" = 'refs/heads/p5/dell-release-candidate'
+          python3 scripts/experiments/p5/p5_readiness.py --assert-locked
+      - name: Install offline test dependencies
+        run: python3 -m pip install -r ran-selector/requirements.txt
+      - name: Complete offline regression suite
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Select verified change-impact base
+        id: base
+        shell: bash
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$PUSH_BEFORE"
+
+          if ! [[ "$base" =~ ^[0-9a-f]{40}$ ]] ||
+             [[ "$base" =~ ^0+$ ]] ||
+             ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git rev-parse "${GITHUB_SHA}^" 2>/dev/null || true)"
+          fi
+
+          if ! [[ "$base" =~ ^[0-9a-f]{40}$ ]] ||
+             [[ "$base" == "$GITHUB_SHA" ]] ||
+             ! git merge-base --is-ancestor "$base" "$GITHUB_SHA"; then
+            echo "BLOCKED: no comparable ancestor" >&2
+            exit 1
+          fi
+
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Build Dell-only candidate (no publication)
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build_release.py \
+            --base "${{ steps.base.outputs.base }}" --head "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/dell-release" \
+            --release-branch "$RELEASE_BRANCH" \
+            --environment "$RELEASE_ENVIRONMENT" \
+            --ci-validation passed --verify-registry \
+            --dell-release-candidate > "$RUNNER_TEMP/dell-summary.json"
+          cat "$RUNNER_TEMP/dell-summary.json"
+          echo "channel=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["channel"])' "$RUNNER_TEMP/dell-summary.json")" >> "$GITHUB_OUTPUT"
+          echo "packages=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["packages"])' "$RUNNER_TEMP/dell-summary.json")" >> "$GITHUB_OUTPUT"
+      - name: Independent publication-candidate gate
+        id: decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed=false
+          if python3 scripts/release_manifest.py publication-decision \
+              --release "$RUNNER_TEMP/dell-release" --repository "$GITHUB_REPOSITORY" \
+              --commit "$GITHUB_SHA" --branch "$RELEASE_BRANCH" \
+              --dell-release-candidate > "$RUNNER_TEMP/dell-decision.json"; then
+            allowed=true
+          fi
+          cat "$RUNNER_TEMP/dell-decision.json"
+          echo "publication_allowed=$allowed" >> "$GITHUB_OUTPUT"
+      - name: Preserve untrusted candidate as CI artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-candidate-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dell-release/
+          if-no-files-found: error
+          retention-days: 30
+
+  attest:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/p5/dell-release-candidate' && needs.build.outputs.channel == 'release' && needs.build.outputs.packages != '0' && needs.build.outputs.publication_allowed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-candidate-${{ github.sha }}-${{ github.run_attempt }}
+          path: release
+      - name: Reject unapproved Dell candidate before signing
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 -I - release/release-manifest.json <<'PY'
+          import hashlib, json, os, pathlib, re, sys
+          p = pathlib.Path(sys.argv[1])
+          m = json.loads(p.read_bytes())
+          e, s, w = m.get('eligibility') or {}, m.get('source') or {}, m.get('workflow') or {}
+          ok = (
+              m.get('repository') == 'rathod9771/5g-kubernetes' == os.environ['EXPECTED_REPOSITORY']
+              and m.get('target') == {'environment': 'dell-precision-3680-research', 'architecture': 'linux/amd64'}
+              and m.get('channel') == 'release'
+              and e.get('publication_allowed') is True and e.get('blockers') == []
+              and e.get('automatic_deployment_allowed') is False
+              and s.get('branch') == 'p5/dell-release-candidate'
+              and s.get('ref') == 'refs/heads/p5/dell-release-candidate'
+              and s.get('event') == 'push' and s.get('commit') == os.environ['EXPECTED_COMMIT']
+              and w.get('path') == '.github/workflows/dell-release-candidate.yml'
+              and w.get('run_id') == int(os.environ['EXPECTED_RUN_ID'])
+              and w.get('run_attempt') == int(os.environ['EXPECTED_ATTEMPT'])
+              and w.get('runner_environment') == 'github-hosted'
+              and isinstance(m.get('packages'), list) and len(m['packages']) > 0
+          )
+          root = pathlib.Path('release')
+          listed = {}
+          try:
+              for row in (root / 'SHA256SUMS').read_text().splitlines():
+                  match = re.fullmatch(r'([0-9a-f]{64})  (\S+)', row)
+                  if not match or match[2] in listed or '..' in pathlib.PurePosixPath(match[2]).parts:
+                      raise ValueError('Invalid digest index')
+                  listed[match[2]] = match[1]
+              expected = {str(x.relative_to(root)) for x in root.rglob('*') if x.is_file()} - {'SHA256SUMS'}
+              ok = ok and set(listed) == expected
+              for name, digest in listed.items():
+                  if hashlib.sha256((root / name).read_bytes()).hexdigest() != digest:
+                      ok = False
+          except (ValueError, OSError, UnicodeError):
+              ok = False
+          print('Dell candidate passed signing preflight' if ok else 'BLOCKED: not eligible for signing')
+          sys.exit(0 if ok else 1)
+          PY
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            release/release-manifest.json
+            release/packages/*.tar.gz
+            release/provenance/*.json
