@@ -22,8 +22,8 @@ import hcransrs_real_ue_zmq_h2 as h2
 import hcransrs_h5_core_preflight as h5
 
 IP={**h1.IP,"mongo":"172.29.78.12","ausf":"172.29.78.13",
-    "udm":"172.29.78.14","udr":"172.29.78.15"}
-EXTRAS=("mongo","ausf","udm","udr")
+    "udm":"172.29.78.14","udr":"172.29.78.15","pcf":"172.29.78.16"}
+EXTRAS=("mongo","ausf","udm","udr","pcf")
 PREFIX="hcransrs-h6"
 NOT_VALIDATED=["NAS_REGISTRATION_ACCEPT","NAS_REGISTRATION_COMPLETE",
     "NAS_SECURITY_ACTIVATION","PDU_SESSION","F1U_TRAFFIC","NGU_TRAFFIC",
@@ -338,6 +338,35 @@ class CoreBridge:
                 time.sleep(1)
             if not found:
                 raise h1.EvidenceError("H6 AMF cannot discover named UDM service: "+service)
+        # Open5GS v2.7.6 nudm-handler.c requests AM policy association
+        # after UDM SDM subscription; the authentication-only fixture lacked PCF.
+        cfg=work/"pcf.yaml"
+        cfg.write_text("db_uri: mongodb://"+IP["mongo"]+"/open5gs\n"
+            "logger:\n  level: info\npcf:\n  sbi:\n    server:\n"
+            "      - address: "+IP["pcf"]+"\n        port: 7777\n"
+            "    client:\n      nrf:\n        - uri: http://"+IP["nrf"]+":7777\n")
+        cfg.chmod(0o644)
+        h5.command("docker","run","-d","--pull=never","--name",PREFIX+"-pcf",
+            "--network",h1.NET,"--ip",IP["pcf"],"--memory","1g",
+            "-v",str(cfg)+":/tmp/h6-config.yaml:ro",
+            "--entrypoint","/bin/sh",h5.CORE,
+            "-ec","exec open5gs-pcfd -c /tmp/h6-config.yaml",timeout=25)
+        self.added.append("pcf")
+        if not h5.wait_socket(IP["pcf"],7777,deadline=30):
+            raise h1.EvidenceError("H7 PCF SBI not ready")
+        from urllib.parse import urlencode
+        params=urlencode({"target-nf-type":"PCF","requester-nf-type":"AMF",
+                          "service-names":"npcf-am-policy-control"})
+        for _ in range(15):
+            try:
+                data=h5.h2_json_get("http://"+IP["nrf"]+":7777/nnrf-disc/v1/nf-instances?"+params)
+                if any(n.get("nfType")=="PCF" and any(v.get("serviceName")=="npcf-am-policy-control" for v in (n.get("nfServices") or list(n.get("nfServiceList",{}).values()))) for n in data.get("nfInstances",[])):
+                    break
+            except (OSError,ValueError,KeyError,h5.PreflightError):
+                pass
+            time.sleep(1)
+        else:
+            raise h1.EvidenceError("H7 AMF cannot discover PCF AM policy service")
         self.backend_ok=True
     def close(self,trial):
         # Never call H1 close: H1 prints AMF/NRF/core logs, which may disclose
