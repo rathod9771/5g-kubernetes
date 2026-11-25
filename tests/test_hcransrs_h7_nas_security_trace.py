@@ -35,6 +35,37 @@ class H7PacketContracts(unittest.TestCase):
                          "MESSAGE_DIRECTION_MISMATCH")
         self.assertEqual(m.classify_nas_pdu("7e005d", "downlink")["class"],
                          "UNQUALIFIED_SECURITY_MODE_COMMAND")
+    def test_extract_real_5gmm_registration_reject_cause_only(self):
+        registration_reject=m.classify_nas_pdu("7e004465", "downlink")
+        self.assertEqual(registration_reject["class"],"REGISTRATION_REJECT")
+        self.assertEqual(registration_reject["registration_reject_cause_code"],101)
+        self.assertEqual(registration_reject["registration_reject_cause_label"],
+                         "MESSAGE_NOT_COMPATIBLE_WITH_PROTOCOL_STATE")
+        self.assertNotIn("nas_payload",str(registration_reject))
+        self.assertEqual(m.classify_nas_pdu("7e00443e","downlink")
+                         ["registration_reject_cause_label"],"NO_NETWORK_SLICES_AVAILABLE")
+        self.assertEqual(m.classify_nas_pdu("7e0044","downlink")
+                         ["registration_reject_cause_label"],"TRUNCATED_MANDATORY_CAUSE")
+        self.assertNotIn("registration_reject_cause_code",
+                         m.classify_nas_pdu("7e04" + "11"*14,"downlink"))
+    def test_reject_cause_records_exact_frame_without_sensitive_content(self):
+        with tempfile.TemporaryDirectory() as td:
+            capture=Path(td)/"setup.pcapng"
+            capture.write_bytes(b"x"*160)
+            def fake(args):
+                expr=args[args.index("-Y")+1]
+                if "DownlinkNASTransport_element" in expr:
+                    return "21\\t7e0056\\n25\\t7e0312345678017e005d\\n29\\t7e004465aabbcc\\n"
+                if "UplinkNASTransport_element" in expr:
+                    return "24\\t7e0057\\n28\\t7e041234567801aa\\n"
+                return "20\\t7e0041\\n"
+            observed=m.decode_wire(capture,fake)
+            self.assertEqual(observed["registration_reject_causes"]["29"]["code"],101)
+            self.assertEqual(observed["registration_reject_causes"]["29"]["label"],
+                             "MESSAGE_NOT_COMPATIBLE_WITH_PROTOCOL_STATE")
+            self.assertEqual(observed["known_frame_numbers"]["REGISTRATION_REJECT"],[29])
+            self.assertEqual(m.qualify(H6,observed),"BLOCKED_VISIBLE_NAS_REJECTION")
+            self.assertNotIn("aabbcc",str(observed))
     def test_rejects_invalid_payloads_and_non5gs(self):
         for v in ("", "zzzz", "7e0", "7e00z1", "7e0", "7e00", "7e00123"):
             self.assertEqual(m.classify_nas_pdu(v, "uplink")["class"], "INVALID_OR_UNDECODABLE_NAS")

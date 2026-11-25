@@ -49,6 +49,41 @@ EXPECTED_DIRECTION = {
     "SECURITY_MODE_COMPLETE": "uplink",
     "SECURITY_MODE_REJECT": "uplink",
 }
+
+# Labels cross-checked against pinned Open5GS v2.7.6
+# lib/nas/5gs/types.h (3GPP TS 24.501 5GMM cause values).
+# Numeric values are nonsecret; no NAS PDU body is ever retained.
+REJECTION_CAUSES = {
+    3: "ILLEGAL_UE",
+    5: "PEI_NOT_ACCEPTED",
+    6: "ILLEGAL_ME",
+    7: "5GS_SERVICES_NOT_ALLOWED",
+    9: "UE_IDENTITY_NOT_DERIVABLE",
+    11: "PLMN_NOT_ALLOWED",
+    12: "TRACKING_AREA_NOT_ALLOWED",
+    13: "ROAMING_NOT_ALLOWED_IN_TA",
+    15: "NO_SUITABLE_CELLS_IN_TA",
+    20: "MAC_FAILURE",
+    21: "SYNCHRONIZATION_FAILURE",
+    22: "CONGESTION",
+    23: "UE_SECURITY_CAPABILITY_MISMATCH",
+    24: "SECURITY_MODE_REJECTED_UNSPECIFIED",
+    26: "NON_5G_AUTHENTICATION_UNACCEPTABLE",
+    27: "N1_MODE_NOT_ALLOWED",
+    28: "RESTRICTED_SERVICE_AREA",
+    31: "REDIRECTION_TO_EPC",
+    62: "NO_NETWORK_SLICES_AVAILABLE",
+    71: "NGKSI_ALREADY_IN_USE",
+    73: "SERVING_NETWORK_NOT_AUTHORIZED",
+    95: "SEMANTICALLY_INCORRECT_MESSAGE",
+    96: "INVALID_MANDATORY_INFORMATION",
+    97: "MESSAGE_TYPE_NON_EXISTENT",
+    98: "MESSAGE_TYPE_NOT_COMPATIBLE_WITH_PROTOCOL_STATE",
+    99: "INFORMATION_ELEMENT_NON_EXISTENT",
+    100: "CONDITIONAL_IE_ERROR",
+    101: "MESSAGE_NOT_COMPATIBLE_WITH_PROTOCOL_STATE",
+    111: "PROTOCOL_ERROR_UNSPECIFIED",
+}
 MAX_FRAMES = 128
 MAX_PCAP = 5 * 1024 * 1024
 
@@ -73,11 +108,13 @@ def classify_nas_pdu(hex_value, direction):
     security_header = int(payload[2:4], 16) & 0x0f
     if security_header == 0:
         message = int(payload[4:6], 16)
+        cause_offset = 6
     elif security_header in (1, 3):
         if len(payload) < 20 or payload[14:18] != "7e00":
             message = None
         else:
             message = int(payload[18:20], 16)
+        cause_offset = 20
     elif security_header in (2, 4):
         return {"class": "PROTECTED_CIPHERED_NAS_TYPE_UNAVAILABLE",
                 "security_header_type": security_header}
@@ -91,7 +128,18 @@ def classify_nas_pdu(hex_value, direction):
     # 5d in a capture is not evidence of a valid security transition.
     if name == "SECURITY_MODE_COMMAND" and security_header != 3:
         name = "UNQUALIFIED_SECURITY_MODE_COMMAND"
-    return {"class": name, "security_header_type": security_header}
+    result = {"class": name, "security_header_type": security_header}
+    # The first mandatory octet after a *visible unencrypted*
+    # Registration Reject message-type is the 5GMM cause. For ciphertext,
+    # never guess the NAS class or parse an inner cause.
+    if name == "REGISTRATION_REJECT":
+        cause = (int(payload[cause_offset:cause_offset + 2], 16)
+                 if len(payload) >= cause_offset + 2 else None)
+        result["registration_reject_cause_code"] = cause
+        result["registration_reject_cause_label"] = (
+            REJECTION_CAUSES.get(cause, "UNKNOWN_OR_UNSUPPORTED_5GMM_CAUSE")
+            if cause is not None else "TRUNCATED_MANDATORY_CAUSE")
+    return result
 
 
 def decode_wire(pcap, exec_fn=None):
@@ -107,6 +155,7 @@ def decode_wire(pcap, exec_fn=None):
     result = {"source": "INDEPENDENT_REAL_NGAP_WIRE",
               "known_frame_numbers": {name: [] for name in KNOWN.values()},
               "other_classes": {},
+              "registration_reject_causes": {},
               "security_header_counts": {},
               "total_nas_pdu_frames": 0,
               "ciphered_inner_messages_decoded": False}
@@ -134,6 +183,12 @@ def decode_wire(pcap, exec_fn=None):
             key = direction + ":" + str(kind["security_header_type"])
             result["security_header_counts"][key] = result["security_header_counts"].get(key, 0) + 1
             klass = kind["class"]
+            if klass == "REGISTRATION_REJECT":
+                result["registration_reject_causes"][str(frame)] = {
+                    "code": kind["registration_reject_cause_code"],
+                    "label": kind["registration_reject_cause_label"],
+                    "cause_source": "VISIBLE_NON_CIPHERED_NAS_ONLY",
+                }
             if klass in result["known_frame_numbers"]:
                 result["known_frame_numbers"][klass].append(frame)
             else:
@@ -207,6 +262,7 @@ def run(args):
     print(json.dumps({"status": result["status"],
                       "known_frame_numbers": wire["known_frame_numbers"],
                       "other_classes": wire["other_classes"],
+                      "registration_reject_causes": wire["registration_reject_causes"],
                       "security_header_counts": wire["security_header_counts"],
                       "production_decision": "NO_GO"}, sort_keys=True))
     # H7 is forensic qualification, rather than blind success if undecodable.
