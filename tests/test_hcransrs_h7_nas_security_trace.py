@@ -44,6 +44,8 @@ class H7PacketContracts(unittest.TestCase):
         self.assertNotIn("nas_payload",str(registration_reject))
         self.assertEqual(m.classify_nas_pdu("7e00443e","downlink")
                          ["registration_reject_cause_label"],"NO_NETWORK_SLICES_AVAILABLE")
+        self.assertEqual(m.classify_nas_pdu("7e00445a","downlink")
+                         ["registration_reject_cause_label"],"PAYLOAD_WAS_NOT_FORWARDED")
         self.assertEqual(m.classify_nas_pdu("7e0044","downlink")
                          ["registration_reject_cause_label"],"TRUNCATED_MANDATORY_CAUSE")
         self.assertNotIn("registration_reject_cause_code",

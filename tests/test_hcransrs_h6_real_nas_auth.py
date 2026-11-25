@@ -14,6 +14,15 @@ spec=importlib.util.spec_from_file_location("hcransrs_h6_real_nas_auth",
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 class H6AuthContracts(unittest.TestCase):
+    def test_amf_sbi_cause90_indicators_never_export_raw_core_log(self):
+        raw="suci-PROTECTED_PRIVATE\namf_ue_sbi_discover_and_send() failed\nGateway Timeout [504]\n"
+        value=m.summarize_amf_sbi_log_only(raw)
+        self.assertTrue(value["markers"]["AMF_SBI_DISCOVER_AND_SEND_FAILED"])
+        self.assertTrue(value["markers"]["AMF_SBI_HTTP_504"])
+        self.assertFalse(value["raw_core_logs_retained"])
+        self.assertNotIn("PROTECTED_PRIVATE",str(value))
+        self.assertFalse(m.summarize_amf_sbi_log_only("")["markers"]["AMF_SBI_HTTP_504"])
+
     def test_isolation_gate_has_explicit_marker(self):
         with patch.dict(os.environ,{},clear=True):
             with self.assertRaises(m.h1.EvidenceError):m.check_runner()

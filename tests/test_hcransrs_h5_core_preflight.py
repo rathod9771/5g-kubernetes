@@ -74,6 +74,23 @@ class H5AuthBackendContracts(unittest.TestCase):
                 m.h2_json_get("http://172.29.79.15:7777/nudr-dr/v1/foo")
             self.assertNotIn("SENSITIVE",str(cm.exception))
 
+    def test_post_auth_udm_service_must_be_discovered_for_amf(self):
+        seen=[]
+        def fake(url):
+            seen.append(url)
+            return {"nfInstances":[{"nfType":"UDM","nfServices":[
+                {"serviceName":"nudm-uecm","nfServiceStatus":"REGISTERED"}]}]}
+        with patch.object(m,"h2_json_get",side_effect=fake):
+            self.assertTrue(m.nrf_udm_service_for_amf("nudm-uecm"))
+            self.assertFalse(m.nrf_udm_service_for_amf("nudm-sdm"))
+        self.assertIn("requester-nf-type=AMF",seen[0])
+        self.assertIn("service-names=nudm-uecm",seen[0])
+        with self.assertRaises(m.PreflightError):
+            m.nrf_udm_service_for_amf("nudm-ueau")
+    def test_service_preflight_rejects_nf_without_named_service(self):
+        with patch.object(m,"h2_json_get",return_value={"nfInstances":[{"nfType":"UDM"}]}):
+            self.assertFalse(m.nrf_udm_service_for_amf("nudm-uecm"))
+
     def test_nrf_discovery_uses_correct_nf_consumer(self):
         from unittest.mock import Mock
         probes=[]

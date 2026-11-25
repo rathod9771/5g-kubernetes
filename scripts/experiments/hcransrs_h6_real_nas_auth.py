@@ -199,6 +199,31 @@ def qualify(receipt,events,backend_pass):
     return "REAL_NAS_AUTH_REQUEST_AND_RESPONSE_WIRE_CANDIDATE_ONLY"
 
 
+
+def summarize_amf_sbi_log_only(raw):
+    """Return static error categories, never subscriber IDs or log lines.
+
+    Cause 90 in Open5GS v2.7.6 can come from gateway timeout in SBI
+    discovery/send (nas-path.c, sbi-path.c). Preserve only bounded markers.
+    """
+    data=raw[-131072:]
+    markers={
+        "AMF_SBI_DISCOVER_AND_SEND_FAILED":
+            "amf_ue_sbi_discover_and_send() failed" in data,
+        "AMF_NRF_DISCOVER_FAILED": "NF-Discover failed" in data,
+        "AMF_NRF_NO_SERVICE": "(NF discover) No" in data,
+        "AMF_SBI_HTTP_504": ("[504]" in data or "Gateway Timeout" in data),
+        "AMF_SBI_DISCOVERY_CALLBACK_FAILED":
+            "client_discover_cb() failed" in data,
+        "AMF_UDM_UECM_NAMED": "nudm-uecm" in data.lower(),
+        "AMF_UDM_SDM_NAMED": "nudm-sdm" in data.lower(),
+        "AMF_SBI_NO_NF_INSTANCE": "No NF Instance" in data,
+    }
+    return {"schema":"hcransrs-h7-amf-sbi-category-only-v1",
+            "markers":markers, "raw_core_logs_retained":False,
+            "subscriber_identifiers_retained":False}
+
+
 class CoreBridge:
     """H6-only monkeypatch of H1 launch/close; canonical H1-H4 unchanged."""
     def __init__(self,out):
@@ -298,10 +323,41 @@ class CoreBridge:
             raise h1.EvidenceError("H6 auth NF discovery incomplete")
         if not h5.udr_test():
             raise h1.EvidenceError("H6 auth subscription not independently retrieved")
+        # Crucial post-auth prerequisite omitted by the earlier H5 gate:
+        # AMF must discover the named UDM UECM + SDM services, not only UDM
+        # as a generic NF discovered from the AUSF perspective.
+        for service in ("nudm-uecm","nudm-sdm"):
+            found=False
+            for _ in range(10):
+                try:
+                    if h5.nrf_udm_service_for_amf(service):
+                        found=True
+                        break
+                except (OSError,ValueError,KeyError,h5.PreflightError):
+                    pass
+                time.sleep(1)
+            if not found:
+                raise h1.EvidenceError("H6 AMF cannot discover named UDM service: "+service)
         self.backend_ok=True
     def close(self,trial):
         # Never call H1 close: H1 prints AMF/NRF/core logs, which may disclose
         # subscriber identifiers and security material in an auth experiment.
+        # Classify private AMF SBI failures BEFORE the disposable container is
+        # destroyed; never store the actual logs or credential-bearing lines.
+        diag={"schema":"hcransrs-h7-amf-sbi-category-only-v1",
+              "markers":{},"raw_core_logs_retained":False,
+              "subscriber_identifiers_retained":False,"collected":False}
+        try:
+            probe=subprocess.run(["docker","logs","--tail","1400",h1.NAMES["amf"]],
+                                 text=True,capture_output=True,timeout=12)
+            if probe.returncode==0:
+                diag=summarize_amf_sbi_log_only(probe.stdout+"\n"+probe.stderr)
+                diag["collected"]=True
+            del probe
+        except (OSError,subprocess.TimeoutExpired):
+            pass
+        (self.out/"amf-sbi-categories.json").write_text(
+            json.dumps(diag,sort_keys=True)+"\n")
         if trial.capture is not None and trial.capture.poll() is None:
             try:
                 trial.capture.send_signal(signal.SIGINT)
@@ -347,6 +403,9 @@ def main():
         result["backend_ready"]=bridge.backend_ok
         result["h4"]=h4.get("h4_candidate_qualification")
         result["nas_wire"]=control
+        safe_core=out/"amf-sbi-categories.json"
+        if safe_core.is_file() and not safe_core.is_symlink():
+            result["amf_sbi_categories"]=json.loads(safe_core.read_text())
         result["auth_gap_diagnostics"]=diagnostic
         result["ue_runtime_seconds"]=h4.get("ue",{}).get("ran_seconds")
         result["ue_exit_code"]=h4.get("ue",{}).get("exit_code")
@@ -365,6 +424,7 @@ def main():
         (out/"h6-receipt.json").write_text(json.dumps(result,sort_keys=True,indent=2)+"\n")
     print(json.dumps({"status":result["status"],"backend_ready":result["backend_ready"],
                       "nas_wire":result.get("nas_wire",{}),
+                      "amf_sbi_categories":result.get("amf_sbi_categories",{}),
                       "auth_gap_diagnostics":result.get("auth_gap_diagnostics",{}),
                       "ue_exit_code":result.get("ue_exit_code"),
                       "ue_assert_location":result.get("ue_assert_location"),

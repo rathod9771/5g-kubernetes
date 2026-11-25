@@ -140,6 +140,33 @@ def nrf_discovery(role):
                if isinstance(n,dict))
 
 
+
+def nrf_udm_service_for_amf(service):
+    """Check the exact NRF UDM SBI service needed after NAS SMC.
+
+    Existing H5 checks only that a UDM *NF instance* registers. That is
+    insufficient to prove that AMF can discover its nudm-uecm and nudm-sdm
+    services. This is a read-only HTTP/2 NRF metadata request; no UE secret.
+    """
+    if service not in ("nudm-uecm", "nudm-sdm"):
+        raise PreflightError("Unreviewed UDM service query")
+    params=urlencode({"target-nf-type":"UDM","requester-nf-type":"AMF",
+                      "service-names":service})
+    data=h2_json_get(f"http://{IP['nrf']}:7777/nnrf-disc/v1/nf-instances?{params}")
+    if not isinstance(data,dict):
+        raise PreflightError("Malformed UDM service discovery response")
+    for nf in data.get("nfInstances", []):
+        if not isinstance(nf,dict) or nf.get("nfType")!="UDM":
+            continue
+        services=nf.get("nfServices", [])
+        if not isinstance(services,list):
+            services=list(nf.get("nfServiceList",{}).values())
+        if any(isinstance(v,dict) and v.get("serviceName")==service
+               and v.get("nfServiceStatus","REGISTERED")=="REGISTERED"
+               for v in services):
+            return True
+    return False
+
 def udr_test():
     url=(f"http://{IP['udr']}:7777/nudr-dr/v1/subscription-data/imsi-{IMSI}"
          "/authentication-data/authentication-subscription")
