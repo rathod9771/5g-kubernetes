@@ -1,0 +1,91 @@
+name: H-CRAN focused AMF-facing UDM SBI discovery preflight (NO UE)
+on:
+  push:
+    branches:
+      - experiment/hcran-parallel-protocol-gates-20261123
+    paths:
+      - .github/workflows/hcransrs-udm-amf-sbi-focused.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hcransrs-amf-udm-focused-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  disposable-amf-udm-services:
+    name: Verify NRF permits AMF to discover UDM UECM and SDM (no radio)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      HCRANSRS_ALLOW_H5_CORE: EXACTLY_ISOLATED_SYNTHETIC_NO_DEPLOY
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check deterministic NRF service contracts and isolate runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          curl --version | grep -q HTTP2
+          python3 -m unittest discover -s tests -p test_hcransrs_h5_core_preflight.py -v
+      - name: Pull existing H5-only Open5GS and synthetic Mongo images
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull gradiant/open5gs:2.7.6
+          docker pull mongo:6.0
+      - name: Execute short independent real NRF UDM service-registration check
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u - "$RUNNER_TEMP" <<'PY'
+          import json,sys
+          from pathlib import Path
+          root=Path(sys.argv[1]).resolve()
+          sys.path.insert(0,str(Path.cwd()/"scripts"/"experiments"))
+          import hcransrs_h5_core_preflight as core
+
+          evidence=root/"hcransrs-amf-udm-focused"
+          observed={}
+          original=core.nrf_discovery
+          def checked(role):
+              base=original(role)
+              if role=="udm" and base:
+                  for service in ("nudm-uecm","nudm-sdm"):
+                      observed[service]=core.nrf_udm_service_for_amf(service)
+                  return all(observed.values())
+              return base
+          core.nrf_discovery=checked
+          sys.argv=["hcransrs_h5_core_preflight.py","--out",str(evidence),
+                    "--core-image",core.CORE,"--mongo-image",core.MONGO]
+          exit_code=core.main()
+          result={"schema":"hcransrs-focused-amf-udm-nrf-v1",
+                  "service_available":observed,
+                  "core_preflight_passed":exit_code==0,
+                  "no_ue_started":True,
+                  "real_registration_proven":False,
+                  "production_decision":"NO_GO"}
+          (evidence/"amf-udm-services.json").write_text(json.dumps(result,sort_keys=True,indent=2)+"\n")
+          print(json.dumps(result,sort_keys=True))
+          assert exit_code==0, "H5 core prerequisite failed"
+          assert observed=={"nudm-uecm":True,"nudm-sdm":True}, "AMF cannot discover UDM post-auth services"
+          PY
+      - name: Upload only sanitized service names and availability receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hcransrs-amf-udm-nrf-preflight-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/hcransrs-amf-udm-focused/receipt.json
+            ${{ runner.temp }}/hcransrs-amf-udm-focused/amf-udm-services.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: No completion or production inference
+        if: always()
+        run: |
+          echo 'This preflight tests AMF-requester NRF discovery of UDM UECM and SDM. It does not start AMF, srsRAN, OAI UE, or prove NAS registration.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Isolated GitHub-hosted runner only, disposable synthetic subscriber; production NO-GO.' >> "$GITHUB_STEP_SUMMARY"
