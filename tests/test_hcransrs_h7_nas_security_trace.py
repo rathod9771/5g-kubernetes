@@ -55,10 +55,10 @@ class H7PacketContracts(unittest.TestCase):
             def fake(args):
                 expr=args[args.index("-Y")+1]
                 if "DownlinkNASTransport_element" in expr:
-                    return "21\\t7e0056\\n25\\t7e0312345678017e005d\\n29\\t7e004465aabbcc\\n"
+                    return "21\t7e0056\n25\t7e0312345678017e005d\n29\t7e004465aabbcc\n"
                 if "UplinkNASTransport_element" in expr:
-                    return "24\\t7e0057\\n28\\t7e041234567801aa\\n"
-                return "20\\t7e0041\\n"
+                    return "24\t7e0057\n28\t7e041234567801aa\n"
+                return "20\t7e0041\n"
             observed=m.decode_wire(capture,fake)
             self.assertEqual(observed["registration_reject_causes"]["29"]["code"],101)
             self.assertEqual(observed["registration_reject_causes"]["29"]["label"],
