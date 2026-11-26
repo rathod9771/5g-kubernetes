@@ -328,6 +328,35 @@ class FailureTests(LifecycleHarness):
         self.assertEqual(self.sim.running_revision(self.active_id, 'cu'), 1)
         self.assert_no_replacement()
 
+    def test_first_kdu_failure_waits_for_the_atomic_rollback(self):
+        # OSM v19 can report FAILED while helm --atomic is still rolling the KDU back.
+        self.sim.outcomes[('upgrade', 'cu')] = 'FAILED'
+        observer_health, calls = self.observer.health, []
+        def health(entry, kdus, since):
+            calls.append(since)
+            return (False, 'p4kdu-cu helm pending-rollback') if len(calls) < 3 else observer_health(entry, kdus, since)
+        self.observer.health = health
+        with self.assertRaisesRegex(lifecycle.UpdateFailed, 'previous release preserved'):
+            self.run_release(['cran-oai'])
+        self.assertEqual(len(calls), 3)
+        self.assertNotIn('pending_update', self.state()['osm'])
+        self.assertEqual(self.actions(), [('upgrade', 'cu', self.active_id)])
+
+    def test_first_kdu_failure_without_recovery_is_retained(self):
+        self.sim.outcomes[('upgrade', 'cu')] = 'FAILED'
+        self.observer.broken = {'cu'}
+        with self.assertRaisesRegex(lifecycle.UpdateUncertain, 'previous release has not recovered'):
+            self.run_release(['cran-oai'])
+        update = self.state()['osm']['pending_update']
+        self.assertEqual((update['stage'], update['upgraded']), ('uncertain', []))
+        self.assertNotIn('active_release', self.state()['osm'])
+        self.assertEqual(self.actions(), [('upgrade', 'cu', self.active_id)])      # never retried or rolled back
+        self.observer.broken = set()
+        self.assertEqual(lifecycle.reconcile_update(self.osm, self.observer, REGISTRY, self.state_path, CONTEXT,
+                                                    self.policy, clock=self.clock)['action'],
+                         'confirmed-previous-release')
+        self.assertNotIn('pending_update', self.state()['osm'])
+
     def test_partial_failure_is_retained_and_blocks_the_dashboard(self):
         self.sim.outcomes[('upgrade', 'du')] = 'FAILED'
         with self.assertRaisesRegex(lifecycle.UpdateFailed, 'reconcile explicitly'):

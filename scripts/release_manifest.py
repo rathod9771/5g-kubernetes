@@ -16,6 +16,7 @@ SCHEMA = '5g-kubernetes/release-manifest'
 SCHEMA_VERSION = 1
 MANIFEST_NAME = 'release-manifest.json'
 WORKFLOW_PATH = '.github/workflows/release-candidate.yml'
+DELL_WORKFLOW_PATH = '.github/workflows/dell-release-candidate.yml'
 SHA = re.compile(r'[0-9a-f]{40}')
 HEX = re.compile(r'[0-9a-f]{64}')
 ARTIFACT = re.compile(r'(packages/[a-z][a-z0-9_-]*\.tar\.gz|provenance/[a-z0-9-]+\.provenance\.json)')
@@ -247,13 +248,19 @@ def main(argv=None):
     parser.add_argument('--repository', required=True)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--branch', required=True)
+    parser.add_argument('--dell-release-candidate', action='store_true',
+                        help='Use the exact Dell candidate workflow identity')
     args = parser.parse_args(argv)
     try:
         from scenario_registry import load_registry
+        if args.dell_release_candidate and (args.repository != 'rathod9771/5g-kubernetes' or
+                args.branch != 'p5/dell-release-candidate'):
+            raise ManifestError('Dell release identity mismatch')
+        chosen_workflow = DELL_WORKFLOW_PATH if args.dell_release_candidate else WORKFLOW_PATH
         manifest_bytes = _read_release_file(args.release)(MANIFEST_NAME)
         decision = publication_decision(manifest_bytes, _read_release_file(args.release),
                                         {'repository': args.repository, 'branches': (args.branch,),
-                                         'commit': args.commit, 'workflow_path': WORKFLOW_PATH}, load_registry())
+                                         'commit': args.commit, 'workflow_path': chosen_workflow}, load_registry())
     except Exception as error:      # any failure is a refusal, never an approval
         decision = {'publication_allowed': False, 'blockers': ['decision failed: ' + type(error).__name__]}
     print(json.dumps(decision, indent=2, sort_keys=True))
