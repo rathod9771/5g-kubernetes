@@ -279,8 +279,6 @@ if [[ "${EUID}" -eq 0 ]]; then
   exit 1
 fi
 
-sudo -v
-
 PAYLOAD_LINE=$(awk '/^__PRIVATE_PAYLOAD_BELOW__$/ {print NR + 1; exit}' "$0")
 [[ -n "$PAYLOAD_LINE" ]] || {
   echo "ERROR: installer payload marker missing." >&2
@@ -292,6 +290,29 @@ tail -n +"$PAYLOAD_LINE" "$0" | tar -xf - -C "$WORK"
   cd "$WORK"
   sha256sum -c SHA256SUMS
 )
+
+# Validate BOTH embedded source and target profile before apt, containerd,
+# image import or writes to the target repository/private-input directory.
+# Never attempt to adopt or repair an existing Kubernetes installation.
+if [[ -e "$TARGET_REPO" || -L "$TARGET_REPO" ]]; then
+  echo "ERROR: target repository already exists; no host changes performed." >&2
+  exit 1
+fi
+if [[ ! -r /sys/class/dmi/id/sys_vendor ]]; then
+  echo "ERROR: target hardware profile cannot be verified." >&2
+  exit 1
+fi
+case "$(tr '[:upper:]' '[:lower:]' < /sys/class/dmi/id/sys_vendor)" in
+  dell*) HOST_PROFILE=dell ;;
+  hp*|hewlett*) HOST_PROFILE=hp ;;
+  *) echo "ERROR: expected an approved HP or Dell host; no host changes performed." >&2; exit 1 ;;
+esac
+mkdir -p "$WORK/source-preflight"
+tar -xzf "$WORK/repository.tar.gz" -C "$WORK/source-preflight"
+python3 -B "$WORK/source-preflight/5g-kubernetes/scripts/installer/host_profile.py" \
+  --profile "$HOST_PROFILE"
+echo "HP/Dell fresh-host admission passed; beginning approved bootstrap."
+sudo -v
 
 echo "Installing minimum host prerequisites..."
 sudo apt-get update
@@ -359,7 +380,7 @@ echo "  OAI UE private subscriber input: installed"
 echo "  container image bundle: imported"
 echo
 echo "Starting complete 5G Orchestrator installation..."
-exec ./install.sh
+exec ./install.sh --profile "$HOST_PROFILE"
 exit 0
 __PRIVATE_PAYLOAD_BELOW__
 HEADER2

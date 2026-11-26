@@ -43,6 +43,33 @@ KDU_MODEL = re.compile(r'(?P<root>/[A-Za-z0-9_./-]+)/(?P<id>[0-9a-f-]{36}):(?P<r
                        r'(?P<package>[A-Za-z0-9_-]+)/helm-chart-v3s/(?P<kdu>[A-Za-z0-9_-]+)')
 
 
+def _unique_keys(pairs):
+    keys = [k for k, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError('duplicate key in primitive_params')
+    return dict(pairs)
+
+
+def primitive_params(operation):
+    """primitive_params of an OSM action operation record, as a mapping.
+
+    OSM v19 NBI (osm_nbi/instance_topics.py, NsLcmOpTopic.new) stores non-empty
+    primitive_params JSON-encoded; empty ones stay a mapping. Absent means {}. Invalid
+    JSON, duplicate keys or a non-object raise ValueError: never guessed.
+    """
+    params = operation.get('operationParams') or {}
+    if not isinstance(params, dict):
+        raise ValueError('operationParams is not a mapping')
+    value = params.get('primitive_params')
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        value = json.loads(value, object_pairs_hook=_unique_keys)      # JSONDecodeError is a ValueError
+    if not isinstance(value, dict):
+        raise ValueError('primitive_params is not a mapping')
+    return value
+
+
 class LifecycleError(ValueError):
     pass
 
@@ -145,9 +172,14 @@ def blocking_reason(state):
     return None
 
 
+def instance_name(entry):
+    """OSM NS name of a scenario's instance: the dashboard convention unless the entry names one."""
+    return entry.get('ns_name') or 'ran-' + entry['key']
+
+
 def primary_instances(instances, registry):
     """NS records named for a primary (non-additive) RAN scenario."""
-    names = {'ran-' + s['key'] for s in registry['scenarios'] if not s.get('additive') and s['key'] != 'none'}
+    names = {instance_name(s) for s in registry['scenarios'] if not s.get('additive') and s['key'] != 'none'}
     return [i for i in instances if isinstance(i, dict) and i.get('name', i.get('nsName')) in names]
 
 
@@ -213,8 +245,8 @@ def publish(osm, verified, state_path, commit):
     return published
 
 
-def _ns_idle(ns, key):
-    return (ns.get('name', ns.get('nsName')) == 'ran-' + key and ns.get('nsState') == 'READY' and
+def _ns_idle(ns, entry):
+    return (ns.get('name', ns.get('nsName')) == instance_name(entry) and ns.get('nsState') == 'READY' and
             ns.get('operational-status') == 'running' and ns.get('currentOperation', 'IDLE') in ('IDLE', None))
 
 
@@ -228,7 +260,7 @@ def confirm_active(osm, state, entry, published, registry):
     if [p.get('_id') for p in primaries] != [instance_id]:
         raise StaleActiveState('Single-primary-RAN invariant cannot be confirmed against OSM')
     ns = osm.get_ns(instance_id)
-    if not _ns_idle(ns, key):
+    if not _ns_idle(ns, entry):
         raise StaleActiveState('Active NS is not the idle, running ' + key + ' instance')
     if ns.get('nsd-id') != published['ns']['id']:
         raise StaleActiveState('Active NS was not instantiated from the published NSD')
@@ -312,7 +344,8 @@ def _rollback(osm, observer, update, entry, plan, since, policy, clock):
     for name in reversed(list(update.record['upgraded'])):
         kdu = by_name[name]
         try:
-            operation = osm.kdu_action(plan['instance_id'], kdu['member_index'], name, 'rollback', {})
+            operation = osm.kdu_action(plan['instance_id'], kdu['member_index'], name, 'rollback', {},
+                                       policy.get('kdu_timeout'))
             outcome = wait_operation(osm, operation, policy.get('op_timeout', 600), clock)
         except Exception:
             _uncertain(update, 'Rollback of ' + name + ' has an unknown outcome')
@@ -358,7 +391,7 @@ def _apply(osm, observer, state_path, state, registry, context, entry, plan, com
     for kdu in plan['kdus']:
         # Other OSM clients are outside our lock: recheck right before each mutation.
         try:
-            idle = _ns_idle(osm.get_ns(plan['instance_id']), key)
+            idle = _ns_idle(osm.get_ns(plan['instance_id']), entry)
         except Exception:
             idle = False
         if not idle:
@@ -371,7 +404,7 @@ def _apply(osm, observer, state_path, state, registry, context, entry, plan, com
         try:
             operation = osm.kdu_action(plan['instance_id'], kdu['member_index'], kdu['name'], 'upgrade',
                                        {'kdu_model': kdu['model'], 'kdu_atomic_upgrade': 'true',
-                                        'kdu_reset_values': 'true'})
+                                        'kdu_reset_values': 'true'}, policy.get('kdu_timeout'))
         except Exception:
             _uncertain(update, 'Upgrade request for ' + kdu['name'] + ' has an unknown outcome')
         update.record['operations'][kdu['name']] = operation
@@ -385,9 +418,14 @@ def _apply(osm, observer, state_path, state, registry, context, entry, plan, com
             update.save()
             continue
         if outcome in ('FAILED', 'FAILED_TEMP'):
-            # helm --atomic restored this KDU; never retry automatically.
+            # helm --atomic restores this KDU, but OSM v19 can end the operation (its own
+            # timeout) while that rollback is still running; never retry automatically.
             _ledger(state_path, {'commit': commit, 'event': 'upgrade-failed', 'kdu': kdu['name']})
             if not update.record['upgraded']:
+                healthy, detail = wait_healthy(observer, entry, plan, since, policy, clock)
+                if not healthy:
+                    _uncertain(update, 'Upgrade of ' + kdu['name'] + ' failed and the previous release has not '
+                                       'recovered: ' + detail)
                 update.finish()
                 raise UpdateFailed('Upgrade of ' + kdu['name'] + ' failed; previous release preserved')
             if policy.get('auto_rollback'):
@@ -483,3 +521,52 @@ def reconcile_update(osm, observer, registry, state_path, context, policy, clock
             update.finish()
             return {'action': 'confirmed-previous-release'}
         return {'action': 'operator-decision-required', 'stage': record['stage'], 'operations': outcomes}
+
+
+def adopt_lost_request(osm, registry, state_path, context, policy):
+    """Resolve an upgrade request whose response was lost, from OSM's own operation records.
+
+    Never issues OSM actions. A request that reached OSM is adopted into the pending
+    update (reconcile_update then decides its outcome); none means it was never sent.
+    """
+    with lifecycle_lock(state_path, 'adopt-lost-request', timeout=policy.get('lock_timeout', 600)):
+        state = read_state(state_path, registry, context)
+        record = state['osm'].get('pending_update')
+        if not record:
+            return {'action': 'nothing-pending'}
+        kdu = record.get('current_kdu')
+        if not kdu or kdu in record['operations']:
+            return {'action': 'nothing-lost'}
+        known = set(record['operations'].values())
+        earliest = record['requested_at'] - policy.get('clock_skew', 120)
+        candidates = []
+        for operation in osm.ns_operations(record['instance_id']):
+            params = operation.get('operationParams') or {}
+            if not (operation.get('lcmOperationType') == 'action' and isinstance(params, dict) and
+                    params.get('primitive') == 'upgrade' and params.get('kdu_name') == kdu):
+                continue
+            try:
+                model = KDU_MODEL.fullmatch(str(primitive_params(operation).get('kdu_model', '')))
+            except ValueError as error:
+                raise UpdateUncertain('Unreadable upgrade request ' + str(operation.get('_id')) + ' for ' + kdu +
+                                      ' in OSM (' + str(error)[:100] + '); inspect manually') from None
+            start, entered = operation.get('startTime'), operation.get('statusEnteredTime')
+            # An earlier attempt at the same revision that had already ended is not this request.
+            ended_before = (operation.get('operationState') in TERMINAL and type(entered) in (int, float)
+                            and entered < record['requested_at'])
+            if (operation.get('_id') not in known and model and
+                    int(model['rev']) == record['knf_revision'] and type(start) in (int, float) and
+                    start >= earliest and not ended_before):
+                candidates.append(operation['_id'])
+        update = _Update(state_path, state, registry, context)
+        if len(candidates) > 1:
+            raise UpdateUncertain('More than one upgrade request for ' + kdu + ' exists in OSM; inspect manually')
+        if candidates:
+            update.record['operations'][kdu] = candidates[0]
+            update.save(stage='submitted')
+            return {'action': 'adopted', 'kdu': kdu, 'operation': candidates[0]}
+        if not update.record['upgraded']:
+            update.finish()
+            return {'action': 'confirmed-previous-release', 'kdu': kdu, 'detail': 'the request never reached OSM'}
+        update.save(stage='failed-partial')
+        return {'action': 'failed-partial', 'kdu': kdu, 'detail': 'the request never reached OSM; earlier KDUs upgraded'}

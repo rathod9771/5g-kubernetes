@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: p4kdu
+    app.kubernetes.io/component: {{ .Values.component | quote }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: p4-kdu-upgrade
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: p4kdu
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: p4kdu
+        app.kubernetes.io/component: {{ .Values.component | quote }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: p4-kdu-upgrade
+      annotations:
+        # Any release change rolls the pod, so every upgrade is observable.
+        p4kdu/release: {{ .Values.marker | quote }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 5
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ .Values.component }}
+          image: {{ .Values.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 3600 & wait $!; done"]
+          readinessProbe:
+            exec:
+              {{- if .Values.broken }}
+              command: ["false"]
+              {{- else }}
+              command: ["sh", "-c", {{ printf "test \"$(cat /etc/p4kdu/release)\" = %s" (.Values.marker | quote) | quote }}]
+              {{- end }}
+            initialDelaySeconds: {{ .Values.readyDelaySeconds }}
+            periodSeconds: 2
+            failureThreshold: 1
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: release
+              mountPath: /etc/p4kdu
+              readOnly: true
+      volumes:
+        - name: release
+          configMap:
+            name: {{ .Release.Name }}-release
