@@ -73,11 +73,16 @@ class InstallerHostProfileTests(unittest.TestCase):
 
     def test_private_bundle_profile_precedes_all_host_mutations(self):
         builder = (ROOT / 'scripts/build-private-installer.sh').read_text()
-        gate = builder.index('host_profile.py')
-        self.assertLess(gate, builder.index('sudo apt-get update'))
-        self.assertLess(gate, builder.index('sudo ctr -n k8s.io images import'))
-        self.assertIn('exec ./install.sh --profile "$HOST_PROFILE"', builder)
-        self.assertIn('if [[ -e "$TARGET_REPO" || -L "$TARGET_REPO" ]]', builder)
+        # This file has a source-host bundle builder and a generated target
+        # installer. Only the latter must order admission ahead of apt/import.
+        start = builder.index("cat >> \"$OUTPUT\" <<'HEADER2'")
+        end = builder.index("\nHEADER2", start)
+        target = builder[start:end]
+        gate = target.index('host_profile.py')
+        self.assertLess(gate, target.index('sudo apt-get update'))
+        self.assertLess(gate, target.index('sudo ctr -n k8s.io images import'))
+        self.assertIn('exec ./install.sh --profile "$HOST_PROFILE"', target)
+        self.assertIn('if [[ -e "$TARGET_REPO" || -L "$TARGET_REPO" ]]', target)
 
     def test_shell_preflight_before_mutation(self):
         shell = (ROOT / 'install.sh').read_text()
