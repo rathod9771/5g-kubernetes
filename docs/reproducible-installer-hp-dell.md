@@ -28,6 +28,8 @@ and explicit operator approval should a fresh host run the existing mutating ins
 
 `--profile` can precede the existing `--srsran-image-archive /approved/path.tar` option.
 The original unprofiled `./install.sh` remains for legacy compatibility, but is not the recommended clean-install path.
+
+The private self-extracting `.run` handover now determines the approved HP or Dell hardware family, verifies the embedded source and runs the SAME fresh-host admission **before** apt, containerd and target repository installation. It then calls `./install.sh --profile "$HOST_PROFILE"`. It must not be run on a working cluster.
 See `docs/reference-installer.md` and `INSTALLATION.md` for private inputs and current limitations.
 
 ## GUI/NBI accessibility

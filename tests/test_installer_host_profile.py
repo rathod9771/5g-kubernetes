@@ -71,6 +71,14 @@ class InstallerHostProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unknown host profile'):
             self.check('generic')
 
+    def test_private_bundle_profile_precedes_all_host_mutations(self):
+        builder = (ROOT / 'scripts/build-private-installer.sh').read_text()
+        gate = builder.index('host_profile.py')
+        self.assertLess(gate, builder.index('sudo apt-get update'))
+        self.assertLess(gate, builder.index('sudo ctr -n k8s.io images import'))
+        self.assertIn('exec ./install.sh --profile "$HOST_PROFILE"', builder)
+        self.assertIn('if [[ -e "$TARGET_REPO" || -L "$TARGET_REPO" ]]', builder)
+
     def test_shell_preflight_before_mutation(self):
         shell = (ROOT / 'install.sh').read_text()
         self.assertLess(shell.index('host_profile.py'), shell.index('sudo apt-get update'))
